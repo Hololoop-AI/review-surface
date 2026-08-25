@@ -10494,7 +10494,7 @@ function createHomeOutput({ bin, sessions, includeSessions = true, agent = "gene
       'Rendered Mermaid diagrams in `.mermaid` containers become embedded, editable Excalidraw whiteboards in the browser (click a diagram to unlock editing; a Fullscreen action opens it over the whole viewport) - flowchart, sequence, class, ER, and state diagrams convert to editable shapes; other types embed as an image to draw on. Scenes autosave locally; an unmodified autosave silently re-converts when a reload changes the Mermaid source. If the reviewer edited the scene, they choose to re-convert and discard saved edits or keep editing the saved scene. Standalone and exported copies still render plain Mermaid. Queue feedback adds a prompt to the Conversation panel; when the user sends it, poll returns a tag "whiteboard" prompt carrying a bounded edit summary plus local scenePath (.excalidraw JSON) and previewPath (PNG) files - read the summary first, open the files only when needed, then apply the edits by updating the Mermaid source in the artifact (never try to write the scene back)',
       "Run `review-surface end <html-file>` to end a session as the agent - ending it this way still allows a plain reopen later. When the user ends it from the browser instead, a later `review-surface <html-file>` refuses to reopen it without `--reopen`",
       "Run `review-surface export <html-file> [--out <path>]` to write a portable copy of the artifact - one HTML file with its LOCAL assets inlined - so it opens with no Review Surface server and no sibling files. Remote CDN/font references are left as links, so it needs network to render those. Users can also export from the browser chrome's overflow menu",
-      "Run `review-surface share <html-file> [--password <pw>] [--token <t>]` to publish the artifact on ht-ml.app (https://ht-ml.app), a third-party hosting service not part of Review Surface, and get back a visitable URL. Shares are PUBLIC by default, so anyone with the link can open them. Pass --password to publish a PRIVATE password-protected page; viewers must supply the password to view. Local assets are inlined; remote refs load over the network. It returns the url plus a secret update_key for managing the page later. Use --token or REVIEW_SURFACE_HTML_APP_TOKEN only when you have an optional bearer token; it is never required. Users can also publish from the browser chrome's overflow menu",
+      "Remote sharing is disabled in this build: artifacts never leave the machine via third-party hosts. Use `review-surface export <html-file>` for a portable single-file copy you can send over channels you control.",
       "Run `review-surface stop` to shut down the background server (it also self-stops when idle or after the last session ends with nothing connected)",
       `Run \`review-surface playbook <playbook_id>\` for focused artifact guidance. ${PLAYBOOK_ROUTER_HELP}`,
       DESIGN_SYSTEM_HINT,
@@ -10775,6 +10775,11 @@ function assetWarningSummaries(warnings) {
   return exportWarningSummaries(warnings);
 }
 async function shareCommand(args) {
+  return {
+    status: "disabled",
+    error: "remote share disabled: artifacts are served locally only",
+    next_step: "Use `review-surface export <html-file>` for a portable single-file copy instead."
+  };
   const file = firstPositionalArg(args, ["--password", "--token"]);
   if (!file) {
     throw new AxiError("HTML file path is required", "VALIDATION_ERROR", ["Run `review-surface share <html-file>`"]);
@@ -11478,9 +11483,9 @@ End a Review Surface session as the agent. A session ended this way still reopen
 
 Write a portable copy of an artifact: one HTML file with its LOCAL assets inlined (relative-path stylesheets, scripts, images, and fonts become inline <style>/<script> blocks and data URIs). Remote CDN/font references (https URLs) are left as links for the browser to load, so the file needs network to render those. Review Surface makes no outbound requests - it only reads local files, confined to the artifact's directory. Defaults to writing <name>.export.html next to the source; pass --out to choose a path. The Review Surface annotation SDK is never included in an export.
 `,
-    share: `Usage: review-surface share <html-file> [--password <pw>] [--token <t>]
+    share: `Usage: review-surface share <html-file>
 
-Publish the artifact on ht-ml.app (https://ht-ml.app), a third-party hosting service not part of Review Surface, and print a visitable URL. Shares are PUBLIC by default: anyone with the link can open the page, and it may be indexed or scraped. Pass --password to publish a PRIVATE password-protected page; viewers must supply the password to view. Builds the same local-inlined HTML as 'export' (local assets inlined; remote CDN/font URLs left as links and are not blocked by CSP on ht-ml.app, but still load over the viewer's network), then POSTs it to ht-ml.app's /v1 API. Creating a site needs no account or API key. The response includes the url plus a secret update_key (shown once) for updating or deleting the page later. Set REVIEW_SURFACE_HTML_APP_TOKEN (or pass --token) to attach an optional bearer token; it is never required. The annotation SDK is never included.
+Disabled in this build: remote sharing is retired \u2014 artifacts never leave the machine via third-party hosts (see SECURITY-NOTES.md). Use 'review-surface export <html-file>' to produce a portable single-file copy and deliver it over a channel you control.
 `,
     stop: `Usage: review-surface stop [--port <port>]
 

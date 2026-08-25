@@ -1,5 +1,4 @@
 node_modules/
-dist/
 coverage/
 .review-surface/
 .review-surface-axi/
