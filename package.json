@@ -24,8 +24,6 @@
     "lint": "eslint bin src test scripts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "prepack": "npm run build",
-    "prepare": "npm run build",
     "test": "node --test",
     "typecheck": "tsc --noEmit"
   },
