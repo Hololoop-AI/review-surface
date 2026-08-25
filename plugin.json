@@ -1,0 +1,21 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "review-surface",
+  "version": "0.2.0",
+  "description": "Artifact-first review surface for AI agents: annotate, decide, whiteboard — locally served, feedback as consumable events.",
+  "author": {
+    "name": "Kun Chen",
+    "url": "https://github.com/kunchenguid"
+  },
+  "homepage": "https://github.com/Hololoop-AI/review-surface#readme",
+  "repository": "https://github.com/Hololoop-AI/review-surface",
+  "license": "MIT",
+  "keywords": [
+    "axi",
+    "agent",
+    "cli",
+    "html",
+    "review",
+    "collaboration"
+  ]
+}

@@ -1,0 +1,14 @@
+packages:
+  - "."
+
+trustPolicy: no-downgrade
+blockExoticSubdeps: true
+minimumReleaseAge: 10080
+minimumReleaseAgeStrict: true
+minimumReleaseAgeExclude:
+  - axi-sdk-js
+  - review-surface
+onlyBuiltDependencies:
+  - esbuild
+allowBuilds:
+  esbuild: true
