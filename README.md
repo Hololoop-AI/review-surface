@@ -13,8 +13,12 @@ from your own machine (see SECURITY-NOTES.md).
 
 ```
 npm install -g github:Hololoop-AI/review-surface
-review-surface open path/to/artifact.html
+review-surface path/to/artifact.html
 ```
+
+`dist/` ships in the repo, so installs need no build toolchain. If your npm
+config sets `install-links=false`, add `--install-links` so npm copies the
+package instead of symlinking a temporary clone.
 
 ## Provenance
 
