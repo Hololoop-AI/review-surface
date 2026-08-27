@@ -9921,9 +9921,10 @@ function clearFeedbackDelivery(key, activePolls, deliveredFeedback, events) {
     events.emit("agent-presence", key, nextPresence);
   }
 }
-function computePresence(key, activePolls, deliveredFeedback) {
+function computePresence(key, activePolls, deliveredFeedback, env = process.env) {
   if (activePolls.has(key)) return "listening";
   if (deliveredFeedback.has(key)) return "working";
+  if (env.REVIEW_SURFACE_TICK_CONSUMER) return "listening";
   return "waiting";
 }
 function chromeIcon(paths, size = 16, strokeWidth = 1.7) {
@@ -10591,6 +10592,7 @@ function shouldOpenBrowser(args, env) {
 }
 async function pollCommand(args) {
   const file = firstPositionalArg(args, ["--agent-reply", "--timeout-ms"]);
+  const jsonOutput = args.includes("--json");
   if (!file) {
     throw new AxiError("HTML file path is required", "VALIDATION_ERROR", ["Run `review-surface poll <html-file>`"]);
   }
@@ -10621,6 +10623,11 @@ ${pollInterruptedText(absolute)}
       retries: 3,
       retryDelayMs: 500
     });
+    if (jsonOutput) {
+      process.stdout.write(`${JSON.stringify({ file: absolute, ...response })}
+`);
+      return;
+    }
     return createPollOutput({ file: absolute, response, agent: detectInvokingAgent(process.env) });
   } finally {
     waitReporter?.stop();

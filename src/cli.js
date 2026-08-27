@@ -292,6 +292,7 @@ export function shouldOpenBrowser(args, env) {
 
 async function pollCommand(args) {
   const file = firstPositionalArg(args, ["--agent-reply", "--timeout-ms"]);
+  const jsonOutput = args.includes("--json");
   if (!file) {
     throw new AxiError("HTML file path is required", "VALIDATION_ERROR", ["Run `review-surface poll <html-file>`"]);
   }
@@ -331,6 +332,12 @@ async function pollCommand(args) {
       retries: 3,
       retryDelayMs: 500,
     });
+    // Machine consumers (pipeline daemons) parse feedback programmatically;
+    // TOON's minimal quoting makes that fragile, JSON does not.
+    if (jsonOutput) {
+      process.stdout.write(`${JSON.stringify({ file: absolute, ...response })}\n`);
+      return;
+    }
     return createPollOutput({ file: absolute, response, agent: detectInvokingAgent(process.env) });
   } finally {
     waitReporter?.stop();

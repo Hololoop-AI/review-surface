@@ -1916,9 +1916,13 @@ function clearFeedbackDelivery(key, activePolls, deliveredFeedback, events) {
   }
 }
 
-export function computePresence(key, activePolls, deliveredFeedback) {
+export function computePresence(key, activePolls, deliveredFeedback, env = process.env) {
   if (activePolls.has(key)) return "listening";
   if (deliveredFeedback.has(key)) return "working";
+  // Tick-consumer deployments (a pipeline daemon reading the feedback outbox
+  // on its own clock) have no long poll attached between sends, but feedback
+  // IS being collected — "not listening" would tell the driver a lie.
+  if (env.REVIEW_SURFACE_TICK_CONSUMER) return "listening";
   return "waiting";
 }
 
