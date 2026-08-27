@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
-import { readFile, realpath } from "node:fs/promises";
+import { appendFile, mkdir, readFile, realpath } from "node:fs/promises";
 import { isIP } from "node:net";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -52,7 +52,7 @@ import {
 } from "./export-bundle.js";
 import { publishToHtmlApp } from "./html-app.js";
 import { injectReviewSurfaceSdk } from "./html-transform.js";
-import { bindHost, extraAllowedHosts, hostForUrl, IPV6_LOOPBACK_HOST, linkHost, LOOPBACK_HOST } from "./paths.js";
+import { bindHost, extraAllowedHosts, hostForUrl, IPV6_LOOPBACK_HOST, linkHost, LOOPBACK_HOST, stateDir } from "./paths.js";
 import { canonicalFile, SessionStore, sessionKey } from "./session-store.js";
 import {
   ACCEPTED_IMAGE_MIME,
@@ -111,6 +111,24 @@ export const BATCH_RELOAD_DEBOUNCE_MS = 900;
 // produced by `scripts/build.js` into dist/whiteboard. Packaged runs find it
 // next to the served bundle; source runs (node bin/review-surface.js) fall back to
 // the repo's dist output, so `pnpm run build` must have run at least once.
+// Feedback outbox: an append-only JSONL wake signal for consumers that tick
+// instead of long-polling (e.g. a pipeline daemon). Each user "send" appends
+// one line {ts, key, ended}; consumers then poll normally to consume. Path is
+// REVIEW_SURFACE_OUTBOX or <state-dir>/outbox.jsonl. Best-effort by design.
+export function outboxFile() {
+  return process.env.REVIEW_SURFACE_OUTBOX || path.join(stateDir(), "outbox.jsonl");
+}
+
+async function appendOutboxSignal(key, ended) {
+  try {
+    const file = outboxFile();
+    await mkdir(path.dirname(file), { recursive: true });
+    await appendFile(file, `${JSON.stringify({ ts: Date.now(), key, ended: Boolean(ended) })}\n`);
+  } catch {
+    // never let the outbox fail a send
+  }
+}
+
 export function defaultWhiteboardAssetsDir() {
   const packaged = fileURLToPath(new URL("./whiteboard", import.meta.url));
   if (existsSync(packaged)) return packaged;
@@ -643,6 +661,12 @@ export async function serve({
         events.emit("layout-warnings", req.params.key, serializeLayoutWarnings(session.layout_warnings));
       }
       events.emit(shouldEndSession ? "ended" : "feedback", req.params.key, session.ended_by);
+      // Durable wake signal for daemon consumers that cannot hold a long-poll
+      // open (a pipeline daemon ticks; it does not wait). One JSONL line per
+      // send; the consumer maps key -> its own session record and then runs an
+      // ordinary short poll to consume the feedback, so delivery semantics are
+      // unchanged. Best-effort: the outbox must never fail the send.
+      void appendOutboxSignal(req.params.key, shouldEndSession);
       res.json({ status: "queued", pending_prompts: session.pending_prompts });
       if (shouldEndSession) await shutdownIfNoLiveSessions();
     } catch (error) {

@@ -4497,7 +4497,7 @@ function attrValue(attrs, name) {
 import crypto6 from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync as existsSync2 } from "node:fs";
-import { readFile as readFile5, realpath as realpath3 } from "node:fs/promises";
+import { appendFile, mkdir as mkdir4, readFile as readFile5, realpath as realpath3 } from "node:fs/promises";
 import { isIP } from "node:net";
 import { homedir } from "node:os";
 import path7 from "node:path";
@@ -8530,6 +8530,18 @@ var ATTACHMENT_SWEEP_INTERVAL_MS = 60 * 6e4;
 var SHUTDOWN_REASONS = /* @__PURE__ */ new Set(["upgrade", "local-build", "stop"]);
 var RELOAD_DEBOUNCE_MS = 100;
 var BATCH_RELOAD_DEBOUNCE_MS = 900;
+function outboxFile() {
+  return process.env.REVIEW_SURFACE_OUTBOX || path7.join(stateDir(), "outbox.jsonl");
+}
+async function appendOutboxSignal(key, ended) {
+  try {
+    const file = outboxFile();
+    await mkdir4(path7.dirname(file), { recursive: true });
+    await appendFile(file, `${JSON.stringify({ ts: Date.now(), key, ended: Boolean(ended) })}
+`);
+  } catch {
+  }
+}
 function defaultWhiteboardAssetsDir() {
   const packaged = fileURLToPath3(new URL("./whiteboard", import.meta.url));
   if (existsSync2(packaged)) return packaged;
@@ -8914,6 +8926,7 @@ async function serve({
         events.emit("layout-warnings", req.params.key, serializeLayoutWarnings(session.layout_warnings));
       }
       events.emit(shouldEndSession ? "ended" : "feedback", req.params.key, session.ended_by);
+      void appendOutboxSignal(req.params.key, shouldEndSession);
       res.json({ status: "queued", pending_prompts: session.pending_prompts });
       if (shouldEndSession) await shutdownIfNoLiveSessions();
     } catch (error) {
