@@ -4266,6 +4266,9 @@ function linkHost(env = process.env) {
 function extraAllowedHosts(env = process.env) {
   return (env.REVIEW_SURFACE_ALLOWED_HOSTS || "").split(/\s+/).filter(Boolean);
 }
+function frameAncestor(env = process.env) {
+  return env.REVIEW_SURFACE_FRAME_ANCESTOR?.trim() || "";
+}
 function hostForUrl(host) {
   if (host.includes(":") && !host.startsWith("[")) return `[${host}]`;
   return host;
@@ -5354,6 +5357,9 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     const params = new URLSearchParams({
       diagramIndex: String(entry.index),
       diagramId: String(entry.diagramId || ""),
+      // Names this frame's placement so it can address the chrome window directly
+      // (its grandparent here) instead of assuming the chrome is the top window.
+      host: "artifact",
       // The frame's channel token is bound to this session, so the frame page
       // must be told which session it belongs to.
       key: String(sessionKey2 || "")
@@ -8637,7 +8643,8 @@ async function serve({
   host = bindHost(),
   linkHost: linkHostName = linkHost(),
   allowedHosts = extraAllowedHosts(),
-  whiteboardAssetsDir = defaultWhiteboardAssetsDir()
+  whiteboardAssetsDir = defaultWhiteboardAssetsDir(),
+  frameAncestor: frameAncestor2 = frameAncestor()
 }) {
   const app = express();
   const store = new SessionStore(stateFile2);
@@ -8704,6 +8711,12 @@ async function serve({
     if (pendingAfterRestore) events.emit("feedback", key);
   }
   const whiteboardStateRoot = path7.dirname(stateFile2);
+  const frameAncestorOrigin = frameAncestor2 ? parseFrameAncestorOrigin(frameAncestor2) : "";
+  if (frameAncestor2 && !frameAncestorOrigin) {
+    throw new Error(
+      `Invalid frame ancestor origin: ${frameAncestor2}. Expected a single http/https origin with an optional port, e.g. http://127.0.0.1:7481`
+    );
+  }
   const allowedHostnames = buildAllowedHostnames({ host, linkHost: linkHostName, allowedHosts });
   const allowAnyHostname = allowsAllHosts(allowedHosts);
   if (!allowAnyHostname) {
@@ -8741,7 +8754,12 @@ async function serve({
     return defaultJsonParser(req, res, next);
   });
   app.get("/health", (req, res) => {
-    res.json({ ok: true, app: "review-surface", version });
+    res.json({
+      ok: true,
+      app: "review-surface",
+      version,
+      ...frameAncestorOrigin ? { frame_ancestor: frameAncestorOrigin } : {}
+    });
   });
   let shutdownResolve;
   const done = new Promise((resolve) => {
@@ -9124,8 +9142,12 @@ async function serve({
       await watchSession(session, watchers, events, logEvent, reloadDebounceMs);
       const artifactHtml = await readFile5(session.file, "utf8").catch(() => "");
       const { faviconTag, title } = extractArtifactHead(artifactHtml);
-      res.setHeader("x-frame-options", "DENY");
-      res.setHeader("content-security-policy", "frame-ancestors 'none'");
+      if (frameAncestorOrigin) {
+        res.setHeader("content-security-policy", `frame-ancestors 'self' ${frameAncestorOrigin}`);
+      } else {
+        res.setHeader("x-frame-options", "DENY");
+        res.setHeader("content-security-policy", "frame-ancestors 'none'");
+      }
       res.type("html").send(
         createChromeHtml(session, {
           layoutGateEnabled: shouldEnableLayoutGate(req.query || {}),
@@ -9766,6 +9788,22 @@ function parseHostAuthority(value) {
     return null;
   }
   return { hostname, port, authority };
+}
+function parseFrameAncestorOrigin(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+  if (url.username || url.password) return null;
+  if (url.search || url.hash) return null;
+  if (url.pathname !== "" && url.pathname !== "/") return null;
+  if (!parseHostAuthority(url.host)) return null;
+  return url.origin;
 }
 function isAllowedHostHeader(hostHeader, allowedHostnames) {
   if (hostHeader === void 0 || hostHeader === null) return false;
@@ -10547,7 +10585,7 @@ function createUserEndedOpenOutput({ file, url }) {
   };
 }
 async function openCommand(args) {
-  const file = firstPositionalArg(args);
+  const file = firstPositionalArg(args, ["--frame-ancestor"]);
   if (!file) {
     throw new AxiError("HTML file path is required", "VALIDATION_ERROR", ["Run `review-surface <html-file>`"]);
   }
@@ -10556,9 +10594,11 @@ async function openCommand(args) {
   const selfPaintWarning = await selfPaintWarningForFile(absolute);
   const noGate = args.includes("--no-gate");
   const reopen = args.includes("--reopen");
+  const frameAncestor2 = resolveFrameAncestorFlag(flagValue(args, "--frame-ancestor"));
   const baseUrl = await ensureServer({
     forceRestart: shouldForceRestartForLocalBuild(process.argv[1] || ""),
-    reloadKey: sessionKey(absolute)
+    reloadKey: sessionKey(absolute),
+    frameAncestor: frameAncestor2
   });
   const response = await postJson(`${baseUrl}/api/sessions`, { file: absolute, noGate, reopen });
   if (response.status === "user-ended") {
@@ -10586,6 +10626,16 @@ async function selfPaintWarningForFile(absolute) {
   } catch {
     return void 0;
   }
+}
+function resolveFrameAncestorFlag(value) {
+  if (value === null || value === void 0) return "";
+  const origin = parseFrameAncestorOrigin(value);
+  if (!origin) {
+    throw new AxiError(`Invalid --frame-ancestor origin: ${value}`, "VALIDATION_ERROR", [
+      "Pass a single http/https origin with an optional port, e.g. `--frame-ancestor http://127.0.0.1:7481`"
+    ]);
+  }
+  return origin;
 }
 function shouldOpenBrowser(args, env) {
   return !args.includes("--no-open") && env.REVIEW_SURFACE_NO_OPEN !== "1";
@@ -11206,11 +11256,12 @@ async function assertHtmlFile(file) {
 function isHtmlPath(file) {
   return file.toLowerCase().endsWith(".html") || file.toLowerCase().endsWith(".htm");
 }
-async function ensureServer({ forceRestart = false, reloadKey = "" } = {}) {
+async function ensureServer({ forceRestart = false, reloadKey = "", frameAncestor: frameAncestor2 = "" } = {}) {
   const port = defaultPort();
   const baseUrl = `http://${hostForUrl(clientHost())}:${port}`;
   const existing = await fetchHealth(baseUrl);
   if (existing && !shouldRestartServer(VERSION, existing, forceRestart)) {
+    assertFrameAncestorMatches(frameAncestor2, existing);
     return baseUrl;
   }
   if (existing) {
@@ -11228,7 +11279,7 @@ async function ensureServer({ forceRestart = false, reloadKey = "" } = {}) {
       }
     }
   }
-  await startServer(port);
+  await startServer(port, frameAncestor2);
   const deadline = Date.now() + 5e3;
   while (Date.now() < deadline) {
     const health = await fetchHealth(baseUrl);
@@ -11240,6 +11291,16 @@ async function ensureServer({ forceRestart = false, reloadKey = "" } = {}) {
   throw new AxiError("Review Surface server did not start", "SERVER_ERROR", [
     `Run \`review-surface server --port ${port}\` to inspect server startup`
   ]);
+}
+function assertFrameAncestorMatches(frameAncestor2, healthBody) {
+  if (!frameAncestor2) return;
+  const running = String(healthBody?.frame_ancestor || "");
+  if (running === frameAncestor2) return;
+  throw new AxiError(
+    running ? `The running Review Surface server already allows a different frame ancestor (${running})` : "The running Review Surface server was started without a frame ancestor",
+    "SERVER_ERROR",
+    ["Run `review-surface stop`, then re-run this command so the server starts with the requested frame ancestor"]
+  );
 }
 function shouldRestartServer(currentVersion, healthBody, forceRestart = false) {
   if (!healthBody || typeof healthBody !== "object") return false;
@@ -11337,7 +11398,7 @@ function processOnPortMatchesReviewSurface(port) {
   }
   return false;
 }
-async function startServer(port) {
+async function startServer(port, frameAncestor2 = "") {
   await ensureStateDir();
   const entry = resolveServerEntry();
   let logFd = null;
@@ -11346,7 +11407,11 @@ async function startServer(port) {
   } catch {
   }
   try {
-    const child = spawn(process.execPath, [entry, "server", "--port", String(port)], createServerSpawnOptions(logFd));
+    const child = spawn(
+      process.execPath,
+      [entry, "server", "--port", String(port)],
+      createServerSpawnOptions(logFd, frameAncestor2)
+    );
     child.unref();
   } finally {
     if (logFd !== null) closeSync(logFd);
@@ -11357,7 +11422,7 @@ function resolveServerEntry() {
   if (existsSync3(binEntry)) return binEntry;
   return fileURLToPath4(import.meta.url);
 }
-function createServerSpawnOptions(logFd = null) {
+function createServerSpawnOptions(logFd = null, frameAncestor2 = "") {
   const stdio = (
     /** @type {import("node:child_process").StdioOptions} */
     logFd === null ? "ignore" : ["ignore", logFd, logFd]
@@ -11365,7 +11430,11 @@ function createServerSpawnOptions(logFd = null) {
   return {
     detached: true,
     stdio,
-    env: { ...process.env, REVIEW_SURFACE_NO_OPEN: "1" }
+    env: {
+      ...process.env,
+      REVIEW_SURFACE_NO_OPEN: "1",
+      ...frameAncestor2 ? { REVIEW_SURFACE_FRAME_ANCESTOR: frameAncestor2 } : {}
+    }
   };
 }
 async function fetchJson(url, { retries = 0, retryDelayMs = 250 } = {}) {
@@ -11487,9 +11556,9 @@ Note: poll long-polls indefinitely by default until the user sends feedback or e
 }
 function createCommandHelp({ agent = "generic" } = {}) {
   return {
-    open: `Usage: review-surface <html-file> [--no-open] [--no-gate] [--reopen]
+    open: `Usage: review-surface <html-file> [--no-open] [--no-gate] [--reopen] [--frame-ancestor <origin>]
 
-Open or resume a Review Surface review session for an HTML artifact. Use --no-open when you need to ensure the server/session exists without opening another browser window. Use --no-gate to skip the open-time layout curtain for this browser open. If the user explicitly ended the session from the browser, this refuses to reopen it and returns guidance instead - pass --reopen to force it open when the user asks for further review or something important needs their visual attention. Sessions ended by the agent (\`review-surface end\`) reopen normally without the flag.
+Open or resume a Review Surface review session for an HTML artifact. Use --no-open when you need to ensure the server/session exists without opening another browser window. Use --no-gate to skip the open-time layout curtain for this browser open. If the user explicitly ended the session from the browser, this refuses to reopen it and returns guidance instead - pass --reopen to force it open when the user asks for further review or something important needs their visual attention. Sessions ended by the agent (\`review-surface end\`) reopen normally without the flag. Use --frame-ancestor to let one named local origin embed the review chrome in an iframe (see \`review-surface server\` help for what it changes and why it belongs to the server, not the session).
 `,
     poll: `Usage: review-surface poll <html-file> [--agent-reply "..."]
 
@@ -11540,6 +11609,8 @@ Both actions are explicit opt-in, idempotent, and repair a stale path after a re
 Run the local Review Surface server. Pass --verbose (or set REVIEW_SURFACE_DEBUG=1) to log session and watcher events to stderr. Detached server output is appended to ~/.review-surface/server.log, or REVIEW_SURFACE_STATE_DIR/server.log when set, for startup and crash diagnostics.
 
 REVIEW_SURFACE_HOST sets the bind address (default 127.0.0.1; a wildcard 0.0.0.0 or :: binds every interface). Binding beyond loopback exposes an unauthenticated server that can read and serve arbitrary local files to anything that can reach it, so only do so on a trusted network. REVIEW_SURFACE_LINK_HOST sets the hostname written into generated session links (default: the bind address, or loopback when bound to a wildcard). See README's Allowed hosts section for Host allowlisting and REVIEW_SURFACE_ALLOWED_HOSTS. REVIEW_SURFACE_NO_OPEN=1 (or --no-open) suppresses the local browser launch.
+
+REVIEW_SURFACE_FRAME_ANCESTOR names the single extra origin allowed to frame the review chrome, for a local host app that embeds a session (e.g. http://127.0.0.1:7481); scheme http/https, one host, optional port, nothing else, or the server refuses to start. Unset (the default) the chrome answers X-Frame-Options: DENY and frame-ancestors 'none'; set, it answers frame-ancestors 'self' <origin> and no X-Frame-Options, since XFO cannot name one origin. The server reads it once at startup and shares it across every session, so \`review-surface <html-file> --frame-ancestor <origin>\` only takes effect on a server this command starts - run \`review-surface stop\` first if one is already running with a different setting.
 `
   };
 }

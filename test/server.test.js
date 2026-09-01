@@ -27,6 +27,7 @@ import {
   readAttachmentUploadBody,
   resolveArtifactAsset,
   resolveDesignAssetPath,
+  parseFrameAncestorOrigin,
   resolveIdleTimeoutMs,
   resolveWatchTarget,
   serve,
@@ -1705,6 +1706,103 @@ test("the session chrome page refuses to be framed", async () => {
   } finally {
     await server.close();
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a configured frame ancestor replaces the framing denial with a single named origin", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "review-surface-serve-"));
+  const artifact = path.join(dir, "artifact.html");
+  await writeFile(artifact, "<!doctype html><html><body><h1>hi</h1></body></html>");
+  const server = await serve({
+    port: 0,
+    stateFile: path.join(dir, "state.json"),
+    version: "9.9.9-test",
+    frameAncestor: "http://127.0.0.1:7481",
+  });
+  const base = `http://127.0.0.1:${server.port}`;
+  try {
+    const { key } = await fetch(`${base}/api/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ file: artifact }),
+    }).then((res) => res.json());
+
+    const chrome = await fetch(`${base}/session/${key}`);
+    assert.equal(chrome.status, 200);
+    // XFO cannot name one origin, so it is omitted rather than contradicting the CSP.
+    assert.equal(chrome.headers.get("x-frame-options"), null);
+    assert.equal(chrome.headers.get("content-security-policy"), "frame-ancestors 'self' http://127.0.0.1:7481");
+
+    // The CLI needs the running server's setting to refuse a conflicting --frame-ancestor.
+    const health = await fetch(`${base}/health`).then((res) => res.json());
+    assert.equal(health.frame_ancestor, "http://127.0.0.1:7481");
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("health omits the frame ancestor when framing is not opted into", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "review-surface-serve-"));
+  const server = await serve({ port: 0, stateFile: path.join(dir, "state.json"), version: "9.9.9-test" });
+  try {
+    const health = await fetch(`http://127.0.0.1:${server.port}/health`).then((res) => res.json());
+    assert.deepEqual(health, { ok: true, app: "review-surface", version: "9.9.9-test" });
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a malformed frame ancestor refuses to start the server", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "review-surface-serve-"));
+  try {
+    for (const value of ["*", "http://*.example.com", "javascript:alert(1)", "127.0.0.1:7481"]) {
+      await assert.rejects(
+        () =>
+          serve({
+            port: 0,
+            stateFile: path.join(dir, "state.json"),
+            version: "9.9.9-test",
+            frameAncestor: value,
+          }),
+        /Invalid frame ancestor origin/,
+        `expected ${value} to be rejected`,
+      );
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("parseFrameAncestorOrigin accepts only a bare http(s) origin", () => {
+  assert.equal(parseFrameAncestorOrigin("http://127.0.0.1:7481"), "http://127.0.0.1:7481");
+  assert.equal(parseFrameAncestorOrigin(" http://127.0.0.1:7481/ "), "http://127.0.0.1:7481");
+  assert.equal(parseFrameAncestorOrigin("https://Review.Local"), "https://review.local");
+  assert.equal(parseFrameAncestorOrigin("http://[::1]:7481"), "http://[::1]:7481");
+  // Default ports serialize away, exactly as a browser compares them.
+  assert.equal(parseFrameAncestorOrigin("http://localhost:80"), "http://localhost");
+
+  for (const value of [
+    "",
+    "   ",
+    "*",
+    "'self'",
+    "http://*.example.com",
+    "localhost:7481",
+    "127.0.0.1:7481",
+    "file:///tmp/host.html",
+    "javascript:alert(1)",
+    "data:text/html,x",
+    "ws://127.0.0.1:7481",
+    "http://user:pw@127.0.0.1:7481",
+    "http://127.0.0.1:7481/embed",
+    "http://127.0.0.1:7481/?a=1",
+    "http://127.0.0.1:7481#x",
+    "http://127.0.0.1:7481 http://127.0.0.1:7482",
+    "http://127.0.0.1:99999",
+  ]) {
+    assert.equal(parseFrameAncestorOrigin(value), null, `expected ${value} to be rejected`);
   }
 });
 

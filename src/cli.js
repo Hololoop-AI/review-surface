@@ -28,7 +28,7 @@ import {
 } from "./plugin.js";
 import { findPlaybook, listPlaybooks, playbookIds, PLAYBOOK_ROUTER_HELP } from "./playbooks.js";
 import { analyzeSelfPaint, SELF_PAINT_WARNING } from "./self-paint.js";
-import { resolveDesignAssetPath, serve } from "./server.js";
+import { parseFrameAncestorOrigin, resolveDesignAssetPath, serve } from "./server.js";
 import { canonicalFile, sessionKey, SessionStore } from "./session-store.js";
 import { initDefaultTelemetry } from "./telemetry.js";
 
@@ -242,7 +242,7 @@ export function createUserEndedOpenOutput({ file, url }) {
 }
 
 async function openCommand(args) {
-  const file = firstPositionalArg(args);
+  const file = firstPositionalArg(args, ["--frame-ancestor"]);
   if (!file) {
     throw new AxiError("HTML file path is required", "VALIDATION_ERROR", ["Run `review-surface <html-file>`"]);
   }
@@ -251,9 +251,11 @@ async function openCommand(args) {
   const selfPaintWarning = await selfPaintWarningForFile(absolute);
   const noGate = args.includes("--no-gate");
   const reopen = args.includes("--reopen");
+  const frameAncestor = resolveFrameAncestorFlag(flagValue(args, "--frame-ancestor"));
   const baseUrl = await ensureServer({
     forceRestart: shouldForceRestartForLocalBuild(process.argv[1] || ""),
     reloadKey: sessionKey(absolute),
+    frameAncestor,
   });
   const response = await postJson(`${baseUrl}/api/sessions`, { file: absolute, noGate, reopen });
   if (response.status === "user-ended") {
@@ -284,6 +286,19 @@ async function selfPaintWarningForFile(absolute) {
   } catch {
     return undefined;
   }
+}
+
+// `--frame-ancestor` is validated here so a bad origin fails on the command the user typed,
+// with the CLI's error shape, instead of surfacing as a server that refused to start.
+export function resolveFrameAncestorFlag(value) {
+  if (value === null || value === undefined) return "";
+  const origin = parseFrameAncestorOrigin(value);
+  if (!origin) {
+    throw new AxiError(`Invalid --frame-ancestor origin: ${value}`, "VALIDATION_ERROR", [
+      "Pass a single http/https origin with an optional port, e.g. `--frame-ancestor http://127.0.0.1:7481`",
+    ]);
+  }
+  return origin;
 }
 
 export function shouldOpenBrowser(args, env) {
@@ -1083,11 +1098,12 @@ function isHtmlPath(file) {
 
 // `reloadKey` names the session this invocation is about to open. A version-driven replacement
 // reloads that chrome only; every other open review page is told it is outdated and left alone.
-async function ensureServer({ forceRestart = false, reloadKey = "" } = {}) {
+async function ensureServer({ forceRestart = false, reloadKey = "", frameAncestor = "" } = {}) {
   const port = defaultPort();
   const baseUrl = `http://${hostForUrl(clientHost())}:${port}`;
   const existing = await fetchHealth(baseUrl);
   if (existing && !shouldRestartServer(VERSION, existing, forceRestart)) {
+    assertFrameAncestorMatches(frameAncestor, existing);
     return baseUrl;
   }
   if (existing) {
@@ -1110,7 +1126,7 @@ async function ensureServer({ forceRestart = false, reloadKey = "" } = {}) {
       }
     }
   }
-  await startServer(port);
+  await startServer(port, frameAncestor);
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
     const health = await fetchHealth(baseUrl);
@@ -1122,6 +1138,23 @@ async function ensureServer({ forceRestart = false, reloadKey = "" } = {}) {
   throw new AxiError("Review Surface server did not start", "SERVER_ERROR", [
     `Run \`review-surface server --port ${port}\` to inspect server startup`,
   ]);
+}
+
+// The framing opt-in belongs to the server process, not to one session: the server is
+// shared by every open review and reads REVIEW_SURFACE_FRAME_ANCESTOR once at startup.
+// So a `--frame-ancestor` that disagrees with the server already running is refused with
+// the one instruction that can resolve it, rather than silently ignored.
+export function assertFrameAncestorMatches(frameAncestor, healthBody) {
+  if (!frameAncestor) return;
+  const running = String(healthBody?.frame_ancestor || "");
+  if (running === frameAncestor) return;
+  throw new AxiError(
+    running
+      ? `The running Review Surface server already allows a different frame ancestor (${running})`
+      : "The running Review Surface server was started without a frame ancestor",
+    "SERVER_ERROR",
+    ["Run `review-surface stop`, then re-run this command so the server starts with the requested frame ancestor"],
+  );
 }
 
 // Pure helper so the upgrade-detection logic is unit-testable without spinning up HTTP.
@@ -1247,7 +1280,7 @@ function processOnPortMatchesReviewSurface(port) {
   return false;
 }
 
-async function startServer(port) {
+async function startServer(port, frameAncestor = "") {
   await ensureStateDir();
   const entry = resolveServerEntry();
   let logFd = null;
@@ -1257,7 +1290,11 @@ async function startServer(port) {
     // If logging cannot be initialized, keep the server behavior unchanged.
   }
   try {
-    const child = spawn(process.execPath, [entry, "server", "--port", String(port)], createServerSpawnOptions(logFd));
+    const child = spawn(
+      process.execPath,
+      [entry, "server", "--port", String(port)],
+      createServerSpawnOptions(logFd, frameAncestor),
+    );
     child.unref();
   } finally {
     if (logFd !== null) closeSync(logFd);
@@ -1275,17 +1312,27 @@ export function resolveServerEntry() {
 }
 
 /**
+ * The detached server inherits this process's environment, which is how a per-launch
+ * option reaches a background process: `--frame-ancestor` is handed over as
+ * REVIEW_SURFACE_FRAME_ANCESTOR on the server the CLI is about to spawn. A server that
+ * is already running keeps the value it started with (see assertFrameAncestorMatches).
+ *
  * @param {number | null} logFd
+ * @param {string} frameAncestor
  * @returns {import("node:child_process").SpawnOptions}
  */
-export function createServerSpawnOptions(logFd = null) {
+export function createServerSpawnOptions(logFd = null, frameAncestor = "") {
   const stdio = /** @type {import("node:child_process").StdioOptions} */ (
     logFd === null ? "ignore" : ["ignore", logFd, logFd]
   );
   return {
     detached: true,
     stdio,
-    env: { ...process.env, REVIEW_SURFACE_NO_OPEN: "1" },
+    env: {
+      ...process.env,
+      REVIEW_SURFACE_NO_OPEN: "1",
+      ...(frameAncestor ? { REVIEW_SURFACE_FRAME_ANCESTOR: frameAncestor } : {}),
+    },
   };
 }
 
@@ -1401,7 +1448,7 @@ function createTopLevelHelp({ agent = "generic" } = {}) {
 
 function createCommandHelp({ agent = "generic" } = {}) {
   return {
-    open: `Usage: review-surface <html-file> [--no-open] [--no-gate] [--reopen]\n\nOpen or resume a Review Surface review session for an HTML artifact. Use --no-open when you need to ensure the server/session exists without opening another browser window. Use --no-gate to skip the open-time layout curtain for this browser open. If the user explicitly ended the session from the browser, this refuses to reopen it and returns guidance instead - pass --reopen to force it open when the user asks for further review or something important needs their visual attention. Sessions ended by the agent (\`review-surface end\`) reopen normally without the flag.\n`,
+    open: `Usage: review-surface <html-file> [--no-open] [--no-gate] [--reopen] [--frame-ancestor <origin>]\n\nOpen or resume a Review Surface review session for an HTML artifact. Use --no-open when you need to ensure the server/session exists without opening another browser window. Use --no-gate to skip the open-time layout curtain for this browser open. If the user explicitly ended the session from the browser, this refuses to reopen it and returns guidance instead - pass --reopen to force it open when the user asks for further review or something important needs their visual attention. Sessions ended by the agent (\`review-surface end\`) reopen normally without the flag. Use --frame-ancestor to let one named local origin embed the review chrome in an iframe (see \`review-surface server\` help for what it changes and why it belongs to the server, not the session).\n`,
     poll: `Usage: review-surface poll <html-file> [--agent-reply "..."]\n\nThis command long-polls indefinitely for queued user prompts. It stays silent while it waits - that is normal, never kill it. Browser-detected layout issues do NOT return this poll: they are filed passively in the user's Layout issues inbox and arrive as an ordinary tag "layout-warnings" prompt only after the user selects them and queues the fixes. Warning lifecycle: an issue stays unresolved and counted while queued, becomes recurring if a newer artifact revision still shows it, and is resolved only after a newer artifact load plus a complete diagnostic pass at the same viewport no longer detects it. A failed or incomplete pass preserves it as unverified rather than clearing it. The only response that arrives without user action is artifact_failures - a fatal failure that made the review surface itself unusable. Do not pass --timeout-ms during normal agent use; it is for tests and debugging only. ${pollExecutionGuidance({ agent })} Use --agent-reply after applying prior feedback to display your response in Review Surface before waiting again. ${POLL_SEND_AND_END_RULE}\n`,
     end: `Usage: review-surface end <html-file>\n\nEnd a Review Surface session as the agent. A session ended this way still reopens normally on the next \`review-surface <html-file>\`, unlike a user ending it from the browser, which requires --reopen.\n`,
     export: `Usage: review-surface export <html-file> [--out <path>]\n\nWrite a portable copy of an artifact: one HTML file with its LOCAL assets inlined (relative-path stylesheets, scripts, images, and fonts become inline <style>/<script> blocks and data URIs). Remote CDN/font references (https URLs) are left as links for the browser to load, so the file needs network to render those. Review Surface makes no outbound requests - it only reads local files, confined to the artifact's directory. Defaults to writing <name>.export.html next to the source; pass --out to choose a path. The Review Surface annotation SDK is never included in an export.\n`,
@@ -1413,7 +1460,7 @@ Disabled in this build: remote sharing is retired — artifacts never leave the 
     playbook: `Usage: review-surface playbook [playbook_id]\n\nList focused artifact guidance playbooks, or show one playbook by ID. Known IDs: diagram, table, comparison, plan, code, input, slides.\n\n${PLAYBOOK_ROUTER_HELP}\n\nExamples:\n  review-surface playbook\n  review-surface playbook diagram\n  review-surface playbook input\n`,
     design: `Usage: review-surface design\n\nShow a copy-pasteable CDN snippet for Tailwind CSS browser runtime v4 + DaisyUI v5 + themes, Mermaid diagram tooling, a content-to-playbook router, an optional layout safety CSS snippet, plus technical reference for DaisyUI components. ${PLAYBOOK_ROUTER_HELP} Review Surface artifacts stay portable HTML. This CDN snippet is the design fallback, not the default: inspect the subject project before falling back, and paste the layout safety CSS only when useful for dense nested grid/flex layouts, badges, wide fonts, or local media. ${DESIGN_PRIORITY_RULE}\n`,
     setup: `Usage: review-surface setup hooks\n       review-surface setup plugin\n\nhooks: install or repair agent SessionStart hooks for review-surface ambient context in Claude Code, Codex, OpenCode, and GitHub Copilot CLI. Restart your agent session afterward to receive the context. This is the primary integration - it carries live session state.\n\nplugin: register the installed review-surface package as an Agent Plugin (agent-plugins.org) in VS Code, Cursor, and GitHub Copilot CLI. The installed package directory is itself the plugin root, so nothing is downloaded and no marketplace is involved. Reload each client afterward. Codex users should use \`setup hooks\` instead.\n\nBoth actions are explicit opt-in, idempotent, and repair a stale path after a reinstall.\n`,
-    server: `Usage: review-surface server [--port 4387] [--verbose]\n\nRun the local Review Surface server. Pass --verbose (or set REVIEW_SURFACE_DEBUG=1) to log session and watcher events to stderr. Detached server output is appended to ~/.review-surface/server.log, or REVIEW_SURFACE_STATE_DIR/server.log when set, for startup and crash diagnostics.\n\nREVIEW_SURFACE_HOST sets the bind address (default 127.0.0.1; a wildcard 0.0.0.0 or :: binds every interface). Binding beyond loopback exposes an unauthenticated server that can read and serve arbitrary local files to anything that can reach it, so only do so on a trusted network. REVIEW_SURFACE_LINK_HOST sets the hostname written into generated session links (default: the bind address, or loopback when bound to a wildcard). See README's Allowed hosts section for Host allowlisting and REVIEW_SURFACE_ALLOWED_HOSTS. REVIEW_SURFACE_NO_OPEN=1 (or --no-open) suppresses the local browser launch.\n`,
+    server: `Usage: review-surface server [--port 4387] [--verbose]\n\nRun the local Review Surface server. Pass --verbose (or set REVIEW_SURFACE_DEBUG=1) to log session and watcher events to stderr. Detached server output is appended to ~/.review-surface/server.log, or REVIEW_SURFACE_STATE_DIR/server.log when set, for startup and crash diagnostics.\n\nREVIEW_SURFACE_HOST sets the bind address (default 127.0.0.1; a wildcard 0.0.0.0 or :: binds every interface). Binding beyond loopback exposes an unauthenticated server that can read and serve arbitrary local files to anything that can reach it, so only do so on a trusted network. REVIEW_SURFACE_LINK_HOST sets the hostname written into generated session links (default: the bind address, or loopback when bound to a wildcard). See README's Allowed hosts section for Host allowlisting and REVIEW_SURFACE_ALLOWED_HOSTS. REVIEW_SURFACE_NO_OPEN=1 (or --no-open) suppresses the local browser launch.\n\nREVIEW_SURFACE_FRAME_ANCESTOR names the single extra origin allowed to frame the review chrome, for a local host app that embeds a session (e.g. http://127.0.0.1:7481); scheme http/https, one host, optional port, nothing else, or the server refuses to start. Unset (the default) the chrome answers X-Frame-Options: DENY and frame-ancestors 'none'; set, it answers frame-ancestors 'self' <origin> and no X-Frame-Options, since XFO cannot name one origin. The server reads it once at startup and shares it across every session, so \`review-surface <html-file> --frame-ancestor <origin>\` only takes effect on a server this command starts - run \`review-surface stop\` first if one is already running with a different setting.\n`,
   };
 }
 

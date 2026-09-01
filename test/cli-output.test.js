@@ -14,6 +14,7 @@ process.env.REVIEW_SURFACE_HOST = "127.0.0.1";
 process.env.REVIEW_SURFACE_LINK_HOST = "127.0.0.1";
 
 import {
+  assertFrameAncestorMatches,
   collapseHomeDirectory,
   computeCopilotCliHookUpdate,
   createCopilotCliAmbientContextScript,
@@ -37,6 +38,7 @@ import {
   resolveCopilotHookDir,
   resolveHookHomeDir,
   resolveServerEntry,
+  resolveFrameAncestorFlag,
   serverReplacementReason,
   shutdownServerOnPort,
   shouldForceRestartForLocalBuild,
@@ -2016,6 +2018,42 @@ test("server spawn options can persist detached server output to a log fd", () =
 
   assert.equal(options.detached, true);
   assert.deepEqual(options.stdio, ["ignore", 17, 17]);
+});
+
+test("the frame ancestor flag reaches the server the CLI spawns, and only when set", () => {
+  assert.equal(createServerSpawnOptions().env.REVIEW_SURFACE_FRAME_ANCESTOR, undefined);
+  assert.equal(
+    createServerSpawnOptions(null, "http://127.0.0.1:7481").env.REVIEW_SURFACE_FRAME_ANCESTOR,
+    "http://127.0.0.1:7481",
+  );
+});
+
+test("the frame ancestor flag is validated before anything is spawned", () => {
+  assert.equal(resolveFrameAncestorFlag(null), "");
+  assert.equal(resolveFrameAncestorFlag("http://127.0.0.1:7481/"), "http://127.0.0.1:7481");
+  assert.throws(
+    () => resolveFrameAncestorFlag("*"),
+    (error) => error instanceof AxiError && /Invalid --frame-ancestor/.test(error.message),
+  );
+  assert.throws(() => resolveFrameAncestorFlag("localhost:7481"), AxiError);
+});
+
+test("a frame ancestor that disagrees with the running server is refused, not ignored", () => {
+  // The server is shared across sessions and reads the value once at startup, so the only
+  // honest outcomes are "matches" or "stop the server first".
+  assert.equal(assertFrameAncestorMatches("", { app: "review-surface", version: "1.0.0" }), undefined);
+  assert.equal(
+    assertFrameAncestorMatches("http://127.0.0.1:7481", { frame_ancestor: "http://127.0.0.1:7481" }),
+    undefined,
+  );
+  assert.throws(
+    () => assertFrameAncestorMatches("http://127.0.0.1:7481", { app: "review-surface", version: "1.0.0" }),
+    (error) => error instanceof AxiError && /started without a frame ancestor/.test(error.message),
+  );
+  assert.throws(
+    () => assertFrameAncestorMatches("http://127.0.0.1:7481", { frame_ancestor: "http://127.0.0.1:9999" }),
+    (error) => error instanceof AxiError && /already allows a different frame ancestor/.test(error.message),
+  );
 });
 
 test("server entry resolves to a node-executable script that actually invokes run()", () => {

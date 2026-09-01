@@ -41,6 +41,13 @@ export function extraAllowedHosts(env = process.env) {
   return (env.REVIEW_SURFACE_ALLOWED_HOSTS || "").split(/\s+/).filter(Boolean);
 }
 
+// The one extra origin allowed to frame the review chrome (REVIEW_SURFACE_FRAME_ANCESTOR).
+// Empty means the chrome refuses framing entirely, which is the default. Read by the server
+// process at startup, so it is set in the environment of the server the CLI spawns.
+export function frameAncestor(env = process.env) {
+  return env.REVIEW_SURFACE_FRAME_ANCESTOR?.trim() || "";
+}
+
 // Brackets an IPv6 literal so it can be safely interpolated into a URL authority.
 // IPv4 addresses and hostnames pass through unchanged.
 export function hostForUrl(host) {

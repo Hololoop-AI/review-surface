@@ -1024,6 +1024,9 @@ export function createArtifactSdk(
     const params = new URLSearchParams({
       diagramIndex: String(entry.index),
       diagramId: String(entry.diagramId || ""),
+      // Names this frame's placement so it can address the chrome window directly
+      // (its grandparent here) instead of assuming the chrome is the top window.
+      host: "artifact",
       // The frame's channel token is bound to this session, so the frame page
       // must be told which session it belongs to.
       key: String(sessionKey || ""),

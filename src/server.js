@@ -52,7 +52,16 @@ import {
 } from "./export-bundle.js";
 import { publishToHtmlApp } from "./html-app.js";
 import { injectReviewSurfaceSdk } from "./html-transform.js";
-import { bindHost, extraAllowedHosts, hostForUrl, IPV6_LOOPBACK_HOST, linkHost, LOOPBACK_HOST, stateDir } from "./paths.js";
+import {
+  bindHost,
+  extraAllowedHosts,
+  frameAncestor as frameAncestorFromEnv,
+  hostForUrl,
+  IPV6_LOOPBACK_HOST,
+  linkHost,
+  LOOPBACK_HOST,
+  stateDir,
+} from "./paths.js";
 import { canonicalFile, SessionStore, sessionKey } from "./session-store.js";
 import {
   ACCEPTED_IMAGE_MIME,
@@ -262,6 +271,7 @@ export async function serve({
   linkHost: linkHostName = linkHost(),
   allowedHosts = extraAllowedHosts(),
   whiteboardAssetsDir = defaultWhiteboardAssetsDir(),
+  frameAncestor = frameAncestorFromEnv(),
 }) {
   const app = express();
   const store = new SessionStore(stateFile);
@@ -358,6 +368,16 @@ export async function serve({
   // Whiteboard sidecar files live next to state.json, keyed by session + diagram.
   const whiteboardStateRoot = path.dirname(stateFile);
 
+  // Framing opt-in (REVIEW_SURFACE_FRAME_ANCESTOR / `--frame-ancestor`). Resolved once at
+  // startup so a malformed value fails loudly here instead of quietly leaving the chrome
+  // unframable, and so the header path below stays a single branch.
+  const frameAncestorOrigin = frameAncestor ? parseFrameAncestorOrigin(frameAncestor) : "";
+  if (frameAncestor && !frameAncestorOrigin) {
+    throw new Error(
+      `Invalid frame ancestor origin: ${frameAncestor}. Expected a single http/https origin with an optional port, e.g. http://127.0.0.1:7481`,
+    );
+  }
+
   // DNS-rebinding guard. isSameOriginRequest (used on /share and the whiteboard
   // write routes) stops classic cross-origin CSRF but NOT DNS rebinding: a page
   // that rebinds its own domain to this loopback port sends that domain in both
@@ -443,7 +463,12 @@ export async function serve({
   });
 
   app.get("/health", (req, res) => {
-    res.json({ ok: true, app: "review-surface", version });
+    res.json({
+      ok: true,
+      app: "review-surface",
+      version,
+      ...(frameAncestorOrigin ? { frame_ancestor: frameAncestorOrigin } : {}),
+    });
   });
 
   let shutdownResolve;
@@ -904,15 +929,26 @@ export async function serve({
       await watchSession(session, watchers, events, logEvent, reloadDebounceMs);
       const artifactHtml = await readFile(session.file, "utf8").catch(() => "");
       const { faviconTag, title } = extractArtifactHead(artifactHtml);
-      // Nothing legitimately frames the review chrome - it is the top-level
-      // page, and shares/exports ship standalone HTML rather than embedding it.
-      // Refusing to be framed denies an attacker page both a window handle to
-      // this chrome and a clickjacking surface over Send. Scoped to this route:
-      // /artifact/* is framed by this page and /whiteboard-frame is framed by
-      // that artifact document, whose sandbox gives it an opaque origin no
-      // frame-ancestors expression can name.
-      res.setHeader("x-frame-options", "DENY");
-      res.setHeader("content-security-policy", "frame-ancestors 'none'");
+      // By default nothing legitimately frames the review chrome - it is the
+      // top-level page, and shares/exports ship standalone HTML rather than
+      // embedding it. Refusing to be framed denies an attacker page both a
+      // window handle to this chrome and a clickjacking surface over Send.
+      // Scoped to this route: /artifact/* is framed by this page and
+      // /whiteboard-frame is framed by that artifact document, whose sandbox
+      // gives it an opaque origin no frame-ancestors expression can name.
+      //
+      // An operator can name exactly one additional origin (a local host app
+      // that embeds the review). Then CSP carries the whole policy and
+      // X-Frame-Options is omitted: XFO has no single-origin form in modern
+      // browsers (ALLOW-FROM is dead), and a DENY beside a permissive
+      // frame-ancestors would be contradictory - CSP wins where both exist,
+      // but only browsers that implement CSP would agree.
+      if (frameAncestorOrigin) {
+        res.setHeader("content-security-policy", `frame-ancestors 'self' ${frameAncestorOrigin}`);
+      } else {
+        res.setHeader("x-frame-options", "DENY");
+        res.setHeader("content-security-policy", "frame-ancestors 'none'");
+      }
       res.type("html").send(
         createChromeHtml(session, {
           layoutGateEnabled: shouldEnableLayoutGate(req.query || {}),
@@ -1690,6 +1726,31 @@ function parseHostAuthority(value) {
     return null;
   }
   return { hostname, port, authority };
+}
+
+// The single origin an operator may allow to frame the review chrome, e.g. a thin local
+// host app that embeds a session. Strict by construction: an http/https scheme, one host
+// (loopback literal or hostname), an optional port, and nothing else - no credentials, no
+// path, no query, no fragment, no wildcard, no scheme-less or list value. Returns the
+// browser's origin serialization (default ports dropped) or null when the value cannot be
+// an origin; the caller refuses to start on null rather than silently denying framing.
+export function parseFrameAncestorOrigin(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+  if (url.username || url.password) return null;
+  if (url.search || url.hash) return null;
+  if (url.pathname !== "" && url.pathname !== "/") return null;
+  // Hold the authority to the same shape the Host allowlist enforces, so an origin that
+  // could never be a Host header this server answers to is rejected here too.
+  if (!parseHostAuthority(url.host)) return null;
+  return url.origin;
 }
 
 // Extract the hostname (without port) from a Host header value, honoring

@@ -45,6 +45,19 @@ import {
 
 const SAVE_DEBOUNCE_MS = 800;
 
+// The chrome window this frame talks to. Overlay frames are hosted by the chrome
+// document itself, so that is `parent`; inline frames are created by the SDK inside
+// the artifact document, which the chrome frames, so that is `parent.parent`. The
+// placement is carried in the frame URL (`host=artifact`) because the first message
+// this frame sends - `ready` - precedes the init that names the mode.
+// This was previously the top window, which is the chrome only while the chrome is
+// the top-level page; once a host app is allowed to frame the chrome
+// (REVIEW_SURFACE_FRAME_ANCESTOR), the top window is that host app instead.
+// Reading `parent` across an origin boundary is permitted; nothing else about the
+// ancestor windows is touched.
+const chromeWindow =
+  new URLSearchParams(location.search).get("host") === "artifact" ? window.parent.parent : window.parent;
+
 const state = {
   mode: "overlay",
   diagramIndex: 0,
@@ -71,7 +84,7 @@ const state = {
 };
 
 function post(message) {
-  window.top.postMessage(
+  chromeWindow.postMessage(
     {
       ...message,
       diagramIndex: state.diagramIndex,
@@ -676,7 +689,7 @@ function main() {
   state.diagramId = String(frameUrl.searchParams.get("diagramId") || "");
   let initialized = false;
   window.addEventListener("message", (event) => {
-    if (event.source !== window.top) return;
+    if (event.source !== chromeWindow) return;
     const msg = event.data || {};
     if (msg.type === "review-surface-whiteboard:init" && !initialized && typeof msg.channelId === "string" && msg.channelId) {
       initialized = true;
