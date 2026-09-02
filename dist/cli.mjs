@@ -7,12 +7,15 @@ var __export = (target, all) => {
 
 // src/cli.js
 import { spawn, spawnSync } from "node:child_process";
-import { closeSync, existsSync as existsSync3, mkdirSync as mkdirSync2, openSync, readFileSync as readFileSync2, realpathSync, writeFileSync as writeFileSync2 } from "node:fs";
+import { closeSync, existsSync as existsSync3, mkdirSync as mkdirSync2, openSync, readFileSync as readFileSync3, realpathSync, writeFileSync as writeFileSync2 } from "node:fs";
 import { access, readFile as readFile6, writeFile as writeFile4 } from "node:fs/promises";
 import os3 from "node:os";
 import path8 from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 import { AxiError, installSessionStartHooks, RESERVED_COMMANDS, runAxiCli } from "axi-sdk-js";
+
+// src/design-reference.js
+import { readFileSync } from "node:fs";
 
 // src/playbooks.js
 var PLAYBOOK_ROUTER_INSTRUCTION = "MUST open each matching playbook before writing HTML. Match against the use_when trigger; one artifact often combines several playbooks.";
@@ -440,8 +443,26 @@ var DAISYUI_THEMES = [
   "abyss",
   "silk"
 ];
+function userMandatedStyle(env = process.env) {
+  const file = env.REVIEW_SURFACE_STYLE;
+  if (!file) return null;
+  try {
+    const text = readFileSync(file, "utf8").slice(0, 2e4);
+    return text.trim() ? { source: file, spec: text } : null;
+  } catch {
+    return null;
+  }
+}
 function createDesignOutput() {
+  const mandated = userMandatedStyle();
   return {
+    ...mandated && {
+      user_style: {
+        instruction: "MANDATED STYLE \u2014 the end user pinned this in configuration (REVIEW_SURFACE_STYLE). It OVERRIDES every other design source below: do not inspect the subject project for a design system and do not use the CDN fallback for look-and-feel. Author the artifact to this spec exactly.",
+        source: mandated.source,
+        spec: mandated.spec
+      }
+    },
     playbook_router: {
       instruction: PLAYBOOK_ROUTER_INSTRUCTION,
       playbooks: listPlaybooks()
@@ -4296,7 +4317,7 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
-  readFileSync,
+  readFileSync as readFileSync2,
   readlinkSync,
   renameSync,
   rmSync,
@@ -4318,7 +4339,7 @@ function resolvePluginRoot() {
 }
 function readPluginManifest(root) {
   try {
-    return JSON.parse(readFileSync(path3.join(root, "plugin.json"), "utf8"));
+    return JSON.parse(readFileSync2(path3.join(root, "plugin.json"), "utf8"));
   } catch {
     return null;
   }
@@ -11014,7 +11035,7 @@ function registerVsCodePlugin(pluginRoot, pluginName) {
   let settings = {};
   if (hasSettingsFile) {
     try {
-      settings = JSON.parse(readFileSync2(settingsFile, "utf8"));
+      settings = JSON.parse(readFileSync3(settingsFile, "utf8"));
     } catch {
       return {
         client: "vscode",
@@ -11110,7 +11131,7 @@ function parseCopilotPluginRecords(output) {
 function installedCopilotPluginSourcePath(pluginName) {
   const configDir = process.env.COPILOT_HOME || path8.join(resolveHookHomeDir(), ".copilot");
   try {
-    const config = JSON.parse(readFileSync2(path8.join(configDir, "config.json"), "utf8"));
+    const config = JSON.parse(readFileSync3(path8.join(configDir, "config.json"), "utf8"));
     const record = Array.isArray(config.installedPlugins) ? config.installedPlugins.find((candidate) => candidate?.name === pluginName) : null;
     return record ? copilotPluginSourcePath(record) : null;
   } catch {
@@ -11202,7 +11223,7 @@ function installCopilotCliSessionStartHook({
   const target = path8.join(hookDir, "review-surface.json");
   try {
     mkdirSync2(path8.dirname(target), { recursive: true });
-    const current = existsSync3(target) ? JSON.parse(readFileSync2(target, "utf8")) : {};
+    const current = existsSync3(target) ? JSON.parse(readFileSync3(target, "utf8")) : {};
     const [updated, changed] = computeCopilotCliHookUpdate(
       current,
       createCopilotCliSessionStartHook(command, timeoutSec)
