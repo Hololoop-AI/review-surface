@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { listPlaybooks, PLAYBOOK_ROUTER_INSTRUCTION } from "./playbooks.js";
 
 export const TAILWIND_BROWSER_VERSION = "4.2.4";
@@ -188,8 +190,32 @@ export const DAISYUI_THEMES = [
   "silk",
 ];
 
+// The end user's mandated style: REVIEW_SURFACE_STYLE points at a file
+// (markdown, css, or plain text) describing the exact style artifacts must
+// use. When set, it outranks every other design source — the "dynamic" pick
+// is clever, but a user staring at these pages all day gets to pin the look.
+function userMandatedStyle(env = process.env) {
+  const file = env.REVIEW_SURFACE_STYLE;
+  if (!file) return null;
+  try {
+    const text = readFileSync(file, "utf8").slice(0, 20000);
+    return text.trim() ? { source: file, spec: text } : null;
+  } catch {
+    return null;
+  }
+}
+
 export function createDesignOutput() {
+  const mandated = userMandatedStyle();
   return {
+    ...(mandated && {
+      user_style: {
+        instruction:
+          "MANDATED STYLE — the end user pinned this in configuration (REVIEW_SURFACE_STYLE). It OVERRIDES every other design source below: do not inspect the subject project for a design system and do not use the CDN fallback for look-and-feel. Author the artifact to this spec exactly.",
+        source: mandated.source,
+        spec: mandated.spec,
+      },
+    }),
     playbook_router: {
       instruction: PLAYBOOK_ROUTER_INSTRUCTION,
       playbooks: listPlaybooks(),
