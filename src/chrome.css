@@ -1666,3 +1666,15 @@ body.layout-gate-active iframe#artifact {
 .whiteboard-error[hidden] {
   display: none;
 }
+
+/* Desktop-only conversation collapse: the artifact takes the full width and the
+   panel disappears until asked for. The phone sheet keeps its own controller.
+   (ARB-AYGD: the panel should not permanently dock at half-width.) */
+@media (min-width: 861px) {
+  body.panel-collapsed .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  body.panel-collapsed .panel {
+    display: none;
+  }
+}

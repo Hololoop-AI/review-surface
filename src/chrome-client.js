@@ -707,6 +707,35 @@ const MOBILE_SHEET_MEDIA = "(max-width: 860px)";
 // How far a drag on the dock must travel before it counts as a gesture rather than a tap.
 const SHEET_DRAG_THRESHOLD_PX = 48;
 const sheetStorageKey = "review-surface:sheet-open:" + key;
+
+// ---- Desktop conversation collapse ----
+// Above the phone breakpoint the panel is docked; this hides it entirely so
+// the artifact takes the full width (theater/embedded use).
+const panelCollapse = document.getElementById("panelCollapse");
+const panelHiddenKey = "review-surface:panel-hidden:" + key;
+function applyPanelHidden(hidden) {
+  document.body.classList.toggle("panel-collapsed", hidden);
+  if (panelCollapse) panelCollapse.setAttribute("aria-pressed", String(!hidden));
+}
+let panelHidden = false;
+try {
+  panelHidden = sessionStorage.getItem(panelHiddenKey) === "1";
+} catch {
+  panelHidden = false;
+}
+applyPanelHidden(panelHidden);
+if (panelCollapse) {
+  panelCollapse.addEventListener("click", () => {
+    panelHidden = !panelHidden;
+    try {
+      sessionStorage.setItem(panelHiddenKey, panelHidden ? "1" : "0");
+    } catch {
+      // storage may be unavailable; the toggle still works for this load
+    }
+    applyPanelHidden(panelHidden);
+  });
+}
+
 const sheetMedia = typeof window.matchMedia === "function" ? window.matchMedia(MOBILE_SHEET_MEDIA) : null;
 // The user's intent, kept across a chrome reload so a live-reload or server upgrade does not drop
 // them back onto a closed dock mid-conversation.
