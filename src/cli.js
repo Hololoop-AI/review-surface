@@ -32,7 +32,19 @@ import { parseFrameAncestorOrigin, resolveDesignAssetPath, serve } from "./serve
 import { canonicalFile, sessionKey, SessionStore } from "./session-store.js";
 import { initDefaultTelemetry } from "./telemetry.js";
 
-const COMMANDS = new Set(["open", "poll", "end", "stop", "server", "playbook", "design", "setup", "export", "share"]);
+const COMMANDS = new Set([
+  "open",
+  "poll",
+  "journal",
+  "end",
+  "stop",
+  "server",
+  "playbook",
+  "design",
+  "setup",
+  "export",
+  "share",
+]);
 // SDK-reserved built-ins (e.g. `update`) must reach runAxiCli untouched; otherwise
 // the bare-arg normalization below would rewrite them into the hidden `open` command.
 const RESERVED = new Set(RESERVED_COMMANDS);
@@ -112,6 +124,7 @@ export async function run(argv) {
       commands: {
         open: openCommand,
         poll: pollCommand,
+        journal: journalCommand,
         end: endCommand,
         stop: stopCommand,
         playbook: playbookCommand,
@@ -303,6 +316,27 @@ export function resolveFrameAncestorFlag(value) {
 
 export function shouldOpenBrowser(args, env) {
   return !args.includes("--no-open") && env.REVIEW_SURFACE_NO_OPEN !== "1";
+}
+
+async function journalCommand(args) {
+  const file = firstPositionalArg(args, ["--limit"]);
+  if (!file) {
+    throw new AxiError("HTML file path is required", "VALIDATION_ERROR", ["Run `review-surface journal <html-file>`"]);
+  }
+  const absolute = await canonicalFile(file);
+  const limitFlag = flagValue(args, "--limit");
+  const limit = limitFlag ? Number(limitFlag) : undefined;
+  if (limitFlag && (!Number.isFinite(limit) || limit < 0)) {
+    throw new AxiError("--limit must be a non-negative number", "VALIDATION_ERROR", [
+      "Run `review-surface journal <html-file> --limit 5`",
+    ]);
+  }
+  const store = new SessionStore(stateFile());
+  const batches = await store.readFeedbackJournal(sessionKey(absolute), { limit });
+  // Raw JSON on stdout like poll's --json path: machine consumers recover lost
+  // deliveries from this output, so it must stay parseable as-is.
+  process.stdout.write(`${JSON.stringify({ file: absolute, batches })}\n`);
+  return "";
 }
 
 async function pollCommand(args) {
@@ -1443,13 +1477,14 @@ export function getCommandHelp(command, { agent = "generic" } = {}) {
 }
 
 function createTopLevelHelp({ agent = "generic" } = {}) {
-  return `review-surface - Review Surface AXI\n\nUsage:\n  review-surface\n  review-surface <html-file> [--no-open] [--no-gate] [--reopen]\n  review-surface poll <html-file> [--agent-reply "..."]\n  review-surface end <html-file>\n  review-surface export <html-file> [--out <path>]\n  review-surface share <html-file> [--password <pw>] [--token <t>]\n  review-surface stop\n  review-surface playbook [playbook_id]\n  review-surface design\n  review-surface setup hooks\n  review-surface setup plugin\n\n${DESIGN_SYSTEM_HINT}\n\nNote: poll long-polls indefinitely by default until the user sends feedback or ends the session, staying silent while it waits - never kill it. Layout issues the browser detects are passive: they collect in the user's Layout issues inbox in the Review Surface top bar and reach the agent only when the user selects them and queues the fixes, as an ordinary tag "layout-warnings" prompt. Do not pass --timeout-ms during normal agent use; it is for tests and debugging only. ${pollExecutionGuidance({ agent })} ${POLL_SEND_AND_END_RULE}\n\n`;
+  return `review-surface - Review Surface AXI\n\nUsage:\n  review-surface\n  review-surface <html-file> [--no-open] [--no-gate] [--reopen]\n  review-surface poll <html-file> [--agent-reply "..."]\n  review-surface journal <html-file> [--limit <n>]\n  review-surface end <html-file>\n  review-surface export <html-file> [--out <path>]\n  review-surface share <html-file> [--password <pw>] [--token <t>]\n  review-surface stop\n  review-surface playbook [playbook_id]\n  review-surface design\n  review-surface setup hooks\n  review-surface setup plugin\n\n${DESIGN_SYSTEM_HINT}\n\nNote: poll long-polls indefinitely by default until the user sends feedback or ends the session, staying silent while it waits - never kill it. Layout issues the browser detects are passive: they collect in the user's Layout issues inbox in the Review Surface top bar and reach the agent only when the user selects them and queues the fixes, as an ordinary tag "layout-warnings" prompt. Do not pass --timeout-ms during normal agent use; it is for tests and debugging only. ${pollExecutionGuidance({ agent })} ${POLL_SEND_AND_END_RULE}\n\n`;
 }
 
 function createCommandHelp({ agent = "generic" } = {}) {
   return {
     open: `Usage: review-surface <html-file> [--no-open] [--no-gate] [--reopen] [--frame-ancestor <origin>]\n\nOpen or resume a Review Surface review session for an HTML artifact. Use --no-open when you need to ensure the server/session exists without opening another browser window. Use --no-gate to skip the open-time layout curtain for this browser open. If the user explicitly ended the session from the browser, this refuses to reopen it and returns guidance instead - pass --reopen to force it open when the user asks for further review or something important needs their visual attention. Sessions ended by the agent (\`review-surface end\`) reopen normally without the flag. Use --frame-ancestor to let one named local origin embed the review chrome in an iframe (see \`review-surface server\` help for what it changes and why it belongs to the server, not the session).\n`,
     poll: `Usage: review-surface poll <html-file> [--agent-reply "..."]\n\nThis command long-polls indefinitely for queued user prompts. It stays silent while it waits - that is normal, never kill it. Browser-detected layout issues do NOT return this poll: they are filed passively in the user's Layout issues inbox and arrive as an ordinary tag "layout-warnings" prompt only after the user selects them and queues the fixes. Warning lifecycle: an issue stays unresolved and counted while queued, becomes recurring if a newer artifact revision still shows it, and is resolved only after a newer artifact load plus a complete diagnostic pass at the same viewport no longer detects it. A failed or incomplete pass preserves it as unverified rather than clearing it. The only response that arrives without user action is artifact_failures - a fatal failure that made the review surface itself unusable. Do not pass --timeout-ms during normal agent use; it is for tests and debugging only. ${pollExecutionGuidance({ agent })} Use --agent-reply after applying prior feedback to display your response in Review Surface before waiting again. ${POLL_SEND_AND_END_RULE}\n`,
+    journal: `Usage: review-surface journal <html-file> [--limit <n>]\n\nPrint the session's accepted feedback batches from the append-only journal as JSON, oldest first. Every batch the user ever sent is journaled at accept time and never removed by delivery, so this is the recovery path when a delivered poll response was lost or mangled downstream - re-read the most recent batch here instead of asking the user to resubmit. --limit keeps only the newest <n> batches.\n`,
     end: `Usage: review-surface end <html-file>\n\nEnd a Review Surface session as the agent. A session ended this way still reopens normally on the next \`review-surface <html-file>\`, unlike a user ending it from the browser, which requires --reopen.\n`,
     export: `Usage: review-surface export <html-file> [--out <path>]\n\nWrite a portable copy of an artifact: one HTML file with its LOCAL assets inlined (relative-path stylesheets, scripts, images, and fonts become inline <style>/<script> blocks and data URIs). Remote CDN/font references (https URLs) are left as links for the browser to load, so the file needs network to render those. Review Surface makes no outbound requests - it only reads local files, confined to the artifact's directory. Defaults to writing <name>.export.html next to the source; pass --out to choose a path. The Review Surface annotation SDK is never included in an export.\n`,
     share: `Usage: review-surface share <html-file>

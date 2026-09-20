@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { readFile, realpath, writeFile } from "node:fs/promises";
+import { appendFile, readFile, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -50,6 +50,11 @@ export const MAX_DELIVERED_ATTACHMENTS = 256;
 export class SessionStore {
   constructor(file) {
     this.file = file;
+    // Append-only durability log beside state.json. Every accepted prompt batch
+    // is written here BEFORE it becomes deliverable, and delivery never touches
+    // it - so a consumer that mangles or drops a delivered batch (the poll
+    // response is consume-once) can always recover it from the journal.
+    this.journalFile = path.join(path.dirname(file), "feedback-journal.jsonl");
     // One mutex serializes every state.json read-modify-write and the server's
     // attachment disk lifecycle sections through runExclusive.
     this.lock = new AsyncMutex();
@@ -262,8 +267,55 @@ export class SessionStore {
           : "open";
     if (shouldEndSession) session.ended_by = "user";
     session.updated_at = new Date().toISOString();
+    // Journal before the state write: if the state write then fails, the chrome
+    // keeps its queue and re-sends, and the worst case is a duplicate journal
+    // row - never an accepted-but-unjournaled batch. Restores are replays of
+    // batches journaled at their original accept, so they are skipped.
+    if (!restoring && acceptedPrompts.length > 0) {
+      await appendFile(
+        this.journalFile,
+        JSON.stringify({
+          at,
+          key,
+          file: session.file,
+          dom_snapshot: restoredSnapshot,
+          prompts: acceptedPrompts,
+          ...(shouldEndSession ? { end_session: true } : {}),
+        }) + "\n",
+      );
+    }
     await this.writeState(state);
     return session;
+  }
+
+  /**
+   * Read this session's accepted prompt batches from the append-only journal,
+   * oldest first. A torn trailing line (a reader racing an append from another
+   * process) is skipped rather than failing the whole read.
+   * @param {string} key
+   * @param {{ limit?: number }} [options]
+   * @returns {Promise<any[]>}
+   */
+  async readFeedbackJournal(key, { limit } = {}) {
+    let raw;
+    try {
+      raw = await readFile(this.journalFile, "utf8");
+    } catch (error) {
+      if (/** @type {NodeJS.ErrnoException} */ (error).code === "ENOENT") return [];
+      throw error;
+    }
+    const batches = [];
+    for (const line of raw.split("\n")) {
+      if (!line.trim()) continue;
+      let record;
+      try {
+        record = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (record && record.key === key) batches.push(record);
+    }
+    return Number.isFinite(limit) && limit >= 0 ? batches.slice(-limit) : batches;
   }
 
   async issueReviewerHandoff(key) {
