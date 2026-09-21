@@ -4521,7 +4521,7 @@ function attrValue(attrs, name) {
 import crypto6 from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync as existsSync2 } from "node:fs";
-import { appendFile, mkdir as mkdir4, readFile as readFile5, realpath as realpath3 } from "node:fs/promises";
+import { appendFile as appendFile2, mkdir as mkdir4, readFile as readFile5, realpath as realpath3 } from "node:fs/promises";
 import { isIP } from "node:net";
 import { homedir } from "node:os";
 import path7 from "node:path";
@@ -7300,7 +7300,7 @@ ${script}`;
 
 // src/session-store.js
 import crypto4 from "node:crypto";
-import { readFile as readFile3, realpath as realpath2, writeFile as writeFile2 } from "node:fs/promises";
+import { appendFile, readFile as readFile3, realpath as realpath2, writeFile as writeFile2 } from "node:fs/promises";
 import path5 from "node:path";
 
 // src/async-mutex.js
@@ -7329,6 +7329,7 @@ var MAX_DELIVERED_ATTACHMENTS = 256;
 var SessionStore = class {
   constructor(file) {
     this.file = file;
+    this.journalFile = path5.join(path5.dirname(file), "feedback-journal.jsonl");
     this.lock = new AsyncMutex();
     this.artifactLoads = /* @__PURE__ */ new Map();
     this.chromeLoadContexts = /* @__PURE__ */ new Map();
@@ -7493,8 +7494,53 @@ var SessionStore = class {
     session.status = shouldEndSession || alreadyEnded ? "ended" : session.prompts.length > 0 || restoring && Array.isArray(session.artifact_failures) && session.artifact_failures.length > 0 ? "feedback" : "open";
     if (shouldEndSession) session.ended_by = "user";
     session.updated_at = (/* @__PURE__ */ new Date()).toISOString();
+    if (!restoring && acceptedPrompts.length > 0) {
+      await appendFile(
+        this.journalFile,
+        JSON.stringify({
+          at,
+          key,
+          file: session.file,
+          dom_snapshot: restoredSnapshot,
+          prompts: acceptedPrompts,
+          ...shouldEndSession ? { end_session: true } : {}
+        }) + "\n"
+      );
+    }
     await this.writeState(state);
     return session;
+  }
+  /**
+   * Read this session's accepted prompt batches from the append-only journal,
+   * oldest first. A torn trailing line (a reader racing an append from another
+   * process) is skipped rather than failing the whole read.
+   * @param {string} key
+   * @param {{ limit?: number }} [options]
+   * @returns {Promise<any[]>}
+   */
+  async readFeedbackJournal(key, { limit } = {}) {
+    let raw;
+    try {
+      raw = await readFile3(this.journalFile, "utf8");
+    } catch (error) {
+      if (
+        /** @type {NodeJS.ErrnoException} */
+        error.code === "ENOENT"
+      ) return [];
+      throw error;
+    }
+    const batches = [];
+    for (const line of raw.split("\n")) {
+      if (!line.trim()) continue;
+      let record;
+      try {
+        record = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (record && record.key === key) batches.push(record);
+    }
+    return Number.isFinite(limit) && limit >= 0 ? batches.slice(-limit) : batches;
   }
   async issueReviewerHandoff(key) {
     return this.runExclusive(async () => {
@@ -8564,7 +8610,7 @@ async function appendOutboxSignal(key, ended) {
   try {
     const file = outboxFile();
     await mkdir4(path7.dirname(file), { recursive: true });
-    await appendFile(file, `${JSON.stringify({ ts: Date.now(), key, ended: Boolean(ended) })}
+    await appendFile2(file, `${JSON.stringify({ ts: Date.now(), key, ended: Boolean(ended) })}
 `);
   } catch {
   }
@@ -8999,6 +9045,26 @@ async function serve({
         return;
       }
       res.json({ warnings: result.warnings, revision: result.revision });
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.get("/api/:key/agent-status", async (req, res, next) => {
+    try {
+      const session = await store.findByKey(req.params.key);
+      if (!session) {
+        res.status(404).json({ error: "session not found" });
+        return;
+      }
+      const lastAgentReply = [...session.chat || []].reverse().find((message) => message.role === "agent");
+      res.json({
+        status: session.status,
+        ended_by: session.ended_by || null,
+        presence: computePresence(req.params.key, activePolls, deliveredFeedback),
+        pending_prompts: (session.prompts || []).length,
+        updated_at: session.updated_at || null,
+        last_agent_reply_at: lastAgentReply?.at || null
+      });
     } catch (error) {
       next(error);
     }
@@ -10434,7 +10500,19 @@ function normalizePagePath(path9) {
 }
 
 // src/cli.js
-var COMMANDS = /* @__PURE__ */ new Set(["open", "poll", "end", "stop", "server", "playbook", "design", "setup", "export", "share"]);
+var COMMANDS = /* @__PURE__ */ new Set([
+  "open",
+  "poll",
+  "journal",
+  "end",
+  "stop",
+  "server",
+  "playbook",
+  "design",
+  "setup",
+  "export",
+  "share"
+]);
 var RESERVED = new Set(RESERVED_COMMANDS);
 var DESCRIPTION = "Review Surface helps agents turn rich HTML artifacts into collaborative human review surfaces. Whenever you are about to give user a complex response that will be easier to understand via a rich / interactive page, consider using Review Surface. First generate an interactive HTML artifact according to user request, then run `review-surface <html-file>` so the user can visually review it, annotate elements or selected text, queue prompts, and send feedback back through `review-surface poll`.";
 var POLL_WAKE_PATH_RULES = Object.freeze([
@@ -10495,6 +10573,7 @@ async function run(argv) {
       commands: {
         open: openCommand,
         poll: pollCommand,
+        journal: journalCommand,
         end: endCommand,
         stop: stopCommand,
         playbook: playbookCommand,
@@ -10660,6 +10739,25 @@ function resolveFrameAncestorFlag(value) {
 }
 function shouldOpenBrowser(args, env) {
   return !args.includes("--no-open") && env.REVIEW_SURFACE_NO_OPEN !== "1";
+}
+async function journalCommand(args) {
+  const file = firstPositionalArg(args, ["--limit"]);
+  if (!file) {
+    throw new AxiError("HTML file path is required", "VALIDATION_ERROR", ["Run `review-surface journal <html-file>`"]);
+  }
+  const absolute = await canonicalFile(file);
+  const limitFlag = flagValue(args, "--limit");
+  const limit = limitFlag ? Number(limitFlag) : void 0;
+  if (limitFlag && (!Number.isFinite(limit) || limit < 0)) {
+    throw new AxiError("--limit must be a non-negative number", "VALIDATION_ERROR", [
+      "Run `review-surface journal <html-file> --limit 5`"
+    ]);
+  }
+  const store = new SessionStore(stateFile());
+  const batches = await store.readFeedbackJournal(sessionKey(absolute), { limit });
+  process.stdout.write(`${JSON.stringify({ file: absolute, batches })}
+`);
+  return "";
 }
 async function pollCommand(args) {
   const file = firstPositionalArg(args, ["--agent-reply", "--timeout-ms"]);
@@ -11560,6 +11658,7 @@ Usage:
   review-surface
   review-surface <html-file> [--no-open] [--no-gate] [--reopen]
   review-surface poll <html-file> [--agent-reply "..."]
+  review-surface journal <html-file> [--limit <n>]
   review-surface end <html-file>
   review-surface export <html-file> [--out <path>]
   review-surface share <html-file> [--password <pw>] [--token <t>]
@@ -11584,6 +11683,10 @@ Open or resume a Review Surface review session for an HTML artifact. Use --no-op
     poll: `Usage: review-surface poll <html-file> [--agent-reply "..."]
 
 This command long-polls indefinitely for queued user prompts. It stays silent while it waits - that is normal, never kill it. Browser-detected layout issues do NOT return this poll: they are filed passively in the user's Layout issues inbox and arrive as an ordinary tag "layout-warnings" prompt only after the user selects them and queues the fixes. Warning lifecycle: an issue stays unresolved and counted while queued, becomes recurring if a newer artifact revision still shows it, and is resolved only after a newer artifact load plus a complete diagnostic pass at the same viewport no longer detects it. A failed or incomplete pass preserves it as unverified rather than clearing it. The only response that arrives without user action is artifact_failures - a fatal failure that made the review surface itself unusable. Do not pass --timeout-ms during normal agent use; it is for tests and debugging only. ${pollExecutionGuidance({ agent })} Use --agent-reply after applying prior feedback to display your response in Review Surface before waiting again. ${POLL_SEND_AND_END_RULE}
+`,
+    journal: `Usage: review-surface journal <html-file> [--limit <n>]
+
+Print the session's accepted feedback batches from the append-only journal as JSON, oldest first. Every batch the user ever sent is journaled at accept time and never removed by delivery, so this is the recovery path when a delivered poll response was lost or mangled downstream - re-read the most recent batch here instead of asking the user to resubmit. --limit keeps only the newest <n> batches.
 `,
     end: `Usage: review-surface end <html-file>
 

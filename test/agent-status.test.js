@@ -1,0 +1,90 @@
+import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import test from "node:test";
+
+process.env.REVIEW_SURFACE_HOST = "127.0.0.1";
+process.env.REVIEW_SURFACE_LINK_HOST = "127.0.0.1";
+
+import { serve } from "../src/server.js";
+
+async function servedSession() {
+  const dir = await mkdtemp(path.join(tmpdir(), "review-surface-agent-status-"));
+  const artifact = path.join(dir, "artifact.html");
+  // poll addresses sessions by FILE (the canonical path is the identity)
+  await writeFile(artifact, "<!doctype html><html><body><h1>Hi</h1></body></html>");
+  const server = await serve({ port: 0, stateFile: path.join(dir, "state.json"), version: "9.9.9-test" });
+  const base = `http://127.0.0.1:${server.port}`;
+  const created = await fetch(`${base}/api/sessions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ file: artifact }),
+  }).then((response) => response.json());
+  const key = created.url.split("/").pop();
+  return { dir, server, base, key, artifact };
+}
+
+test("agent-status reads presence and pending prompts without consuming anything", async () => {
+  const { dir, server, base, key, artifact } = await servedSession();
+  try {
+    const idle = await fetch(`${base}/api/${key}/agent-status`).then((r) => r.json());
+    assert.equal(idle.status, "open");
+    assert.equal(idle.presence, "waiting");
+    assert.equal(idle.pending_prompts, 0);
+    assert.equal(idle.last_agent_reply_at, null);
+    assert.ok(idle.updated_at);
+
+    // the driver sends feedback (same-origin guarded route, so say who we are)
+    const queued = await fetch(`${base}/api/${key}/prompts`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: base },
+      body: JSON.stringify({
+        domSnapshot: 'uid=1 h1 "Hi"',
+        prompts: [{ uid: "1", prompt: "warmer please", selector: "h1", tag: "h1", text: "Hi" }],
+      }),
+    });
+    assert.equal(queued.status, 200);
+
+    const pending = await fetch(`${base}/api/${key}/agent-status`).then((r) => r.json());
+    assert.equal(pending.pending_prompts, 1);
+
+    // reading status twice must not consume: the count holds
+    const again = await fetch(`${base}/api/${key}/agent-status`).then((r) => r.json());
+    assert.equal(again.pending_prompts, 1);
+
+    // delivery consumes the queue and flips presence to working
+    const delivered = await fetch(
+      `${base}/api/poll?file=${encodeURIComponent(artifact)}&timeoutMs=0`,
+    ).then((r) => r.json());
+    assert.equal(delivered.status, "feedback");
+    const working = await fetch(`${base}/api/${key}/agent-status`).then((r) => r.json());
+    assert.equal(working.pending_prompts, 0);
+    assert.equal(working.presence, "working");
+
+    // an agent reply closes the working state and stamps the chat
+    const replied = await fetch(`${base}/api/${key}/agent-reply`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: "done — take a look" }),
+    });
+    assert.equal(replied.status, 200);
+    const answered = await fetch(`${base}/api/${key}/agent-status`).then((r) => r.json());
+    assert.equal(answered.presence, "waiting");
+    assert.ok(answered.last_agent_reply_at);
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("agent-status is 404 for an unknown session", async () => {
+  const { dir, server, base } = await servedSession();
+  try {
+    const res = await fetch(`${base}/api/no-such-key/agent-status`);
+    assert.equal(res.status, 404);
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

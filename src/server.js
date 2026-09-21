@@ -736,6 +736,34 @@ export async function serve({
     }
   });
 
+  // Read-only agent status for external dashboards (e.g. Cadre's fleet page):
+  // what the agent is doing with this session right now and when it last
+  // moved. Never consumes and never mutates — a dashboard must be able to
+  // poll this on every render for free, which is exactly what GET /api/poll
+  // can never offer (its delivery consumes the feedback).
+  app.get("/api/:key/agent-status", async (req, res, next) => {
+    try {
+      const session = await store.findByKey(req.params.key);
+      if (!session) {
+        res.status(404).json({ error: "session not found" });
+        return;
+      }
+      const lastAgentReply = [...(session.chat || [])]
+        .reverse()
+        .find((message) => message.role === "agent");
+      res.json({
+        status: session.status,
+        ended_by: session.ended_by || null,
+        presence: computePresence(req.params.key, activePolls, deliveredFeedback),
+        pending_prompts: (session.prompts || []).length,
+        updated_at: session.updated_at || null,
+        last_agent_reply_at: lastAgentReply?.at || null,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   // Prepare the user's selected warnings. The prompt commits the repair request through
   // /api/:key/prompts with the rest of the ordinary feedback queue.
   app.post("/api/:key/layout-warnings/queue", async (req, res, next) => {
