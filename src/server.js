@@ -946,6 +946,42 @@ export async function serve({
     }
   });
 
+  // Cross-surface links. An agent authoring an artifact knows the other
+  // artifact's FILE path and never its session key, so it writes a plain
+  // relative href - which, inside a page served at /session/<key>, resolves to
+  // nothing. This route is the link target that works: hand it a path, get the
+  // running session for it, opening or resuming one when needed. Trust
+  // boundary is the same as POST /api/sessions (this server already serves
+  // arbitrary local files by design); a user-ended session stays ended, so a
+  // link click cannot revive a surface the human deliberately closed.
+  app.get("/open", async (req, res, next) => {
+    try {
+      const raw = typeof req.query.file === "string" ? req.query.file : "";
+      if (!raw) {
+        res.status(400).send("Usage: /open?file=<absolute path to an artifact>");
+        return;
+      }
+      let file;
+      try {
+        file = await canonicalFile(raw);
+      } catch {
+        res.status(404).send(`No such artifact: ${raw}`);
+        return;
+      }
+      const key = sessionKey(file);
+      const existing = await store.findByKey(key);
+      if (!existing || existing.status !== "ended") {
+        const sessionUrl = `http://${hostForUrl(linkHostName)}:${publicPort}/session/${key}`;
+        const session = await store.upsertSession(file, sessionUrl);
+        await watchSession(session, watchers, events, logEvent, reloadDebounceMs);
+        logEvent?.(`session opened via link key=${key} file=${file}`);
+      }
+      res.redirect(302, `/session/${key}`);
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.get("/session/:key", async (req, res, next) => {
     try {
       const chromeLoad = await store.issueReviewerHandoff(req.params.key);
