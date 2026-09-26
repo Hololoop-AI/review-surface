@@ -3612,15 +3612,15 @@ test("a shutdown that names no reason claims none", async () => {
   }
 });
 
-test("resolveIdleTimeoutMs defaults, parses, and only explicit opt-outs disable", () => {
-  assert.equal(resolveIdleTimeoutMs({}), 30 * 60_000);
-  assert.equal(resolveIdleTimeoutMs({ REVIEW_SURFACE_IDLE_TIMEOUT_MS: "" }), 30 * 60_000);
+test("resolveIdleTimeoutMs defaults to always-on and only an explicit budget opts in", () => {
+  assert.equal(resolveIdleTimeoutMs({}), null);
+  assert.equal(resolveIdleTimeoutMs({ REVIEW_SURFACE_IDLE_TIMEOUT_MS: "" }), null);
   assert.equal(resolveIdleTimeoutMs({ REVIEW_SURFACE_IDLE_TIMEOUT_MS: "5000" }), 5000);
   assert.equal(resolveIdleTimeoutMs({ REVIEW_SURFACE_IDLE_TIMEOUT_MS: "0" }), null);
   assert.equal(resolveIdleTimeoutMs({ REVIEW_SURFACE_IDLE_TIMEOUT_MS: "off" }), null);
-  assert.equal(resolveIdleTimeoutMs({ REVIEW_SURFACE_IDLE_TIMEOUT_MS: "-1" }), 30 * 60_000);
-  assert.equal(resolveIdleTimeoutMs({ REVIEW_SURFACE_IDLE_TIMEOUT_MS: "30000ms" }), 30 * 60_000);
-  assert.equal(resolveIdleTimeoutMs({ REVIEW_SURFACE_IDLE_TIMEOUT_MS: "later" }), 30 * 60_000);
+  assert.equal(resolveIdleTimeoutMs({ REVIEW_SURFACE_IDLE_TIMEOUT_MS: "-1" }), null);
+  assert.equal(resolveIdleTimeoutMs({ REVIEW_SURFACE_IDLE_TIMEOUT_MS: "30000ms" }), null);
+  assert.equal(resolveIdleTimeoutMs({ REVIEW_SURFACE_IDLE_TIMEOUT_MS: "later" }), null);
 });
 
 async function expectDoneWithin(server, ms) {
@@ -3688,11 +3688,45 @@ test("an open SSE connection keeps the server alive past the idle timeout", asyn
   }
 });
 
-test("ending the last open session shuts the server down", async () => {
+test("by default the server stays up after its last session ends with nothing connected", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "review-surface-serve-"));
   const artifact = path.join(dir, "artifact.html");
   await writeFile(artifact, "<!doctype html><html><body></body></html>");
+  // One server serves every review page, and host apps subscribe to its event stream; stepping
+  // down on its own would drop those subscribers until some later open restarts it.
   const server = await serve({ port: 0, stateFile: path.join(dir, "state.json"), version: "9.9.9-test" });
+  try {
+    const base = `http://127.0.0.1:${server.port}`;
+    await fetch(`${base}/api/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ file: artifact }),
+    });
+    const end = await fetch(`${base}/api/end`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ file: artifact }),
+    });
+    assert.equal(end.status, 200);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const health = await fetch(`${base}/health`);
+    assert.equal(health.status, 200);
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("with an idle budget opted in, ending the last open session shuts the server down", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "review-surface-serve-"));
+  const artifact = path.join(dir, "artifact.html");
+  await writeFile(artifact, "<!doctype html><html><body></body></html>");
+  const server = await serve({
+    port: 0,
+    stateFile: path.join(dir, "state.json"),
+    version: "9.9.9-test",
+    idleTimeoutMs: 60_000,
+  });
   try {
     const base = `http://127.0.0.1:${server.port}`;
     await fetch(`${base}/api/sessions`, {

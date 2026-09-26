@@ -8,9 +8,9 @@ var __export = (target, all) => {
 // src/cli.js
 import { spawn, spawnSync } from "node:child_process";
 import { closeSync, existsSync as existsSync3, mkdirSync as mkdirSync2, openSync, readFileSync as readFileSync3, realpathSync, writeFileSync as writeFileSync2 } from "node:fs";
-import { access, readFile as readFile6, writeFile as writeFile4 } from "node:fs/promises";
+import { access, readFile as readFile7, writeFile as writeFile4 } from "node:fs/promises";
 import os3 from "node:os";
-import path8 from "node:path";
+import path10 from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 import { AxiError, installSessionStartHooks, RESERVED_COMMANDS, runAxiCli } from "axi-sdk-js";
 
@@ -2418,11 +2418,11 @@ function parseCssConditionalAtRuleBlock(css, index) {
   if (!startsCssKeyword(css, index, "@supports") && !startsCssKeyword(css, index, "@media") && !startsCssKeyword(css, index, "@container")) {
     return null;
   }
-  const open = findCssAtRuleBlockStart(css, index);
-  if (open === -1) return null;
-  const close = findCssBlockEnd(css, open);
+  const open3 = findCssAtRuleBlockStart(css, index);
+  if (open3 === -1) return null;
+  const close = findCssBlockEnd(css, open3);
   if (close === -1) return null;
-  return { bodyStart: open + 1, bodyEnd: close, end: close + 1 };
+  return { bodyStart: open3 + 1, bodyEnd: close, end: close + 1 };
 }
 function findCssAtRuleBlockStart(css, index) {
   let cursor = index;
@@ -4396,10 +4396,10 @@ function writeTextFileAtomically(file, content, operations = {}) {
   const rename3 = operations.renameSync || renameSync;
   const remove = operations.rmSync || rmSync;
   const chmod2 = operations.chmodSync || chmodSync;
-  const stat3 = operations.statSync || statSync;
+  const stat4 = operations.statSync || statSync;
   let mode;
   try {
-    mode = stat3(file).mode & 511;
+    mode = stat4(file).mode & 511;
   } catch {
   }
   try {
@@ -4521,10 +4521,10 @@ function attrValue(attrs, name) {
 import crypto6 from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync as existsSync2 } from "node:fs";
-import { appendFile as appendFile2, mkdir as mkdir4, readFile as readFile5, realpath as realpath3 } from "node:fs/promises";
+import { appendFile as appendFile4, mkdir as mkdir6, readFile as readFile6, realpath as realpath4 } from "node:fs/promises";
 import { isIP } from "node:net";
 import { homedir } from "node:os";
-import path7 from "node:path";
+import path9 from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 import chokidar from "chokidar";
 import express from "express";
@@ -5432,15 +5432,15 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     return node.parentElement || document.body;
   }
   function nodePath(node, root) {
-    const path9 = [];
+    const path11 = [];
     let current = node;
     while (current && current !== root) {
       const parentNode = current.parentNode;
       if (!parentNode) break;
-      path9.unshift([...parentNode.childNodes].indexOf(current));
+      path11.unshift([...parentNode.childNodes].indexOf(current));
       current = parentNode;
     }
-    return path9;
+    return path11;
   }
   function rangeBoundary(node, offset) {
     const el = closestElement(node);
@@ -5586,7 +5586,8 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     return [...el?.childNodes || []].filter((node) => node.nodeType === 3).map((node) => String(node.textContent || "")).join(" ").trim().replace(/\s+/g, " ");
   }
   function isRequiredControl(el) {
-    if (!el?.matches?.("button,input,select,textarea,a[href],summary,[data-review-surface-action],[role]")) return false;
+    if (!el?.matches?.("button,input,select,textarea,a[href],summary,[data-review-surface-action],[role]"))
+      return false;
     if (el.matches("input[type='hidden'],[disabled],[aria-disabled='true']")) return false;
     if (!el.hasAttribute("role")) return true;
     return (/* @__PURE__ */ new Set(["button", "link", "checkbox", "radio", "switch", "textbox", "combobox"])).has(
@@ -5959,7 +5960,8 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
   }
   function opaqueSiblingBlocker(el, point, animationTargets) {
     const top = document.elementFromPoint(point.x, point.y);
-    if (!(top instanceof Element) || top === el || el.contains(top) || top.contains(el) || isReviewSurfaceUi(top)) return null;
+    if (!(top instanceof Element) || top === el || el.contains(top) || top.contains(el) || isReviewSurfaceUi(top))
+      return null;
     const targetAncestors = [];
     let targetNode = el;
     while (targetNode && targetNode !== document.body && targetNode !== document.documentElement) {
@@ -6625,9 +6627,35 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     },
     true
   );
+  function reviewPagePath(href) {
+    let url;
+    try {
+      url = new URL(String(href || ""), window.location.origin);
+    } catch {
+      return "";
+    }
+    if (url.origin !== window.location.origin) return "";
+    if (/^\/session\/[0-9a-f]{16}$/.test(url.pathname)) return url.pathname;
+    const file = url.pathname === "/open" ? url.searchParams.get("file") : "";
+    return file ? `/open?file=${encodeURIComponent(file)}` : "";
+  }
+  function followReviewPageLink(event) {
+    if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return false;
+    const link = event.target?.closest?.("a");
+    if (!link || isReviewSurfaceUi(link)) return false;
+    const target = link.getAttribute("target");
+    if (target && target !== "_self") return false;
+    const path11 = reviewPagePath(typeof link.href === "string" ? link.href : link.getAttribute("href"));
+    if (!path11) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    postArtifactMessage("review-surface:openPage", { href: path11 });
+    return true;
+  }
   document.addEventListener(
     "click",
     (event) => {
+      if (followReviewPageLink(event)) return;
       if (!annotationMode || isReviewSurfaceUi(event.target) || isReviewSurfaceAction(event.target) || isInteractiveControl(event.target))
         return;
       event.preventDefault();
@@ -7283,25 +7311,121 @@ function decodePngDataUrl(dataUrl) {
   }
 }
 
-// src/html-transform.js
-function injectReviewSurfaceSdk(html, key, artifactRevision, artifactLoadToken = "") {
-  const revisionNumber = Number(artifactRevision);
-  const revision = Number.isFinite(revisionNumber) && revisionNumber >= 0 ? Math.trunc(revisionNumber) : null;
-  const revisionQuery = revision === null ? "" : `&artifact_revision=${revision}`;
-  const token = String(artifactLoadToken || "").slice(0, 200);
-  const tokenQuery = token ? `&artifact_load_token=${encodeURIComponent(token)}` : "";
-  const script = `<script src="/sdk.js?key=${encodeURIComponent(key)}${revisionQuery}${tokenQuery}"></script>`;
-  if (/<\/body\s*>/i.test(html)) {
-    return html.replace(/<\/body\s*>/i, `${script}</body>`);
-  }
-  return `${html}
-${script}`;
-}
-
-// src/session-store.js
-import crypto4 from "node:crypto";
-import { appendFile, readFile as readFile3, realpath as realpath2, writeFile as writeFile2 } from "node:fs/promises";
+// src/event-log.js
+import { appendFile, mkdir as mkdir3, open, stat as stat2 } from "node:fs/promises";
 import path5 from "node:path";
+var EVENT_SOURCE = "review-surface";
+function eventLogFile(stateFile2, env = process.env) {
+  return env.REVIEW_SURFACE_EVENTS || path5.join(path5.dirname(stateFile2), "events.jsonl");
+}
+var EventLog = class {
+  constructor(file) {
+    this.file = file;
+    this.chain = Promise.resolve();
+    this.size = null;
+    this.listeners = /* @__PURE__ */ new Set();
+  }
+  /**
+   * @template T
+   * @param {() => Promise<T>} task
+   * @returns {Promise<T>}
+   */
+  #enqueue(task) {
+    const run2 = this.chain.then(task);
+    this.chain = run2.catch(() => {
+    });
+    return run2;
+  }
+  async #ensureSize() {
+    if (this.size !== null) return;
+    try {
+      this.size = (await stat2(this.file)).size;
+    } catch {
+      this.size = 0;
+    }
+  }
+  /**
+   * Append one event and push it to live subscribers. Best-effort by design, like the feedback
+   * outbox: the log must never fail the request that produced the event, so a write failure
+   * returns null and the next append re-reads the file size.
+   * @param {string} type
+   * @param {string} subject
+   * @param {Record<string, unknown>} [data]
+   */
+  append(type, subject, data = {}) {
+    return this.#enqueue(async () => {
+      const event = { ts: (/* @__PURE__ */ new Date()).toISOString(), source: EVENT_SOURCE, type, subject, data };
+      const line = `${JSON.stringify(event)}
+`;
+      try {
+        await this.#ensureSize();
+        await mkdir3(path5.dirname(this.file), { recursive: true });
+        await appendFile(this.file, line);
+      } catch {
+        this.size = null;
+        return null;
+      }
+      this.size += Buffer.byteLength(line);
+      const cursor = this.size;
+      for (const listener of this.listeners) {
+        try {
+          listener(event, cursor);
+        } catch {
+        }
+      }
+      return { event, cursor };
+    });
+  }
+  /**
+   * Attach a subscriber. With `after` (a cursor from an earlier event), every event past it is
+   * replayed from disk first; without it, delivery is live only. A cursor past the end of the
+   * file means the log was replaced, so the whole file replays.
+   * @param {(event: object, cursor: number) => void} listener
+   * @param {{ after?: number | null }} [options]
+   * @returns {Promise<() => void>} unsubscribe
+   */
+  subscribe(listener, { after = null } = {}) {
+    return this.#enqueue(async () => {
+      await this.#ensureSize();
+      if (after !== null && Number.isFinite(after) && after >= 0) {
+        const start = after > this.size ? 0 : after;
+        for (const { event, cursor } of await this.#readRange(start, this.size)) listener(event, cursor);
+      }
+      this.listeners.add(listener);
+      return () => {
+        this.listeners.delete(listener);
+      };
+    });
+  }
+  async #readRange(start, end) {
+    if (end <= start) return [];
+    let handle;
+    try {
+      handle = await open(this.file, "r");
+      const buffer = Buffer.alloc(end - start);
+      await handle.read(buffer, 0, buffer.length, start);
+      const out = [];
+      let offset = start;
+      for (const line of buffer.toString("utf8").split("\n")) {
+        offset += Buffer.byteLength(line) + 1;
+        if (!line.trim()) continue;
+        try {
+          out.push({ event: JSON.parse(line), cursor: Math.min(offset, end) });
+        } catch {
+        }
+      }
+      return out;
+    } catch {
+      return [];
+    } finally {
+      await handle?.close();
+    }
+  }
+};
+
+// src/page-graph.js
+import { appendFile as appendFile2, mkdir as mkdir4, open as open2, readFile as readFile3, realpath as realpath2 } from "node:fs/promises";
+import path6 from "node:path";
 
 // src/async-mutex.js
 var AsyncMutex = class {
@@ -7320,7 +7444,373 @@ var AsyncMutex = class {
   }
 };
 
+// src/page-graph.js
+var LINK_TYPES = Object.freeze(["child-of", "supersedes", "derived-from"]);
+var PAGE_STATES = Object.freeze(["needs-you", "agent-working", "new", "quiet", "ended"]);
+var SEARCH_KINDS = Object.freeze(["page", "feedback", "reply", "event"]);
+var REPLACED_FILTERS = Object.freeze(["no", "yes", "any"]);
+var QUIET_AFTER_MS = 7 * 24 * 60 * 60 * 1e3;
+var TITLE_READ_BYTES = 16 * 1024;
+function linksFile(stateFile2, env = process.env) {
+  return env.REVIEW_SURFACE_LINKS || path6.join(path6.dirname(stateFile2), "links.jsonl");
+}
+var LinkError = class extends Error {
+  /** @param {string} message @param {"VALIDATION_ERROR" | "NOT_FOUND" | "REFUSED"} code */
+  constructor(message, code) {
+    super(message);
+    this.code = code;
+  }
+};
+async function readLinkRecords(file) {
+  let raw;
+  try {
+    raw = await readFile3(file, "utf8");
+  } catch (error) {
+    if (
+      /** @type {NodeJS.ErrnoException} */
+      error.code === "ENOENT"
+    ) return [];
+    throw error;
+  }
+  const records = [];
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const record = JSON.parse(line);
+      if (LINK_TYPES.includes(record?.type) && record.from && record.to) records.push(record);
+    } catch {
+    }
+  }
+  return records;
+}
+function buildGraph(records) {
+  const parent2 = /* @__PURE__ */ new Map();
+  const replacedBy = /* @__PURE__ */ new Map();
+  const derived = [];
+  for (const record of records) {
+    if (record.type === "child-of") parent2.set(record.from, record.to);
+    else if (record.type === "supersedes") replacedBy.set(record.to, record.from);
+    else derived.push([record.from, record.to]);
+  }
+  return { parent: parent2, replacedBy, derived };
+}
+function ancestors(parent2, key) {
+  const seen = [];
+  let node = key;
+  while (parent2.has(node)) {
+    node = parent2.get(node);
+    if (node === key || seen.includes(node)) break;
+    seen.push(node);
+  }
+  return seen;
+}
+function resolvePageRef(sessions, ref) {
+  const wanted = String(ref || "").trim();
+  if (!wanted) throw new LinkError("A page reference is required", "VALIDATION_ERROR");
+  const byKey = sessions.find((session) => session.key === wanted);
+  if (byKey) return byKey.key;
+  const suffix = wanted.replace(/^[/\\]+/, "");
+  const hits = sessions.filter(
+    (session) => session.file === wanted || session.file.endsWith(`/${suffix}`) || session.file.endsWith(`\\${suffix}`)
+  );
+  if (hits.length === 1) return hits[0].key;
+  if (hits.length === 0) {
+    throw new LinkError(`No page matches '${wanted}'; open it with review-surface first`, "NOT_FOUND");
+  }
+  throw new LinkError(
+    `'${wanted}' matches ${hits.length} pages; use a session key or a longer path`,
+    "VALIDATION_ERROR"
+  );
+}
+function checkLink(graph, type, from, to) {
+  if (!LINK_TYPES.includes(type)) {
+    throw new LinkError(`Link type must be one of ${LINK_TYPES.join(", ")}`, "VALIDATION_ERROR");
+  }
+  if (from === to) throw new LinkError("A page cannot link to itself", "REFUSED");
+  if (type === "child-of") {
+    if (graph.parent.get(from) === to) return "unchanged";
+    if (ancestors(graph.parent, to).includes(from)) {
+      throw new LinkError("Nesting cycle: the parent page is already inside this page", "REFUSED");
+    }
+    return "new";
+  }
+  if (type === "supersedes") {
+    if (graph.replacedBy.get(to) === from) return "unchanged";
+    const seen = /* @__PURE__ */ new Set();
+    for (let node = from; graph.replacedBy.has(node) && !seen.has(node); ) {
+      seen.add(node);
+      node = graph.replacedBy.get(node);
+      if (node === to) throw new LinkError("Supersede cycle: the older page already replaces this one", "REFUSED");
+    }
+    if (graph.replacedBy.has(to)) {
+      throw new LinkError("That page is already replaced by another page", "REFUSED");
+    }
+    return "new";
+  }
+  return graph.derived.some(([a, b]) => a === from && b === to) ? "unchanged" : "new";
+}
+var LinkStore = class {
+  constructor(file) {
+    this.file = file;
+    this.lock = new AsyncMutex();
+  }
+  read() {
+    return readLinkRecords(this.file);
+  }
+  /**
+   * Record one link between two known pages. A page that supersedes another and has no parent of
+   * its own takes the older page's place in the tree (a `child-of` to the same parent is recorded
+   * with it), so a replaced page never drops its successor out of the project that held it.
+   * @param {any[]} sessions
+   * @param {{ type: string, from: string, to: string }} link
+   */
+  record(sessions, { type, from, to }) {
+    return this.lock.runExclusive(async () => {
+      if (!LINK_TYPES.includes(type)) {
+        throw new LinkError(`Link type must be one of ${LINK_TYPES.join(", ")}`, "VALIDATION_ERROR");
+      }
+      const fromKey = resolvePageRef(sessions, from);
+      const toKey = resolvePageRef(sessions, to);
+      const graph = buildGraph(await this.read());
+      const outcome = checkLink(graph, type, fromKey, toKey);
+      const written = [];
+      if (outcome === "new") written.push({ type, from: fromKey, to: toKey });
+      if (type === "supersedes" && !graph.parent.has(fromKey) && graph.parent.has(toKey)) {
+        const inherited = graph.parent.get(toKey);
+        try {
+          if (checkLink(graph, "child-of", fromKey, inherited) === "new") {
+            written.push({ type: "child-of", from: fromKey, to: inherited });
+          }
+        } catch {
+        }
+      }
+      const at = (/* @__PURE__ */ new Date()).toISOString();
+      const records = written.map((link) => ({ ...link, at }));
+      if (records.length > 0) {
+        await mkdir4(path6.dirname(this.file), { recursive: true });
+        await appendFile2(this.file, records.map((record) => `${JSON.stringify(record)}
+`).join(""));
+      }
+      return {
+        status: outcome === "new" ? "recorded" : "unchanged",
+        link: { type, from: fromKey, to: toKey },
+        records
+      };
+    });
+  }
+};
+function derivePageState(session, now) {
+  if (session.status === "ended") return "ended";
+  if ((session.prompts || []).length > 0) return "agent-working";
+  const chat = session.chat || [];
+  const last = chat.length > 0 ? chat[chat.length - 1].role : null;
+  if (last === "user") return "agent-working";
+  const updated = Date.parse(session.updated_at || "");
+  if (Number.isFinite(updated) && now - updated >= QUIET_AFTER_MS) return "quiet";
+  return last === "agent" ? "needs-you" : "new";
+}
+async function readPageTitle(file) {
+  let handle;
+  try {
+    handle = await open2(file, "r");
+    const buffer = Buffer.alloc(TITLE_READ_BYTES);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    const match = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(buffer.toString("utf8", 0, bytesRead));
+    const title = match ? decodeEntities(match[1]).replace(/\s+/g, " ").trim() : "";
+    return { title: title || path6.basename(file, path6.extname(file)), exists: true };
+  } catch {
+    return { title: path6.basename(file, path6.extname(file)), exists: false };
+  } finally {
+    await handle?.close();
+  }
+}
+function decodeEntities(text) {
+  return text.replace(/&(amp|lt|gt|quot|#39|apos);/g, (entity) => ENTITIES[entity]);
+}
+var ENTITIES = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'", "&apos;": "'" };
+function parsePageQuery(raw) {
+  const options = {};
+  if (raw.under) options.under = raw.under;
+  if (raw.depth !== void 0 && raw.depth !== null && raw.depth !== "") {
+    if (!/^\d+$/.test(String(raw.depth))) throw new LinkError("depth must be a whole number", "VALIDATION_ERROR");
+    options.depth = Number(raw.depth);
+  }
+  if (raw.state) {
+    const states = String(raw.state).split(",").map((state) => state.trim()).filter(Boolean);
+    const unknown = states.filter((state) => !PAGE_STATES.includes(state));
+    if (unknown.length > 0) {
+      throw new LinkError(`Unknown state ${unknown.join(", ")}; use ${PAGE_STATES.join(", ")}`, "VALIDATION_ERROR");
+    }
+    options.states = states;
+  }
+  if (raw.text) options.text = String(raw.text);
+  if (raw.replaced) {
+    if (!REPLACED_FILTERS.includes(raw.replaced)) {
+      throw new LinkError(`replaced must be one of ${REPLACED_FILTERS.join(", ")}`, "VALIDATION_ERROR");
+    }
+    options.replaced = raw.replaced;
+  }
+  return options;
+}
+function queryPages({ sessions, records, titles, now }, options = {}) {
+  const graph = buildGraph(records);
+  const root = options.under ? resolvePageRef(sessions, options.under) : null;
+  const replaced = options.replaced || "no";
+  const text = options.text?.toLowerCase();
+  const children = /* @__PURE__ */ new Map();
+  for (const [child, parent2] of graph.parent) children.set(parent2, [...children.get(parent2) || [], child]);
+  const out = [];
+  for (const session of sessions) {
+    if (session.key === root) continue;
+    const chain = ancestors(graph.parent, session.key);
+    if (root && !chain.includes(root)) continue;
+    const depth = root ? chain.indexOf(root) + 1 : chain.length;
+    if (options.depth !== void 0 && depth > options.depth) continue;
+    const isReplaced = graph.replacedBy.has(session.key);
+    if (replaced === "no" && isReplaced || replaced === "yes" && !isReplaced) continue;
+    const state = derivePageState(session, now);
+    if (options.states && !options.states.includes(state)) continue;
+    const { title, exists } = titles.get(session.key) || { title: path6.basename(session.file), exists: false };
+    if (text && !`${title} ${session.file}`.toLowerCase().includes(text)) continue;
+    out.push({
+      key: session.key,
+      file: session.file,
+      title,
+      state,
+      updated_at: session.updated_at || null,
+      exists,
+      depth,
+      links: {
+        parent: graph.parent.get(session.key) || null,
+        children: children.get(session.key) || [],
+        replaced_by: graph.replacedBy.get(session.key) || null,
+        replaces: [...graph.replacedBy].filter(([, next]) => next === session.key).map(([old]) => old),
+        derived_from: graph.derived.filter(([from]) => from === session.key).map(([, to]) => to)
+      }
+    });
+  }
+  return out.sort((a, b) => a.depth - b.depth || String(b.updated_at).localeCompare(String(a.updated_at)));
+}
+function searchEverything({ pages, sessions, journal, events }, query, { kinds } = {}) {
+  const needle = String(query || "").toLowerCase();
+  const want = (kind) => !kinds || kinds.includes(kind);
+  const rows = [];
+  if (want("page")) {
+    for (const page of pages) {
+      rows.push({
+        kind: "page",
+        key: page.key,
+        file: page.file,
+        title: page.title,
+        state: page.state,
+        at: page.updated_at,
+        text: page.links.replaced_by ? "replaced" : ""
+      });
+    }
+  }
+  if (want("feedback")) {
+    for (const batch of journal) {
+      rows.push({
+        kind: "feedback",
+        key: batch.key || "",
+        file: batch.file || "",
+        title: path6.basename(batch.file || ""),
+        state: "sent",
+        at: batch.at || null,
+        text: (batch.prompts || []).map((prompt) => prompt.prompt || "").join(" | ")
+      });
+    }
+  }
+  if (want("reply")) {
+    for (const session of sessions) {
+      for (const message of session.chat || []) {
+        if (message.role !== "agent") continue;
+        rows.push({
+          kind: "reply",
+          key: session.key,
+          file: session.file,
+          title: path6.basename(session.file),
+          state: "",
+          at: message.at || null,
+          text: message.text || ""
+        });
+      }
+    }
+  }
+  if (want("event")) {
+    for (const event of events) {
+      rows.push({
+        kind: "event",
+        key: event.subject || "",
+        file: event.data?.file || "",
+        title: event.type || "",
+        state: "",
+        at: event.ts || null,
+        text: JSON.stringify(event.data || {})
+      });
+    }
+  }
+  const hits = needle ? rows.filter(
+    (row) => Object.values(row).some(
+      (value) => String(value ?? "").toLowerCase().includes(needle)
+    )
+  ) : rows;
+  return hits.sort((a, b) => String(b.at).localeCompare(String(a.at)));
+}
+async function loadPageGraphInputs({ store, linksPath, eventsPath, now = Date.now() }) {
+  const sessions = await store.listSessions();
+  const titles = new Map(await Promise.all(sessions.map(async (s) => [s.key, await readPageTitle(s.file)])));
+  return { sessions, records: await readLinkRecords(linksPath), titles, now, eventsPath, store };
+}
+async function loadSearchSources(inputs) {
+  const pages = queryPages(inputs, { replaced: "any" });
+  const [journal, events] = await Promise.all([readJsonl(inputs.store.journalFile), readJsonl(inputs.eventsPath)]);
+  return { pages, sessions: inputs.sessions, journal, events };
+}
+async function readJsonl(file) {
+  let raw;
+  try {
+    raw = await readFile3(file, "utf8");
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      out.push(JSON.parse(line));
+    } catch {
+    }
+  }
+  return out;
+}
+async function canonicalPageRef(ref) {
+  try {
+    return await realpath2(path6.resolve(ref));
+  } catch {
+    return ref;
+  }
+}
+
+// src/html-transform.js
+function injectReviewSurfaceSdk(html, key, artifactRevision, artifactLoadToken = "") {
+  const revisionNumber = Number(artifactRevision);
+  const revision = Number.isFinite(revisionNumber) && revisionNumber >= 0 ? Math.trunc(revisionNumber) : null;
+  const revisionQuery = revision === null ? "" : `&artifact_revision=${revision}`;
+  const token = String(artifactLoadToken || "").slice(0, 200);
+  const tokenQuery = token ? `&artifact_load_token=${encodeURIComponent(token)}` : "";
+  const script = `<script src="/sdk.js?key=${encodeURIComponent(key)}${revisionQuery}${tokenQuery}"></script>`;
+  if (/<\/body\s*>/i.test(html)) {
+    return html.replace(/<\/body\s*>/i, `${script}</body>`);
+  }
+  return `${html}
+${script}`;
+}
+
 // src/session-store.js
+import crypto4 from "node:crypto";
+import { appendFile as appendFile3, readFile as readFile4, realpath as realpath3, writeFile as writeFile2 } from "node:fs/promises";
+import path7 from "node:path";
 var LAYOUT_WARNINGS_TARGET_TYPE = "layout-warnings";
 var MAX_ARTIFACT_FAILURES = 20;
 var ATTACHMENT_DELIVERY_GRACE_MS = 60 * 60 * 1e3;
@@ -7329,7 +7819,7 @@ var MAX_DELIVERED_ATTACHMENTS = 256;
 var SessionStore = class {
   constructor(file) {
     this.file = file;
-    this.journalFile = path5.join(path5.dirname(file), "feedback-journal.jsonl");
+    this.journalFile = path7.join(path7.dirname(file), "feedback-journal.jsonl");
     this.lock = new AsyncMutex();
     this.artifactLoads = /* @__PURE__ */ new Map();
     this.chromeLoadContexts = /* @__PURE__ */ new Map();
@@ -7495,7 +7985,7 @@ var SessionStore = class {
     if (shouldEndSession) session.ended_by = "user";
     session.updated_at = (/* @__PURE__ */ new Date()).toISOString();
     if (!restoring && acceptedPrompts.length > 0) {
-      await appendFile(
+      await appendFile3(
         this.journalFile,
         JSON.stringify({
           at,
@@ -7521,7 +8011,7 @@ var SessionStore = class {
   async readFeedbackJournal(key, { limit } = {}) {
     let raw;
     try {
-      raw = await readFile3(this.journalFile, "utf8");
+      raw = await readFile4(this.journalFile, "utf8");
     } catch (error) {
       if (
         /** @type {NodeJS.ErrnoException} */
@@ -7892,7 +8382,7 @@ var SessionStore = class {
   }
   async readState() {
     try {
-      const raw = await readFile3(this.file, "utf8");
+      const raw = await readFile4(this.file, "utf8");
       const parsed = JSON.parse(raw);
       return { sessions: parsed.sessions || {} };
     } catch (error) {
@@ -7908,8 +8398,8 @@ var SessionStore = class {
   }
 };
 async function canonicalFile(file) {
-  const absolute = path5.resolve(file);
-  return realpath2(absolute);
+  const absolute = path7.resolve(file);
+  return realpath3(absolute);
 }
 function sessionKey(file) {
   return crypto4.createHash("sha256").update(file).digest("hex").slice(0, 16);
@@ -8073,8 +8563,8 @@ function normalizeTarget(target) {
 
 // src/attachment-store.js
 import crypto5 from "node:crypto";
-import { chmod, mkdir as mkdir3, readdir, readFile as readFile4, rename as rename2, rm as rm2, stat as stat2, utimes, writeFile as writeFile3 } from "node:fs/promises";
-import path6 from "node:path";
+import { chmod, mkdir as mkdir5, readdir, readFile as readFile5, rename as rename2, rm as rm2, stat as stat3, utimes, writeFile as writeFile3 } from "node:fs/promises";
+import path8 from "node:path";
 var KEY_RE2 = /^[0-9a-f]{16}$/;
 var ID_RE = /^[0-9a-f]{64}\.(png|jpg|webp)$/;
 var MIME_BY_EXT = { png: "image/png", jpg: "image/jpeg", webp: "image/webp" };
@@ -8102,10 +8592,10 @@ function isValidAttachmentId(id) {
   return ID_RE.test(String(id || ""));
 }
 function attachmentsDir(stateDir2, key) {
-  return path6.join(stateDir2, "attachments", String(key));
+  return path8.join(stateDir2, "attachments", String(key));
 }
 function attachmentFile(stateDir2, key, id) {
-  return path6.join(attachmentsDir(stateDir2, key), id);
+  return path8.join(attachmentsDir(stateDir2, key), id);
 }
 function resolveAttachmentConfig(env = process.env) {
   const maxDiskBytes = diskCapEnv(env.REVIEW_SURFACE_MAX_ATTACHMENT_DISK_MB);
@@ -8240,7 +8730,7 @@ function buildMetadata(id, file, mime, bytes, dims) {
 }
 async function pathExists(file) {
   try {
-    await stat2(file);
+    await stat3(file);
     return true;
   } catch (error) {
     if (error && error.code === "ENOENT") return false;
@@ -8258,7 +8748,7 @@ async function writeSidecar(file, serializedMeta) {
 }
 async function readSidecarDims(file) {
   try {
-    const parsed = JSON.parse(await readFile4(sidecarPath(file), "utf8"));
+    const parsed = JSON.parse(await readFile5(sidecarPath(file), "utf8"));
     const width = Number(parsed?.width);
     const height = Number(parsed?.height);
     if (Number.isFinite(width) && Number.isFinite(height) && (width > 0 || height > 0)) {
@@ -8280,9 +8770,9 @@ async function writeFileAtomically2(file, content) {
   }
 }
 async function ensureAttachmentDir(stateDir2, key) {
-  const root = path6.join(stateDir2, "attachments");
+  const root = path8.join(stateDir2, "attachments");
   const dir = attachmentsDir(stateDir2, key);
-  await mkdir3(dir, { recursive: true, mode: ATTACHMENT_DIR_MODE });
+  await mkdir5(dir, { recursive: true, mode: ATTACHMENT_DIR_MODE });
   for (const target of [root, dir]) {
     await chmod(target, ATTACHMENT_DIR_MODE).catch(() => {
     });
@@ -8361,7 +8851,7 @@ async function resolveAttachment(stateDir2, key, id) {
   const file = attachmentFile(stateDir2, key, id);
   let info;
   try {
-    info = await stat2(file);
+    info = await stat3(file);
   } catch (error) {
     if (error && error.code === "ENOENT") return null;
     throw error;
@@ -8375,7 +8865,7 @@ async function statAttachmentForServe(stateDir2, key, id) {
   if (!isValidAttachmentKey(key) || !isValidAttachmentId(id)) return null;
   const file = attachmentFile(stateDir2, key, id);
   try {
-    const info = await stat2(file);
+    const info = await stat3(file);
     if (!info.isFile()) return null;
   } catch (error) {
     if (error && error.code === "ENOENT") return null;
@@ -8385,7 +8875,7 @@ async function statAttachmentForServe(stateDir2, key, id) {
 }
 async function readDimensions(file, mime) {
   try {
-    return imageDimensions(await readFile4(file), mime);
+    return imageDimensions(await readFile5(file), mime);
   } catch {
     return null;
   }
@@ -8404,20 +8894,20 @@ async function removeAttachment(stateDir2, key, id) {
   }
 }
 async function listAttachments(stateDir2) {
-  const root = path6.join(stateDir2, "attachments");
+  const root = path8.join(stateDir2, "attachments");
   const sessionDirs = await readdirSafe(root);
   const files = [];
   for (const dirent of sessionDirs) {
     if (!dirent.isDirectory() || !isValidAttachmentKey(dirent.name)) continue;
-    const dir = path6.join(root, dirent.name);
+    const dir = path8.join(root, dirent.name);
     for (const entry of await readdirSafe(dir)) {
       if (!entry.isFile() || !isValidAttachmentId(entry.name)) continue;
-      const filePath = path6.join(dir, entry.name);
+      const filePath = path8.join(dir, entry.name);
       try {
-        const info = await stat2(filePath);
+        const info = await stat3(filePath);
         let sidecarBytes = 0;
         try {
-          sidecarBytes = (await stat2(sidecarPath(filePath))).size;
+          sidecarBytes = (await stat3(sidecarPath(filePath))).size;
         } catch {
         }
         files.push({
@@ -8494,19 +8984,19 @@ async function sweepAttachments(stateDir2, options = {}) {
   const orphans = await reapOrphanFiles(stateDir2, now);
   deleted += orphans.deleted;
   freedBytes += orphans.freedBytes;
-  await pruneEmptyDirs(path6.join(stateDir2, "attachments"));
+  await pruneEmptyDirs(path8.join(stateDir2, "attachments"));
   return { deleted, freedBytes };
 }
 async function committedChargedBytes(stateDir2) {
-  const root = path6.join(stateDir2, "attachments");
+  const root = path8.join(stateDir2, "attachments");
   let total = 0;
   for (const dirent of await readdirSafe(root)) {
     if (!dirent.isDirectory() || !isValidAttachmentKey(dirent.name)) continue;
-    const dir = path6.join(root, dirent.name);
+    const dir = path8.join(root, dirent.name);
     for (const entry of await readdirSafe(dir)) {
       if (!entry.isFile()) continue;
       try {
-        total += allocatedBytes((await stat2(path6.join(dir, entry.name))).size);
+        total += allocatedBytes((await stat3(path8.join(dir, entry.name))).size);
       } catch {
       }
     }
@@ -8514,28 +9004,28 @@ async function committedChargedBytes(stateDir2) {
   return total;
 }
 async function reapOrphanFiles(stateDir2, now) {
-  const root = path6.join(stateDir2, "attachments");
+  const root = path8.join(stateDir2, "attachments");
   let deleted = 0;
   let freedBytes = 0;
   for (const dirent of await readdirSafe(root)) {
     if (!dirent.isDirectory() || !isValidAttachmentKey(dirent.name)) continue;
-    const dir = path6.join(root, dirent.name);
+    const dir = path8.join(root, dirent.name);
     const entries = await readdirSafe(dir);
     const present = new Set(entries.filter((e) => e.isFile()).map((e) => e.name));
     for (const entry of entries) {
       if (!entry.isFile()) continue;
-      const filePath = path6.join(dir, entry.name);
+      const filePath = path8.join(dir, entry.name);
       const sidecarMatch = SIDECAR_ORPHAN_RE.exec(entry.name);
       try {
         if (TEMP_FILE_RE.test(entry.name)) {
-          const info = await stat2(filePath);
+          const info = await stat3(filePath);
           if (now - info.mtimeMs <= ATTACHMENT_TEMP_GRACE_MS) continue;
           if (await removeFile(filePath)) {
             deleted += 1;
             freedBytes += info.size;
           }
         } else if (sidecarMatch && !present.has(sidecarMatch[1])) {
-          const info = await stat2(filePath);
+          const info = await stat3(filePath);
           if (await removeFile(filePath)) {
             deleted += 1;
             freedBytes += info.size;
@@ -8568,7 +9058,7 @@ async function removeFile(file) {
 async function pruneEmptyDirs(root) {
   for (const dirent of await readdirSafe(root)) {
     if (!dirent.isDirectory()) continue;
-    const dir = path6.join(root, dirent.name);
+    const dir = path8.join(root, dirent.name);
     try {
       if ((await readdir(dir)).length === 0) await rm2(dir, { recursive: true, force: true });
     } catch {
@@ -8596,7 +9086,6 @@ var designAssetUrls = {
     type: "application/javascript"
   }
 };
-var DEFAULT_IDLE_TIMEOUT_MS = 30 * 6e4;
 var WHITEBOARD_CHANNEL_TOKEN_TTL_MS = 5 * 6e4;
 var ARTIFACT_CONTENT_SECURITY_POLICY = "sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads";
 var ATTACHMENT_SWEEP_INTERVAL_MS = 60 * 6e4;
@@ -8604,13 +9093,13 @@ var SHUTDOWN_REASONS = /* @__PURE__ */ new Set(["upgrade", "local-build", "stop"
 var RELOAD_DEBOUNCE_MS = 100;
 var BATCH_RELOAD_DEBOUNCE_MS = 900;
 function outboxFile() {
-  return process.env.REVIEW_SURFACE_OUTBOX || path7.join(stateDir(), "outbox.jsonl");
+  return process.env.REVIEW_SURFACE_OUTBOX || path9.join(stateDir(), "outbox.jsonl");
 }
 async function appendOutboxSignal(key, ended) {
   try {
     const file = outboxFile();
-    await mkdir4(path7.dirname(file), { recursive: true });
-    await appendFile2(file, `${JSON.stringify({ ts: Date.now(), key, ended: Boolean(ended) })}
+    await mkdir6(path9.dirname(file), { recursive: true });
+    await appendFile4(file, `${JSON.stringify({ ts: Date.now(), key, ended: Boolean(ended) })}
 `);
   } catch {
   }
@@ -8692,12 +9181,8 @@ function isValidWhiteboardChannelToken(token, secret, sessionKey2, now = Date.no
   return actualBuffer.length === expectedBuffer.length && crypto6.timingSafeEqual(actualBuffer, expectedBuffer);
 }
 function resolveIdleTimeoutMs(env = process.env) {
-  const raw = env.REVIEW_SURFACE_IDLE_TIMEOUT_MS?.trim();
-  if (raw === void 0 || raw === "") return DEFAULT_IDLE_TIMEOUT_MS;
-  if (raw === "0" || raw.toLowerCase() === "off") return null;
-  const value = Number(raw);
-  if (!Number.isFinite(value) || value <= 0) return DEFAULT_IDLE_TIMEOUT_MS;
-  return value;
+  const value = Number(env.REVIEW_SURFACE_IDLE_TIMEOUT_MS?.trim() || NaN);
+  return Number.isFinite(value) && value > 0 ? value : null;
 }
 async function serve({
   port,
@@ -8711,11 +9196,15 @@ async function serve({
   linkHost: linkHostName = linkHost(),
   allowedHosts = extraAllowedHosts(),
   whiteboardAssetsDir = defaultWhiteboardAssetsDir(),
-  frameAncestor: frameAncestor2 = frameAncestor()
+  frameAncestor: frameAncestor2 = frameAncestor(),
+  eventLogPath = eventLogFile(stateFile2),
+  linksPath = linksFile(stateFile2)
 }) {
   const app = express();
   const store = new SessionStore(stateFile2);
   const events = new EventEmitter();
+  const eventLog = new EventLog(eventLogPath);
+  const linkStore = new LinkStore(linksPath);
   const watchers = /* @__PURE__ */ new Map();
   const activePolls = /* @__PURE__ */ new Map();
   const deliveredFeedback = /* @__PURE__ */ new Set();
@@ -8728,6 +9217,40 @@ async function serve({
 `);
   const logEvent = verbose ? (line) => writeLog(`[review-surface] ${line}`) : null;
   let publicPort = port;
+  function logPageEvent(type, session, data = {}) {
+    if (session) void eventLog.append(type, session.key, { file: session.file, ...data });
+  }
+  async function recordLink(link) {
+    const sessions = await store.listSessions();
+    const result = await linkStore.record(sessions, link);
+    const fileOf = (key) => sessions.find((session) => session.key === key)?.file;
+    for (const record of result.records) {
+      void eventLog.append("link.recorded", record.from, {
+        file: fileOf(record.from),
+        type: record.type,
+        to: record.to,
+        to_file: fileOf(record.to)
+      });
+    }
+    return result;
+  }
+  function linkErrorStatus(error) {
+    return error.code === "REFUSED" ? 409 : error.code === "NOT_FOUND" ? 404 : 400;
+  }
+  async function pageGraphInputs() {
+    return loadPageGraphInputs({ store, linksPath, eventsPath: eventLogPath });
+  }
+  function unwatchSession(key) {
+    const watcher = watchers.get(key);
+    if (!watcher) return;
+    watchers.delete(key);
+    watcher.close().catch(() => {
+    });
+  }
+  events.on("reload", (key) => {
+    store.findByKey(key).then((session) => logPageEvent("page.version", session)).catch(() => {
+    });
+  });
   function finishFeedbackDelivery(key, result) {
     if (result.status !== "feedback") return;
     const chat = result.chat;
@@ -8777,7 +9300,7 @@ async function serve({
     const pendingAfterRestore = Array.isArray(restoredPrompts) && restoredPrompts.length > 0 || Array.isArray(restoredFailures) && restoredFailures.length > 0;
     if (pendingAfterRestore) events.emit("feedback", key);
   }
-  const whiteboardStateRoot = path7.dirname(stateFile2);
+  const whiteboardStateRoot = path9.dirname(stateFile2);
   const frameAncestorOrigin = frameAncestor2 ? parseFrameAncestorOrigin(frameAncestor2) : "";
   if (frameAncestor2 && !frameAncestorOrigin) {
     throw new Error(
@@ -8800,7 +9323,7 @@ async function serve({
     });
   }
   app.use((req, res, next) => {
-    const guardedGet = req.method === "GET" && (req.path === "/api/poll" || /^\/api\/[^/]+\/export$/.test(req.path));
+    const guardedGet = req.method === "GET" && (req.path === "/api/poll" || req.path === "/api/events" || req.path === "/api/pages" || req.path === "/api/search" || /^\/api\/[^/]+\/export$/.test(req.path));
     if (!guardedGet && (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS")) {
       next();
       return;
@@ -8812,7 +9335,7 @@ async function serve({
     next();
   });
   const attachmentConfig = resolveAttachmentConfig();
-  const attachmentStateRoot = path7.dirname(stateFile2);
+  const attachmentStateRoot = path9.dirname(stateFile2);
   const defaultJsonParser = express.json({ limit: "2mb" });
   const whiteboardJsonParser = express.json({ limit: "20mb" });
   app.use((req, res, next) => {
@@ -8856,9 +9379,20 @@ async function serve({
         clearFeedbackDelivery(key, activePolls, deliveredFeedback, events);
       }
       logEvent?.(`session opened key=${key} file=${file}`);
+      logPageEvent("page.opened", session, { via: "cli", new: !existing });
       await syncOutstandingRepairs(key);
       await watchSession(session, watchers, events, logEvent, reloadDebounceMs);
-      res.json({ key, file, url, status: "opened" });
+      let link;
+      if (typeof req.body?.supersedes === "string" && req.body.supersedes.trim()) {
+        try {
+          const result = await recordLink({ type: "supersedes", from: key, to: req.body.supersedes });
+          link = { status: result.status, ...result.link, records: result.records };
+        } catch (error) {
+          if (!(error instanceof LinkError)) throw error;
+          link = { status: "refused", type: "supersedes", from: key, to: req.body.supersedes, error: error.message };
+        }
+      }
+      res.json({ key, file, url, status: "opened", ...link ? { link } : {} });
     } catch (error) {
       next(error);
     }
@@ -9012,8 +9546,14 @@ async function serve({
       }
       events.emit(shouldEndSession ? "ended" : "feedback", req.params.key, session.ended_by);
       void appendOutboxSignal(req.params.key, shouldEndSession);
+      const promptCount = Array.isArray(req.body?.prompts) ? req.body.prompts.length : 0;
+      if (promptCount > 0) logPageEvent("page.feedback_sent", session, { prompts: promptCount });
+      if (shouldEndSession) logPageEvent("page.ended", session, { by: session.ended_by });
       res.json({ status: "queued", pending_prompts: session.pending_prompts });
-      if (shouldEndSession) await shutdownIfNoLiveSessions();
+      if (shouldEndSession) {
+        unwatchSession(req.params.key);
+        await shutdownIfNoLiveSessions();
+      }
     } catch (error) {
       next(error);
     }
@@ -9121,6 +9661,8 @@ async function serve({
       const session = await store.endSession(req.params.key, "user");
       clearFeedbackDelivery(req.params.key, activePolls, deliveredFeedback, events);
       events.emit("ended", req.params.key, session?.ended_by);
+      logPageEvent("page.ended", session, { by: session?.ended_by });
+      unwatchSession(session?.key);
       res.json({ status: "ended" });
       await shutdownIfNoLiveSessions();
     } catch (error) {
@@ -9136,6 +9678,7 @@ async function serve({
         return;
       }
       events.emit("agent-reply", req.params.key, text);
+      logPageEvent("page.agent_reply", session, { chars: text.length });
       clearFeedbackDelivery(req.params.key, activePolls, deliveredFeedback, events);
       res.json({ status: "sent" });
     } catch (error) {
@@ -9149,8 +9692,8 @@ async function serve({
         res.status(404).json({ error: "session not found" });
         return;
       }
-      const source = await readFile5(session.file, "utf8");
-      const root = path7.dirname(session.file);
+      const source = await readFile6(session.file, "utf8");
+      const root = path9.dirname(session.file);
       const { html, warnings } = await buildSelfContainedHtml(source, {
         baseDir: root,
         confineDir: root,
@@ -9180,8 +9723,8 @@ async function serve({
         return;
       }
       const body = req.body || {};
-      const source = await readFile5(session.file, "utf8");
-      const root = path7.dirname(session.file);
+      const source = await readFile6(session.file, "utf8");
+      const root = path9.dirname(session.file);
       const { html, warnings } = await buildSelfContainedHtml(source, {
         baseDir: root,
         confineDir: root,
@@ -9212,8 +9755,42 @@ async function serve({
       const session = await store.endSession(key, "agent");
       clearFeedbackDelivery(key, activePolls, deliveredFeedback, events);
       events.emit("ended", key, session?.ended_by);
+      logPageEvent("page.ended", session, { by: session?.ended_by });
+      unwatchSession(session?.key);
       res.json({ status: "ended" });
       await shutdownIfNoLiveSessions();
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.get("/open", async (req, res, next) => {
+    try {
+      const raw = typeof req.query.file === "string" ? req.query.file : "";
+      const wantsJson = req.accepts(["html", "json"]) === "json";
+      if (!raw) {
+        if (wantsJson) res.status(400).json({ error: "the link names no file." });
+        else res.status(400).send("Usage: /open?file=<absolute path to an artifact>");
+        return;
+      }
+      let file;
+      try {
+        file = await canonicalFile(raw);
+      } catch {
+        if (wantsJson) res.status(404).json({ error: "that file does not exist." });
+        else res.status(404).send(`No such artifact: ${raw}`);
+        return;
+      }
+      const key = sessionKey(file);
+      const existing = await store.findByKey(key);
+      if (!existing || existing.status !== "ended") {
+        const sessionUrl = `http://${hostForUrl(linkHostName)}:${publicPort}/session/${key}`;
+        const session = await store.upsertSession(file, sessionUrl);
+        await watchSession(session, watchers, events, logEvent, reloadDebounceMs);
+        logEvent?.(`session opened via link key=${key} file=${file}`);
+        logPageEvent("page.opened", session, { via: "link", new: !existing });
+      }
+      if (wantsJson) res.json({ key, url: `/session/${key}` });
+      else res.redirect(302, `/session/${key}`);
     } catch (error) {
       next(error);
     }
@@ -9227,7 +9804,7 @@ async function serve({
       }
       const session = chromeLoad.session;
       await watchSession(session, watchers, events, logEvent, reloadDebounceMs);
-      const artifactHtml = await readFile5(session.file, "utf8").catch(() => "");
+      const artifactHtml = await readFile6(session.file, "utf8").catch(() => "");
       const { faviconTag, title } = extractArtifactHead(artifactHtml);
       if (frameAncestorOrigin) {
         res.setHeader("content-security-policy", `frame-ancestors 'self' ${frameAncestorOrigin}`);
@@ -9313,7 +9890,7 @@ async function serve({
         );
         return;
       }
-      const html = await readFile5(beforeRead.session.file, "utf8");
+      const html = await readFile6(beforeRead.session.file, "utf8");
       const verified = await store.verifyArtifactLoad(key, token, revision);
       if (!verified?.valid) {
         res.status(409).type("html").send(
@@ -9336,7 +9913,7 @@ async function serve({
         res.status(404).send("Session not found");
         return;
       }
-      const root = path7.dirname(session.file);
+      const root = path9.dirname(session.file);
       const file = await resolveArtifactAsset(root, assetPath);
       if (!file) {
         res.status(403).send("Forbidden");
@@ -9346,6 +9923,73 @@ async function serve({
     } catch (error) {
       next(error);
     }
+  });
+  app.post("/api/links", async (req, res, next) => {
+    try {
+      const { type, from, to } = req.body || {};
+      const result = await recordLink({ type: String(type || ""), from: String(from || ""), to: String(to || "") });
+      res.json(result);
+    } catch (error) {
+      if (error instanceof LinkError) {
+        res.status(linkErrorStatus(error)).json({ status: "refused", error: error.message });
+        return;
+      }
+      next(error);
+    }
+  });
+  app.get("/api/pages", async (req, res, next) => {
+    try {
+      const query = (name) => typeof req.query[name] === "string" ? req.query[name] : void 0;
+      const options = parsePageQuery({
+        under: query("under"),
+        depth: query("depth"),
+        state: query("state"),
+        text: query("text"),
+        replaced: query("replaced")
+      });
+      res.json({ pages: queryPages(await pageGraphInputs(), options) });
+    } catch (error) {
+      if (error instanceof LinkError) {
+        res.status(linkErrorStatus(error)).json({ error: error.message });
+        return;
+      }
+      next(error);
+    }
+  });
+  app.get("/api/search", async (req, res, next) => {
+    try {
+      const q = typeof req.query.q === "string" ? req.query.q : "";
+      const kindParam = typeof req.query.kind === "string" ? req.query.kind : "";
+      const kinds = kindParam ? kindParam.split(",").filter((kind) => SEARCH_KINDS.includes(kind)) : void 0;
+      res.json({ hits: searchEverything(await loadSearchSources(await pageGraphInputs()), q, { kinds }) });
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.get("/api/events", async (req, res) => {
+    const raw = req.get("last-event-id") ?? (typeof req.query.after === "string" ? req.query.after : "");
+    const after = /^\d+$/.test(raw) ? Number(raw) : null;
+    res.writeHead(200, {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      connection: "keep-alive"
+    });
+    res.write(": review-surface events\n\n");
+    let closed = false;
+    let unsubscribe = () => {
+    };
+    req.on("close", () => {
+      closed = true;
+      unsubscribe();
+    });
+    const send = (event, cursor) => {
+      if (!closed) res.write(`id: ${cursor}
+data: ${JSON.stringify(event)}
+
+`);
+    };
+    unsubscribe = await eventLog.subscribe(send, { after });
+    if (closed) unsubscribe();
   });
   app.get("/events/:key", async (req, res, next) => {
     let cleanup = () => {
@@ -9437,14 +10081,14 @@ data: ${JSON.stringify({ state: computePresence(req.params.key, activePolls, del
   });
   app.get("/chrome-client.js", async (req, res, next) => {
     try {
-      res.type("application/javascript").send(await readFile5(chromeClientUrl, "utf8"));
+      res.type("application/javascript").send(await readFile6(chromeClientUrl, "utf8"));
     } catch (error) {
       next(error);
     }
   });
   app.get("/chrome.css", async (req, res, next) => {
     try {
-      res.type("text/css").send(await readFile5(chromeCssUrl, "utf8"));
+      res.type("text/css").send(await readFile6(chromeCssUrl, "utf8"));
     } catch (error) {
       next(error);
     }
@@ -9520,7 +10164,7 @@ data: ${JSON.stringify({ state: computePresence(req.params.key, activePolls, del
         res.status(404).json({ error: "session not found" });
         return;
       }
-      const html = await readFile5(session.file, "utf8").catch(() => "");
+      const html = await readFile6(session.file, "utf8").catch(() => "");
       const sources = extractMermaidSources(html).map(({ index, source }) => ({
         index,
         source,
@@ -9741,7 +10385,7 @@ data: ${shutdownData}
     idleTimer.unref?.();
   }
   async function shutdownIfNoLiveSessions() {
-    if (sseClients.size > 0 || activePolls.size > 0) return;
+    if (idleTimeoutMs == null || sseClients.size > 0 || activePolls.size > 0) return;
     try {
       const sessions = await store.listSessions();
       if (sessions.every((session) => session.status === "ended")) {
@@ -9804,10 +10448,10 @@ data: ${shutdownData}
 }
 async function readDesignAsset(asset) {
   try {
-    return await readFile5(asset.packaged, "utf8");
+    return await readFile6(asset.packaged, "utf8");
   } catch (error) {
     if (error && error.code !== "ENOENT") throw error;
-    return readFile5(asset.source, "utf8");
+    return readFile6(asset.source, "utf8");
   }
 }
 function resolveDesignAssetPath(refPath) {
@@ -9941,14 +10585,14 @@ function optionalBodyString(value) {
   return trimmed || void 0;
 }
 async function resolveArtifactAsset(root, assetPath) {
-  const file = path7.resolve(root, assetPath);
-  const relative = path7.relative(root, file);
-  if (relative.startsWith("..") || path7.isAbsolute(relative)) {
+  const file = path9.resolve(root, assetPath);
+  const relative = path9.relative(root, file);
+  if (relative.startsWith("..") || path9.isAbsolute(relative)) {
     return null;
   }
   let real;
   try {
-    real = await realpath3(file);
+    real = await realpath4(file);
   } catch (error) {
     if (error?.code === "ENOENT" || error?.code === "ENOTDIR") {
       return file;
@@ -9957,12 +10601,12 @@ async function resolveArtifactAsset(root, assetPath) {
   }
   let realRoot;
   try {
-    realRoot = await realpath3(root);
+    realRoot = await realpath4(root);
   } catch {
-    realRoot = path7.resolve(root);
+    realRoot = path9.resolve(root);
   }
-  const relativeReal = path7.relative(realRoot, real);
-  if (relativeReal === ".." || relativeReal.startsWith(`..${path7.sep}`) || path7.isAbsolute(relativeReal)) {
+  const relativeReal = path9.relative(realRoot, real);
+  if (relativeReal === ".." || relativeReal.startsWith(`..${path9.sep}`) || path9.isAbsolute(relativeReal)) {
     return null;
   }
   return real;
@@ -9995,10 +10639,10 @@ async function resolveWatchTarget(session) {
     awaitWriteFinish: { stabilityThreshold: 100, pollInterval: 50 }
   };
   try {
-    const html = await readFile5(session.file, "utf8");
+    const html = await readFile6(session.file, "utf8");
     if (hasLiveReloadRootOptIn(html)) {
       return {
-        path: path7.dirname(session.file),
+        path: path9.dirname(session.file),
         scope: "directory",
         options: {
           ...baseOptions,
@@ -10416,9 +11060,9 @@ var HttpTelemetryClient = class {
     if (!trimmed) return;
     this.send(trimmed, eventURL(this.app, trimmed), fields);
   }
-  pageview(path9, fields = {}) {
+  pageview(path11, fields = {}) {
     if (this.closed) return;
-    this.send("", normalizePagePath(path9), fields);
+    this.send("", normalizePagePath(path11), fields);
   }
   async close(timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS) {
     this.closed = true;
@@ -10493,8 +11137,8 @@ function eventURL(app, name) {
   if (!name) return `app://${app}`;
   return `app://${app}/${name.replace(/\./g, "/")}`;
 }
-function normalizePagePath(path9) {
-  const trimmed = String(path9 || "").trim();
+function normalizePagePath(path11) {
+  const trimmed = String(path11 || "").trim();
   if (!trimmed) return "/";
   return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
 }
@@ -10504,6 +11148,9 @@ var COMMANDS = /* @__PURE__ */ new Set([
   "open",
   "poll",
   "journal",
+  "link",
+  "pages",
+  "search",
   "end",
   "stop",
   "server",
@@ -10574,6 +11221,9 @@ async function run(argv) {
         open: openCommand,
         poll: pollCommand,
         journal: journalCommand,
+        link: linkCommand,
+        pages: pagesCommand,
+        search: searchCommand,
         end: endCommand,
         stop: stopCommand,
         playbook: playbookCommand,
@@ -10647,7 +11297,7 @@ function createHomeOutput({ bin, sessions, includeSessions = true, agent = "gene
       "Run `review-surface end <html-file>` to end a session as the agent - ending it this way still allows a plain reopen later. When the user ends it from the browser instead, a later `review-surface <html-file>` refuses to reopen it without `--reopen`",
       "Run `review-surface export <html-file> [--out <path>]` to write a portable copy of the artifact - one HTML file with its LOCAL assets inlined - so it opens with no Review Surface server and no sibling files. Remote CDN/font references are left as links, so it needs network to render those. Users can also export from the browser chrome's overflow menu",
       "Remote sharing is disabled in this build: artifacts never leave the machine via third-party hosts. Use `review-surface export <html-file>` for a portable single-file copy you can send over channels you control.",
-      "Run `review-surface stop` to shut down the background server (it also self-stops when idle or after the last session ends with nothing connected)",
+      "Run `review-surface stop` to shut down the background server. Once started it stays up across every review page, so it never needs restarting between sessions",
       `Run \`review-surface playbook <playbook_id>\` for focused artifact guidance. ${PLAYBOOK_ROUTER_HELP}`,
       DESIGN_SYSTEM_HINT,
       "Use review-surface when the user asks for a visual artifact, HTML explainer, interactive prototype, review surface, product or technical plan, comparison, report, or browser-based feedback loop"
@@ -10685,11 +11335,12 @@ function createUserEndedOpenOutput({ file, url }) {
   };
 }
 async function openCommand(args) {
-  const file = firstPositionalArg(args, ["--frame-ancestor"]);
+  const file = firstPositionalArg(args, ["--frame-ancestor", "--supersedes"]);
   if (!file) {
     throw new AxiError("HTML file path is required", "VALIDATION_ERROR", ["Run `review-surface <html-file>`"]);
   }
   await assertHtmlFile(file);
+  const supersedesFlag = flagValue(args, "--supersedes");
   const absolute = await canonicalFile(file);
   const selfPaintWarning = await selfPaintWarningForFile(absolute);
   const noGate = args.includes("--no-gate");
@@ -10700,29 +11351,35 @@ async function openCommand(args) {
     reloadKey: sessionKey(absolute),
     frameAncestor: frameAncestor2
   });
-  const response = await postJson(`${baseUrl}/api/sessions`, { file: absolute, noGate, reopen });
+  const response = await postJson(`${baseUrl}/api/sessions`, {
+    file: absolute,
+    noGate,
+    reopen,
+    ...supersedesFlag ? { supersedes: await canonicalPageRef(supersedesFlag) } : {}
+  });
   if (response.status === "user-ended") {
     return createUserEndedOpenOutput({ file: absolute, url: response.url });
   }
   if (shouldOpenBrowser(args, process.env)) {
     try {
-      const open = (await import("open")).default;
-      await open(response.url);
+      const open3 = (await import("open")).default;
+      await open3(response.url);
     } catch {
       response.status = "ready";
     }
   }
-  return createOpenOutput({
+  const output = createOpenOutput({
     file: absolute,
     url: response.url,
     status: response.status || "opened",
     agent: detectInvokingAgent(process.env),
     selfPaintWarning
   });
+  return response.link ? { ...output, link: response.link } : output;
 }
 async function selfPaintWarningForFile(absolute) {
   try {
-    return analyzeSelfPaint(await readFile6(absolute, "utf8")).painted ? void 0 : SELF_PAINT_WARNING;
+    return analyzeSelfPaint(await readFile7(absolute, "utf8")).painted ? void 0 : SELF_PAINT_WARNING;
   } catch {
     return void 0;
   }
@@ -10758,6 +11415,83 @@ async function journalCommand(args) {
   process.stdout.write(`${JSON.stringify({ file: absolute, batches })}
 `);
   return "";
+}
+async function linkCommand(args) {
+  const [type, from, to] = positionalArgs(args);
+  if (!type || !from || !to) {
+    throw new AxiError("A link type and two pages are required", "VALIDATION_ERROR", [
+      `Run \`review-surface link <${LINK_TYPES.join("|")}> <page> <page>\``
+    ]);
+  }
+  const baseUrl = await ensureServer();
+  let response;
+  try {
+    response = await fetch(`${baseUrl}/api/links`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ type, from: await canonicalPageRef(from), to: await canonicalPageRef(to) })
+    });
+  } catch {
+    throw serverConnectionError();
+  }
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const code = response.status === 404 ? "NOT_FOUND" : "VALIDATION_ERROR";
+    throw new AxiError(body.error || `Review Surface request failed: ${response.status}`, code, [
+      "Run `review-surface pages --replaced any` to see every page and its links"
+    ]);
+  }
+  return pageGraphOutput(args, body);
+}
+function pageGraphOutput(args, value) {
+  if (!args.includes("--json")) return value;
+  process.stdout.write(`${JSON.stringify(value)}
+`);
+  return "";
+}
+async function pagesCommand(args) {
+  let options;
+  try {
+    options = parsePageQuery({
+      under: flagValue(args, "--under") || void 0,
+      depth: flagValue(args, "--depth") ?? void 0,
+      state: flagValue(args, "--state") || void 0,
+      text: flagValue(args, "--text") || void 0,
+      replaced: flagValue(args, "--replaced") || void 0
+    });
+  } catch (error) {
+    throw new AxiError(error.message, "VALIDATION_ERROR", ["Run `review-surface pages --help`"]);
+  }
+  if (options.under) options.under = await canonicalPageRef(options.under);
+  const inputs = await pageGraphInputsFromDisk();
+  let pages;
+  try {
+    pages = queryPages(inputs, options);
+  } catch (error) {
+    throw new AxiError(error.message, error.code === "NOT_FOUND" ? "NOT_FOUND" : "VALIDATION_ERROR");
+  }
+  return pageGraphOutput(args, { pages });
+}
+async function searchCommand(args) {
+  const text = positionalArgs(args, ["--kind"])[0] || "";
+  const kindFlag = flagValue(args, "--kind");
+  const kinds = kindFlag ? kindFlag.split(",").map((kind) => kind.trim()) : void 0;
+  const unknown = (kinds || []).filter((kind) => !SEARCH_KINDS.includes(kind));
+  if (unknown.length > 0) {
+    throw new AxiError(`Unknown kind ${unknown.join(", ")}`, "VALIDATION_ERROR", [
+      `Use --kind with ${SEARCH_KINDS.join(", ")}`
+    ]);
+  }
+  const sources = await loadSearchSources(await pageGraphInputsFromDisk());
+  return pageGraphOutput(args, { hits: searchEverything(sources, text, { kinds }) });
+}
+function pageGraphInputsFromDisk() {
+  const file = stateFile();
+  return loadPageGraphInputs({
+    store: new SessionStore(file),
+    linksPath: linksFile(file),
+    eventsPath: eventLogFile(file)
+  });
 }
 async function pollCommand(args) {
   const file = firstPositionalArg(args, ["--agent-reply", "--timeout-ms"]);
@@ -10915,9 +11649,9 @@ async function exportCommand(args) {
   }
   await assertHtmlFile(file);
   const absolute = await canonicalFile(file);
-  const root = path8.dirname(absolute);
-  const output = path8.resolve(flagValue(args, "--out") || path8.join(root, exportFileName(absolute)));
-  const source = await readFile6(absolute, "utf8");
+  const root = path10.dirname(absolute);
+  const output = path10.resolve(flagValue(args, "--out") || path10.join(root, exportFileName(absolute)));
+  const source = await readFile7(absolute, "utf8");
   const { html, warnings } = await buildSelfContainedHtml(source, {
     baseDir: root,
     confineDir: root,
@@ -10977,8 +11711,8 @@ async function shareCommand(args) {
   const absolute = await canonicalFile(file);
   const password = optionalFlagString(flagValue(args, "--password"));
   const token = optionalFlagString(flagValue(args, "--token"));
-  const root = path8.dirname(absolute);
-  const source = await readFile6(absolute, "utf8");
+  const root = path10.dirname(absolute);
+  const source = await readFile7(absolute, "utf8");
   const { html, warnings } = await buildSelfContainedHtml(source, {
     baseDir: root,
     confineDir: root,
@@ -11101,7 +11835,7 @@ async function setupPluginCommand() {
   const manifest = readPluginManifest(pluginRoot);
   if (!manifest) {
     throw new AxiError("No plugin.json found in the review-surface package", "SERVER_ERROR", [
-      `Expected a manifest at ${path8.join(pluginRoot, "plugin.json")}`,
+      `Expected a manifest at ${path10.join(pluginRoot, "plugin.json")}`,
       "Reinstall review-surface, or run `npm run build:plugin` when working from a source checkout"
     ]);
   }
@@ -11125,7 +11859,7 @@ function collapseHome(target) {
 }
 function registerVsCodePlugin(pluginRoot, pluginName) {
   const settingsFile = resolveVsCodeSettingsFile(process.env, resolveHookHomeDir());
-  const settingsDir = path8.dirname(settingsFile);
+  const settingsDir = path10.dirname(settingsFile);
   const hasSettingsFile = existsSync3(settingsFile);
   if (!hasSettingsFile && !existsSync3(settingsDir)) {
     return { client: "vscode", status: "absent", detail: "no VS Code user configuration found" };
@@ -11154,7 +11888,7 @@ function registerVsCodePlugin(pluginRoot, pluginName) {
   return { client: "vscode", status: "registered", detail: collapseHome(settingsFile) };
 }
 function registerCursorPlugin(pluginRoot, pluginName) {
-  const cursorDir = path8.join(resolveHookHomeDir(), ".cursor");
+  const cursorDir = path10.join(resolveHookHomeDir(), ".cursor");
   if (!existsSync3(cursorDir)) {
     return { client: "cursor", status: "absent", detail: "no ~/.cursor directory found" };
   }
@@ -11227,9 +11961,9 @@ function parseCopilotPluginRecords(output) {
   }
 }
 function installedCopilotPluginSourcePath(pluginName) {
-  const configDir = process.env.COPILOT_HOME || path8.join(resolveHookHomeDir(), ".copilot");
+  const configDir = process.env.COPILOT_HOME || path10.join(resolveHookHomeDir(), ".copilot");
   try {
-    const config = JSON.parse(readFileSync3(path8.join(configDir, "config.json"), "utf8"));
+    const config = JSON.parse(readFileSync3(path10.join(configDir, "config.json"), "utf8"));
     const record = Array.isArray(config.installedPlugins) ? config.installedPlugins.find((candidate) => candidate?.name === pluginName) : null;
     return record ? copilotPluginSourcePath(record) : null;
   } catch {
@@ -11254,7 +11988,7 @@ function copilotPluginSourcePath(record) {
         continue;
       }
     }
-    if (path8.isAbsolute(candidate)) return candidate;
+    if (path10.isAbsolute(candidate)) return candidate;
   }
   return null;
 }
@@ -11262,14 +11996,14 @@ function sameResolvedPath(left, right) {
   try {
     return realpathSync(left) === realpathSync(right);
   } catch {
-    return path8.resolve(left) === path8.resolve(right);
+    return path10.resolve(left) === path10.resolve(right);
   }
 }
 function resolveHookHomeDir(env = process.env, fallback = os3.homedir()) {
   return env.HOME || fallback;
 }
 function resolveCopilotHookDir(env = process.env, homeDir = resolveHookHomeDir(env)) {
-  return path8.join(env.COPILOT_HOME || path8.join(homeDir, ".copilot"), "hooks");
+  return path10.join(env.COPILOT_HOME || path10.join(homeDir, ".copilot"), "hooks");
 }
 function createCopilotCliAmbientContextScript(command = "review-surface") {
   return [
@@ -11318,9 +12052,9 @@ function installCopilotCliSessionStartHook({
   timeoutSec = 10,
   onError = void 0
 } = {}) {
-  const target = path8.join(hookDir, "review-surface.json");
+  const target = path10.join(hookDir, "review-surface.json");
   try {
-    mkdirSync2(path8.dirname(target), { recursive: true });
+    mkdirSync2(path10.dirname(target), { recursive: true });
     const current = existsSync3(target) ? JSON.parse(readFileSync3(target, "utf8")) : {};
     const [updated, changed] = computeCopilotCliHookUpdate(
       current,
@@ -11437,7 +12171,7 @@ function serverReplacementReason(currentVersion, healthBody, forceRestart = fals
 }
 function shouldForceRestartForLocalBuild(executablePath, sourceServerExists = localSourceServerExists()) {
   const localBuildEntry = fileURLToPath4(new URL("../dist/cli.mjs", import.meta.url));
-  return sourceServerExists && path8.resolve(executablePath) === path8.resolve(localBuildEntry);
+  return sourceServerExists && path10.resolve(executablePath) === path10.resolve(localBuildEntry);
 }
 function localSourceServerExists() {
   return existsSync3(fileURLToPath4(new URL("../src/server.js", import.meta.url)));
@@ -11626,6 +12360,22 @@ function firstPositionalArg(args, valueFlags = []) {
   }
   return null;
 }
+function positionalArgs(args, valueFlags = []) {
+  const flags = new Set(valueFlags);
+  const out = [];
+  let positionalMode = false;
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (!positionalMode && arg === "--") {
+      positionalMode = true;
+    } else if (!positionalMode && isValueFlagToken(arg, flags)) {
+      if (!arg.includes("=")) i += 1;
+    } else if (positionalMode || !arg.startsWith("-")) {
+      out.push(arg);
+    }
+  }
+  return out;
+}
 function flagValue(args, flag) {
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
@@ -11659,6 +12409,9 @@ Usage:
   review-surface <html-file> [--no-open] [--no-gate] [--reopen]
   review-surface poll <html-file> [--agent-reply "..."]
   review-surface journal <html-file> [--limit <n>]
+  review-surface link <child-of|supersedes|derived-from> <page> <page> [--json]
+  review-surface pages [--under <page>] [--depth <n>] [--state <states>] [--text <t>] [--replaced no|yes|any] [--json]
+  review-surface search <text> [--kind <kinds>] [--json]
   review-surface end <html-file>
   review-surface export <html-file> [--out <path>]
   review-surface share <html-file> [--password <pw>] [--token <t>]
@@ -11676,9 +12429,9 @@ Note: poll long-polls indefinitely by default until the user sends feedback or e
 }
 function createCommandHelp({ agent = "generic" } = {}) {
   return {
-    open: `Usage: review-surface <html-file> [--no-open] [--no-gate] [--reopen] [--frame-ancestor <origin>]
+    open: `Usage: review-surface <html-file> [--no-open] [--no-gate] [--reopen] [--frame-ancestor <origin>] [--supersedes <page>]
 
-Open or resume a Review Surface review session for an HTML artifact. Use --no-open when you need to ensure the server/session exists without opening another browser window. Use --no-gate to skip the open-time layout curtain for this browser open. If the user explicitly ended the session from the browser, this refuses to reopen it and returns guidance instead - pass --reopen to force it open when the user asks for further review or something important needs their visual attention. Sessions ended by the agent (\`review-surface end\`) reopen normally without the flag. Use --frame-ancestor to let one named local origin embed the review chrome in an iframe (see \`review-surface server\` help for what it changes and why it belongs to the server, not the session).
+Open or resume a Review Surface review session for an HTML artifact. Use --no-open when you need to ensure the server/session exists without opening another browser window. Use --no-gate to skip the open-time layout curtain for this browser open. If the user explicitly ended the session from the browser, this refuses to reopen it and returns guidance instead - pass --reopen to force it open when the user asks for further review or something important needs their visual attention. Sessions ended by the agent (\`review-surface end\`) reopen normally without the flag. Use --frame-ancestor to let one named local origin embed the review chrome in an iframe (see \`review-surface server\` help for what it changes and why it belongs to the server, not the session). Pass --supersedes <page> when this page continues a thread that already has a page (a new round of the same discussion): the open records that this page supersedes that one, so the older page drops out of \`review-surface pages\` and this page takes its place in the tree. A refused link is reported in the output's link field and never fails the open.
 `,
     poll: `Usage: review-surface poll <html-file> [--agent-reply "..."]
 
@@ -11687,6 +12440,18 @@ This command long-polls indefinitely for queued user prompts. It stays silent wh
     journal: `Usage: review-surface journal <html-file> [--limit <n>]
 
 Print the session's accepted feedback batches from the append-only journal as JSON, oldest first. Every batch the user ever sent is journaled at accept time and never removed by delivery, so this is the recovery path when a delivered poll response was lost or mangled downstream - re-read the most recent batch here instead of asking the user to resubmit. --limit keeps only the newest <n> batches.
+`,
+    link: `Usage: review-surface link <child-of|supersedes|derived-from> <page> <page> [--json]
+
+Record one typed link between two pages already opened with review-surface: \`child-of <page> <parent>\` files a page under a parent (a later child-of moves it), \`supersedes <new> <old>\` marks the old page replaced, \`derived-from <page> <source>\` records where a page came from. A page is a session key, a file path, or a unique path suffix. Refused, with nothing written: an unknown type, a self-link, a nesting cycle, a supersede cycle, a page already replaced by another page, and a page name that matches more than one page. Prints the result as TOON, or as raw JSON with --json.
+`,
+    pages: `Usage: review-surface pages [--under <page>] [--depth <n>] [--state <states>] [--text <t>] [--replaced no|yes|any] [--json]
+
+Print every review page with its links (TOON, or raw JSON with --json) (parent, children, replaced_by, replaces, derived_from). --under keeps pages inside one page, --depth limits how deep (1 = direct children; without --under, 0 = top level), --state filters by comma-separated state, --text matches title or path, --replaced defaults to no, hiding replaced pages. States come from what the session recorded, never from a page's title: ended (the session ended), agent-working (feedback queued or the user spoke last), needs-you (the agent replied last), new (nothing exchanged yet), quiet (no activity for 7 days).
+`,
+    search: `Usage: review-surface search <text> [--kind page,feedback,reply,event] [--json]
+
+One raw search across everything Review Surface records, ignoring the page tree: every page (replaced ones included), every feedback batch in the journal, every agent reply, and every event in the event log. Prints the hits newest first, as TOON or as raw JSON with --json.
 `,
     end: `Usage: review-surface end <html-file>
 
@@ -11702,7 +12467,7 @@ Disabled in this build: remote sharing is retired \u2014 artifacts never leave t
 `,
     stop: `Usage: review-surface stop [--port <port>]
 
-Shut down the background Review Surface server. The server also stops itself when no browser or poll has been connected for a while (REVIEW_SURFACE_IDLE_TIMEOUT_MS, default 30m) and immediately when the last session ends with nothing connected.
+Shut down the background Review Surface server. Once started it otherwise stays up, one server for every review page. Setting REVIEW_SURFACE_IDLE_TIMEOUT_MS=<ms> opts into self-shutdown after that long with no browser or poll connected, and immediately when the last session ends with nothing connected.
 `,
     playbook: `Usage: review-surface playbook [playbook_id]
 

@@ -135,11 +135,11 @@ function bootSdk() {
       observe() {}
       disconnect() {}
     },
-    URL: {
-      createObjectURL() {
+    URL: class TestURL extends URL {
+      static createObjectURL() {
         return "blob:review-surface-test";
-      },
-      revokeObjectURL() {},
+      }
+      static revokeObjectURL() {}
     },
     getComputedStyle: () => ({}),
     setTimeout: scheduleTimer,
@@ -183,10 +183,20 @@ function bootSdk() {
     posted,
     body,
     api: sandbox.window.reviewSurface,
-    click(target) {
+    click(target, extra = {}) {
       const listener = documentListeners.find((entry) => entry.type === "click");
       assert.ok(listener, "the SDK registers a document click listener");
-      listener.handler({ target, preventDefault() {}, stopPropagation() {} });
+      const event = {
+        target,
+        defaultPrevented: false,
+        preventDefault() {
+          event.defaultPrevented = true;
+        },
+        stopPropagation() {},
+        ...extra,
+      };
+      listener.handler(event);
+      return event;
     },
     setDocumentQuery(query) {
       documentQuery = query;
@@ -364,7 +374,10 @@ test("the served SDK bundle reports nothing when there is no draft to restore", 
   const before = sdk.posted.length;
 
   sdk.sendChromeMessage({ type: "review-surface:restoreReviewState", state: { card: null, fields: [] } });
-  sdk.sendChromeMessage({ type: "review-surface:restoreReviewState", state: { card: { selector: "#hero", text: "  " } } });
+  sdk.sendChromeMessage({
+    type: "review-surface:restoreReviewState",
+    state: { card: { selector: "#hero", text: "  " } },
+  });
   sdk.runTimers();
 
   assert.equal(sdk.posted.length, before);
@@ -426,4 +439,39 @@ test("the served SDK bundle drops a late restore once the user has opened a card
     sdk.posted.some((message) => message.type === "review-surface:reviewDraftUnrestorable"),
     false,
   );
+});
+
+function pageLink(sdk, href, attrs = {}) {
+  const link = appendTo(sdk.body, cell("a", "the other discussion"));
+  link.href = new URL(href, "http://127.0.0.1/artifact/abc/index.html").href;
+  for (const [name, value] of Object.entries(attrs)) link.setAttribute(name, value);
+  return link;
+}
+
+test("a link to another review page is handed to the chrome instead of opening a card", () => {
+  const sdk = bootSdk();
+  const event = sdk.click(pageLink(sdk, "/open?file=%2Fwork%2Fother.html"));
+  assert.equal(event.defaultPrevented, true);
+  assert.deepEqual(
+    { ...sdk.posted.at(-1) },
+    {
+      type: "review-surface:openPage",
+      href: "/open?file=%2Fwork%2Fother.html",
+      artifact_load_token: "load-token",
+    },
+  );
+  assert.equal(sdk.cards().length, 0, "following a page link is not an annotation");
+
+  sdk.click(pageLink(sdk, "/session/0123456789abcdef"));
+  assert.equal(sdk.posted.at(-1).href, "/session/0123456789abcdef");
+});
+
+test("ordinary, foreign, targeted, and modified link clicks keep their old behavior", () => {
+  const sdk = bootSdk();
+  const before = sdk.posted.length;
+  sdk.click(pageLink(sdk, "https://example.com/open?file=%2Fx.html"));
+  sdk.click(pageLink(sdk, "/docs/readme.html"));
+  sdk.click(pageLink(sdk, "/open?file=%2Fx.html", { target: "_blank" }));
+  sdk.click(pageLink(sdk, "/open?file=%2Fx.html"), { ctrlKey: true });
+  assert.equal(sdk.posted.slice(before).filter((message) => message.type === "review-surface:openPage").length, 0);
 });

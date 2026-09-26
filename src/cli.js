@@ -29,6 +29,18 @@ import {
 import { findPlaybook, listPlaybooks, playbookIds, PLAYBOOK_ROUTER_HELP } from "./playbooks.js";
 import { analyzeSelfPaint, SELF_PAINT_WARNING } from "./self-paint.js";
 import { parseFrameAncestorOrigin, resolveDesignAssetPath, serve } from "./server.js";
+import { eventLogFile } from "./event-log.js";
+import {
+  canonicalPageRef,
+  LINK_TYPES,
+  linksFile,
+  loadPageGraphInputs,
+  loadSearchSources,
+  parsePageQuery,
+  queryPages,
+  SEARCH_KINDS,
+  searchEverything,
+} from "./page-graph.js";
 import { canonicalFile, sessionKey, SessionStore } from "./session-store.js";
 import { initDefaultTelemetry } from "./telemetry.js";
 
@@ -36,6 +48,9 @@ const COMMANDS = new Set([
   "open",
   "poll",
   "journal",
+  "link",
+  "pages",
+  "search",
   "end",
   "stop",
   "server",
@@ -125,6 +140,9 @@ export async function run(argv) {
         open: openCommand,
         poll: pollCommand,
         journal: journalCommand,
+        link: linkCommand,
+        pages: pagesCommand,
+        search: searchCommand,
         end: endCommand,
         stop: stopCommand,
         playbook: playbookCommand,
@@ -205,7 +223,7 @@ export function createHomeOutput({ bin, sessions, includeSessions = true, agent 
       "Run `review-surface end <html-file>` to end a session as the agent - ending it this way still allows a plain reopen later. When the user ends it from the browser instead, a later `review-surface <html-file>` refuses to reopen it without `--reopen`",
       "Run `review-surface export <html-file> [--out <path>]` to write a portable copy of the artifact - one HTML file with its LOCAL assets inlined - so it opens with no Review Surface server and no sibling files. Remote CDN/font references are left as links, so it needs network to render those. Users can also export from the browser chrome's overflow menu",
       "Remote sharing is disabled in this build: artifacts never leave the machine via third-party hosts. Use `review-surface export <html-file>` for a portable single-file copy you can send over channels you control.",
-      "Run `review-surface stop` to shut down the background server (it also self-stops when idle or after the last session ends with nothing connected)",
+      "Run `review-surface stop` to shut down the background server. Once started it stays up across every review page, so it never needs restarting between sessions",
       `Run \`review-surface playbook <playbook_id>\` for focused artifact guidance. ${PLAYBOOK_ROUTER_HELP}`,
       DESIGN_SYSTEM_HINT,
       "Use review-surface when the user asks for a visual artifact, HTML explainer, interactive prototype, review surface, product or technical plan, comparison, report, or browser-based feedback loop",
@@ -255,11 +273,12 @@ export function createUserEndedOpenOutput({ file, url }) {
 }
 
 async function openCommand(args) {
-  const file = firstPositionalArg(args, ["--frame-ancestor"]);
+  const file = firstPositionalArg(args, ["--frame-ancestor", "--supersedes"]);
   if (!file) {
     throw new AxiError("HTML file path is required", "VALIDATION_ERROR", ["Run `review-surface <html-file>`"]);
   }
   await assertHtmlFile(file);
+  const supersedesFlag = flagValue(args, "--supersedes");
   const absolute = await canonicalFile(file);
   const selfPaintWarning = await selfPaintWarningForFile(absolute);
   const noGate = args.includes("--no-gate");
@@ -270,7 +289,12 @@ async function openCommand(args) {
     reloadKey: sessionKey(absolute),
     frameAncestor,
   });
-  const response = await postJson(`${baseUrl}/api/sessions`, { file: absolute, noGate, reopen });
+  const response = await postJson(`${baseUrl}/api/sessions`, {
+    file: absolute,
+    noGate,
+    reopen,
+    ...(supersedesFlag ? { supersedes: await canonicalPageRef(supersedesFlag) } : {}),
+  });
   if (response.status === "user-ended") {
     return createUserEndedOpenOutput({ file: absolute, url: response.url });
   }
@@ -282,13 +306,14 @@ async function openCommand(args) {
       response.status = "ready";
     }
   }
-  return createOpenOutput({
+  const output = createOpenOutput({
     file: absolute,
     url: response.url,
     status: response.status || "opened",
     agent: detectInvokingAgent(process.env),
     selfPaintWarning,
   });
+  return response.link ? { ...output, link: response.link } : output;
 }
 
 // A read failure here must not break the open - the server reports unreadable artifacts
@@ -337,6 +362,91 @@ async function journalCommand(args) {
   // deliveries from this output, so it must stay parseable as-is.
   process.stdout.write(`${JSON.stringify({ file: absolute, batches })}\n`);
   return "";
+}
+
+// The one write path for typed links. It goes through the server so the rules run under one
+// lock and every recorded link lands on the event stream.
+async function linkCommand(args) {
+  const [type, from, to] = positionalArgs(args);
+  if (!type || !from || !to) {
+    throw new AxiError("A link type and two pages are required", "VALIDATION_ERROR", [
+      `Run \`review-surface link <${LINK_TYPES.join("|")}> <page> <page>\``,
+    ]);
+  }
+  const baseUrl = await ensureServer();
+  let response;
+  try {
+    response = await fetch(`${baseUrl}/api/links`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ type, from: await canonicalPageRef(from), to: await canonicalPageRef(to) }),
+    });
+  } catch {
+    throw serverConnectionError();
+  }
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const code = response.status === 404 ? "NOT_FOUND" : "VALIDATION_ERROR";
+    throw new AxiError(body.error || `Review Surface request failed: ${response.status}`, code, [
+      "Run `review-surface pages --replaced any` to see every page and its links",
+    ]);
+  }
+  return pageGraphOutput(args, body);
+}
+
+// TOON by default like every other command; `--json` prints raw JSON for machine consumers.
+function pageGraphOutput(args, value) {
+  if (!args.includes("--json")) return value;
+  process.stdout.write(`${JSON.stringify(value)}\n`);
+  return "";
+}
+
+// Read-only, straight from the state directory, like `journal`: no server needed.
+async function pagesCommand(args) {
+  let options;
+  try {
+    options = parsePageQuery({
+      under: flagValue(args, "--under") || undefined,
+      depth: flagValue(args, "--depth") ?? undefined,
+      state: flagValue(args, "--state") || undefined,
+      text: flagValue(args, "--text") || undefined,
+      replaced: flagValue(args, "--replaced") || undefined,
+    });
+  } catch (error) {
+    throw new AxiError(error.message, "VALIDATION_ERROR", ["Run `review-surface pages --help`"]);
+  }
+  if (options.under) options.under = await canonicalPageRef(options.under);
+  const inputs = await pageGraphInputsFromDisk();
+  let pages;
+  try {
+    pages = queryPages(inputs, options);
+  } catch (error) {
+    throw new AxiError(error.message, error.code === "NOT_FOUND" ? "NOT_FOUND" : "VALIDATION_ERROR");
+  }
+  return pageGraphOutput(args, { pages });
+}
+
+async function searchCommand(args) {
+  const text = positionalArgs(args, ["--kind"])[0] || "";
+  const kindFlag = flagValue(args, "--kind");
+  const kinds = kindFlag ? kindFlag.split(",").map((kind) => kind.trim()) : undefined;
+  const unknown = (kinds || []).filter((kind) => !SEARCH_KINDS.includes(kind));
+  if (unknown.length > 0) {
+    throw new AxiError(`Unknown kind ${unknown.join(", ")}`, "VALIDATION_ERROR", [
+      `Use --kind with ${SEARCH_KINDS.join(", ")}`,
+    ]);
+  }
+  const sources = await loadSearchSources(await pageGraphInputsFromDisk());
+  return pageGraphOutput(args, { hits: searchEverything(sources, text, { kinds }) });
+}
+
+function pageGraphInputsFromDisk() {
+  const file = stateFile();
+  return loadPageGraphInputs({
+    store: new SessionStore(file),
+    linksPath: linksFile(file),
+    eventsPath: eventLogFile(file),
+  });
 }
 
 async function pollCommand(args) {
@@ -1446,6 +1556,23 @@ function firstPositionalArg(args, valueFlags = []) {
   return null;
 }
 
+function positionalArgs(args, valueFlags = []) {
+  const flags = new Set(valueFlags);
+  const out = [];
+  let positionalMode = false;
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (!positionalMode && arg === "--") {
+      positionalMode = true;
+    } else if (!positionalMode && isValueFlagToken(arg, flags)) {
+      if (!arg.includes("=")) i += 1;
+    } else if (positionalMode || !arg.startsWith("-")) {
+      out.push(arg);
+    }
+  }
+  return out;
+}
+
 function flagValue(args, flag) {
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
@@ -1477,21 +1604,24 @@ export function getCommandHelp(command, { agent = "generic" } = {}) {
 }
 
 function createTopLevelHelp({ agent = "generic" } = {}) {
-  return `review-surface - Review Surface AXI\n\nUsage:\n  review-surface\n  review-surface <html-file> [--no-open] [--no-gate] [--reopen]\n  review-surface poll <html-file> [--agent-reply "..."]\n  review-surface journal <html-file> [--limit <n>]\n  review-surface end <html-file>\n  review-surface export <html-file> [--out <path>]\n  review-surface share <html-file> [--password <pw>] [--token <t>]\n  review-surface stop\n  review-surface playbook [playbook_id]\n  review-surface design\n  review-surface setup hooks\n  review-surface setup plugin\n\n${DESIGN_SYSTEM_HINT}\n\nNote: poll long-polls indefinitely by default until the user sends feedback or ends the session, staying silent while it waits - never kill it. Layout issues the browser detects are passive: they collect in the user's Layout issues inbox in the Review Surface top bar and reach the agent only when the user selects them and queues the fixes, as an ordinary tag "layout-warnings" prompt. Do not pass --timeout-ms during normal agent use; it is for tests and debugging only. ${pollExecutionGuidance({ agent })} ${POLL_SEND_AND_END_RULE}\n\n`;
+  return `review-surface - Review Surface AXI\n\nUsage:\n  review-surface\n  review-surface <html-file> [--no-open] [--no-gate] [--reopen]\n  review-surface poll <html-file> [--agent-reply "..."]\n  review-surface journal <html-file> [--limit <n>]\n  review-surface link <child-of|supersedes|derived-from> <page> <page> [--json]\n  review-surface pages [--under <page>] [--depth <n>] [--state <states>] [--text <t>] [--replaced no|yes|any] [--json]\n  review-surface search <text> [--kind <kinds>] [--json]\n  review-surface end <html-file>\n  review-surface export <html-file> [--out <path>]\n  review-surface share <html-file> [--password <pw>] [--token <t>]\n  review-surface stop\n  review-surface playbook [playbook_id]\n  review-surface design\n  review-surface setup hooks\n  review-surface setup plugin\n\n${DESIGN_SYSTEM_HINT}\n\nNote: poll long-polls indefinitely by default until the user sends feedback or ends the session, staying silent while it waits - never kill it. Layout issues the browser detects are passive: they collect in the user's Layout issues inbox in the Review Surface top bar and reach the agent only when the user selects them and queues the fixes, as an ordinary tag "layout-warnings" prompt. Do not pass --timeout-ms during normal agent use; it is for tests and debugging only. ${pollExecutionGuidance({ agent })} ${POLL_SEND_AND_END_RULE}\n\n`;
 }
 
 function createCommandHelp({ agent = "generic" } = {}) {
   return {
-    open: `Usage: review-surface <html-file> [--no-open] [--no-gate] [--reopen] [--frame-ancestor <origin>]\n\nOpen or resume a Review Surface review session for an HTML artifact. Use --no-open when you need to ensure the server/session exists without opening another browser window. Use --no-gate to skip the open-time layout curtain for this browser open. If the user explicitly ended the session from the browser, this refuses to reopen it and returns guidance instead - pass --reopen to force it open when the user asks for further review or something important needs their visual attention. Sessions ended by the agent (\`review-surface end\`) reopen normally without the flag. Use --frame-ancestor to let one named local origin embed the review chrome in an iframe (see \`review-surface server\` help for what it changes and why it belongs to the server, not the session).\n`,
+    open: `Usage: review-surface <html-file> [--no-open] [--no-gate] [--reopen] [--frame-ancestor <origin>] [--supersedes <page>]\n\nOpen or resume a Review Surface review session for an HTML artifact. Use --no-open when you need to ensure the server/session exists without opening another browser window. Use --no-gate to skip the open-time layout curtain for this browser open. If the user explicitly ended the session from the browser, this refuses to reopen it and returns guidance instead - pass --reopen to force it open when the user asks for further review or something important needs their visual attention. Sessions ended by the agent (\`review-surface end\`) reopen normally without the flag. Use --frame-ancestor to let one named local origin embed the review chrome in an iframe (see \`review-surface server\` help for what it changes and why it belongs to the server, not the session). Pass --supersedes <page> when this page continues a thread that already has a page (a new round of the same discussion): the open records that this page supersedes that one, so the older page drops out of \`review-surface pages\` and this page takes its place in the tree. A refused link is reported in the output's link field and never fails the open.\n`,
     poll: `Usage: review-surface poll <html-file> [--agent-reply "..."]\n\nThis command long-polls indefinitely for queued user prompts. It stays silent while it waits - that is normal, never kill it. Browser-detected layout issues do NOT return this poll: they are filed passively in the user's Layout issues inbox and arrive as an ordinary tag "layout-warnings" prompt only after the user selects them and queues the fixes. Warning lifecycle: an issue stays unresolved and counted while queued, becomes recurring if a newer artifact revision still shows it, and is resolved only after a newer artifact load plus a complete diagnostic pass at the same viewport no longer detects it. A failed or incomplete pass preserves it as unverified rather than clearing it. The only response that arrives without user action is artifact_failures - a fatal failure that made the review surface itself unusable. Do not pass --timeout-ms during normal agent use; it is for tests and debugging only. ${pollExecutionGuidance({ agent })} Use --agent-reply after applying prior feedback to display your response in Review Surface before waiting again. ${POLL_SEND_AND_END_RULE}\n`,
     journal: `Usage: review-surface journal <html-file> [--limit <n>]\n\nPrint the session's accepted feedback batches from the append-only journal as JSON, oldest first. Every batch the user ever sent is journaled at accept time and never removed by delivery, so this is the recovery path when a delivered poll response was lost or mangled downstream - re-read the most recent batch here instead of asking the user to resubmit. --limit keeps only the newest <n> batches.\n`,
+    link: `Usage: review-surface link <child-of|supersedes|derived-from> <page> <page> [--json]\n\nRecord one typed link between two pages already opened with review-surface: \`child-of <page> <parent>\` files a page under a parent (a later child-of moves it), \`supersedes <new> <old>\` marks the old page replaced, \`derived-from <page> <source>\` records where a page came from. A page is a session key, a file path, or a unique path suffix. Refused, with nothing written: an unknown type, a self-link, a nesting cycle, a supersede cycle, a page already replaced by another page, and a page name that matches more than one page. Prints the result as TOON, or as raw JSON with --json.\n`,
+    pages: `Usage: review-surface pages [--under <page>] [--depth <n>] [--state <states>] [--text <t>] [--replaced no|yes|any] [--json]\n\nPrint every review page with its links (TOON, or raw JSON with --json) (parent, children, replaced_by, replaces, derived_from). --under keeps pages inside one page, --depth limits how deep (1 = direct children; without --under, 0 = top level), --state filters by comma-separated state, --text matches title or path, --replaced defaults to no, hiding replaced pages. States come from what the session recorded, never from a page's title: ended (the session ended), agent-working (feedback queued or the user spoke last), needs-you (the agent replied last), new (nothing exchanged yet), quiet (no activity for 7 days).\n`,
+    search: `Usage: review-surface search <text> [--kind page,feedback,reply,event] [--json]\n\nOne raw search across everything Review Surface records, ignoring the page tree: every page (replaced ones included), every feedback batch in the journal, every agent reply, and every event in the event log. Prints the hits newest first, as TOON or as raw JSON with --json.\n`,
     end: `Usage: review-surface end <html-file>\n\nEnd a Review Surface session as the agent. A session ended this way still reopens normally on the next \`review-surface <html-file>\`, unlike a user ending it from the browser, which requires --reopen.\n`,
     export: `Usage: review-surface export <html-file> [--out <path>]\n\nWrite a portable copy of an artifact: one HTML file with its LOCAL assets inlined (relative-path stylesheets, scripts, images, and fonts become inline <style>/<script> blocks and data URIs). Remote CDN/font references (https URLs) are left as links for the browser to load, so the file needs network to render those. Review Surface makes no outbound requests - it only reads local files, confined to the artifact's directory. Defaults to writing <name>.export.html next to the source; pass --out to choose a path. The Review Surface annotation SDK is never included in an export.\n`,
     share: `Usage: review-surface share <html-file>
 
 Disabled in this build: remote sharing is retired — artifacts never leave the machine via third-party hosts (see SECURITY-NOTES.md). Use 'review-surface export <html-file>' to produce a portable single-file copy and deliver it over a channel you control.
 `,
-    stop: `Usage: review-surface stop [--port <port>]\n\nShut down the background Review Surface server. The server also stops itself when no browser or poll has been connected for a while (REVIEW_SURFACE_IDLE_TIMEOUT_MS, default 30m) and immediately when the last session ends with nothing connected.\n`,
+    stop: `Usage: review-surface stop [--port <port>]\n\nShut down the background Review Surface server. Once started it otherwise stays up, one server for every review page. Setting REVIEW_SURFACE_IDLE_TIMEOUT_MS=<ms> opts into self-shutdown after that long with no browser or poll connected, and immediately when the last session ends with nothing connected.\n`,
     playbook: `Usage: review-surface playbook [playbook_id]\n\nList focused artifact guidance playbooks, or show one playbook by ID. Known IDs: diagram, table, comparison, plan, code, input, slides.\n\n${PLAYBOOK_ROUTER_HELP}\n\nExamples:\n  review-surface playbook\n  review-surface playbook diagram\n  review-surface playbook input\n`,
     design: `Usage: review-surface design\n\nShow a copy-pasteable CDN snippet for Tailwind CSS browser runtime v4 + DaisyUI v5 + themes, Mermaid diagram tooling, a content-to-playbook router, an optional layout safety CSS snippet, plus technical reference for DaisyUI components. ${PLAYBOOK_ROUTER_HELP} Review Surface artifacts stay portable HTML. This CDN snippet is the design fallback, not the default: inspect the subject project before falling back, and paste the layout safety CSS only when useful for dense nested grid/flex layouts, badges, wide fonts, or local media. ${DESIGN_PRIORITY_RULE}\n`,
     setup: `Usage: review-surface setup hooks\n       review-surface setup plugin\n\nhooks: install or repair agent SessionStart hooks for review-surface ambient context in Claude Code, Codex, OpenCode, and GitHub Copilot CLI. Restart your agent session afterward to receive the context. This is the primary integration - it carries live session state.\n\nplugin: register the installed review-surface package as an Agent Plugin (agent-plugins.org) in VS Code, Cursor, and GitHub Copilot CLI. The installed package directory is itself the plugin root, so nothing is downloaded and no marketplace is involved. Reload each client afterward. Codex users should use \`setup hooks\` instead.\n\nBoth actions are explicit opt-in, idempotent, and repair a stale path after a reinstall.\n`,

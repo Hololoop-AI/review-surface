@@ -50,6 +50,18 @@ import {
   exportWarningSummaries,
   splitExportWarnings,
 } from "./export-bundle.js";
+import { EventLog, eventLogFile } from "./event-log.js";
+import {
+  LinkError,
+  LinkStore,
+  linksFile,
+  loadPageGraphInputs,
+  loadSearchSources,
+  parsePageQuery,
+  queryPages,
+  SEARCH_KINDS,
+  searchEverything,
+} from "./page-graph.js";
 import { publishToHtmlApp } from "./html-app.js";
 import { injectReviewSurfaceSdk } from "./html-transform.js";
 import {
@@ -94,7 +106,6 @@ const designAssetUrls = {
   },
 };
 
-const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60_000;
 const WHITEBOARD_CHANNEL_TOKEN_TTL_MS = 5 * 60_000;
 // An escaped popup can navigate to an artifact-owned HTML or SVG asset on the
 // server origin. Keep every artifact response sandboxed at the response layer
@@ -245,18 +256,15 @@ export function isValidWhiteboardChannelToken(token, secret, sessionKey, now = D
   return actualBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(actualBuffer, expectedBuffer);
 }
 
-// A detached server should not live forever. When no browser chrome (SSE) and no agent poll
-// are connected for this long, the server shuts itself down so it stops dangling. The next
-// `review-surface <file>` invocation re-spawns a fresh server and adopts resumable sessions from
-// state.json. Browser-ended sessions still require the explicit --reopen opt-in. Set
-// REVIEW_SURFACE_IDLE_TIMEOUT_MS to 0/off to disable, or to a custom millisecond budget.
+// Once started, the server stays up: it is the one server behind every review page, and host
+// apps hold its event stream open to catch every response, so stepping down on its own - idle, or
+// after the last page ends - would drop them until some later open restarted it. Upgrades and
+// `review-surface stop` still replace or stop it. REVIEW_SURFACE_IDLE_TIMEOUT_MS=<ms> opts back
+// into self-shutdown after that long with no browser chrome (SSE) or agent poll connected, and
+// immediately when the last page ends with nothing connected; anything else means always on.
 export function resolveIdleTimeoutMs(env = process.env) {
-  const raw = env.REVIEW_SURFACE_IDLE_TIMEOUT_MS?.trim();
-  if (raw === undefined || raw === "") return DEFAULT_IDLE_TIMEOUT_MS;
-  if (raw === "0" || raw.toLowerCase() === "off") return null;
-  const value = Number(raw);
-  if (!Number.isFinite(value) || value <= 0) return DEFAULT_IDLE_TIMEOUT_MS;
-  return value;
+  const value = Number(env.REVIEW_SURFACE_IDLE_TIMEOUT_MS?.trim() || NaN);
+  return Number.isFinite(value) && value > 0 ? value : null;
 }
 
 export async function serve({
@@ -272,10 +280,14 @@ export async function serve({
   allowedHosts = extraAllowedHosts(),
   whiteboardAssetsDir = defaultWhiteboardAssetsDir(),
   frameAncestor = frameAncestorFromEnv(),
+  eventLogPath = eventLogFile(stateFile),
+  linksPath = linksFile(stateFile),
 }) {
   const app = express();
   const store = new SessionStore(stateFile);
   const events = new EventEmitter();
+  const eventLog = new EventLog(eventLogPath);
+  const linkStore = new LinkStore(linksPath);
   const watchers = new Map();
   const activePolls = new Map();
   const deliveredFeedback = new Set();
@@ -290,6 +302,50 @@ export async function serve({
   const writeLog = typeof log === "function" ? log : (line) => process.stderr.write(`${line}\n`);
   const logEvent = verbose ? (line) => writeLog(`[review-surface] ${line}`) : null;
   let publicPort = port;
+
+  // Append to the event log without holding up the route that caused it: the log is
+  // best-effort, and the routes it observes must behave exactly as they did without it.
+  function logPageEvent(type, session, data = {}) {
+    if (session) void eventLog.append(type, session.key, { file: session.file, ...data });
+  }
+  // The one link write path. Every record it appends is also a `link.recorded` event, so a host
+  // app sees the graph change on the same stream as everything else.
+  async function recordLink(link) {
+    const sessions = await store.listSessions();
+    const result = await linkStore.record(sessions, link);
+    const fileOf = (key) => sessions.find((session) => session.key === key)?.file;
+    for (const record of result.records) {
+      void eventLog.append("link.recorded", record.from, {
+        file: fileOf(record.from),
+        type: record.type,
+        to: record.to,
+        to_file: fileOf(record.to),
+      });
+    }
+    return result;
+  }
+  function linkErrorStatus(error) {
+    return error.code === "REFUSED" ? 409 : error.code === "NOT_FOUND" ? 404 : 400;
+  }
+  async function pageGraphInputs() {
+    return loadPageGraphInputs({ store, linksPath, eventsPath: eventLogPath });
+  }
+
+  // An ended page is no longer under review, so its file watcher goes: a server that stays up
+  // would otherwise hold one per page it ever served. Reopening a page watches it again.
+  function unwatchSession(key) {
+    const watcher = watchers.get(key);
+    if (!watcher) return;
+    watchers.delete(key);
+    watcher.close().catch(() => {});
+  }
+  // A new page version is a debounced watcher change, which knows only the session key.
+  events.on("reload", (key) => {
+    store
+      .findByKey(key)
+      .then((session) => logPageEvent("page.version", session))
+      .catch(() => {});
+  });
 
   function finishFeedbackDelivery(key, result) {
     if (result.status !== "feedback") return;
@@ -421,13 +477,19 @@ export async function serve({
   // already call isSameOriginRequest keep those checks - they also reject
   // header-less callers, and this middleware does not replace them.
   app.use((req, res, next) => {
-    // Two GET routes are effectively mutating and get the same guard: /api/poll
-    // performs a destructive takeFeedback (a cross-site GET could blind-drain a
-    // session's feedback), and /api/:key/export reads full artifact state. CLI
-    // callers send no Origin/Referer and pass untouched; the Host allowlist
+    // Five GET routes are effectively mutating or state-revealing and get the same
+    // guard: /api/poll performs a destructive takeFeedback (a cross-site GET could
+    // blind-drain a session's feedback), /api/:key/export reads full artifact
+    // state, and /api/events, /api/pages and /api/search list every artifact path.
+    // CLI callers send no Origin/Referer and pass untouched; the Host allowlist
     // remains their gate.
-    const guardedGet = req.method === "GET" &&
-      (req.path === "/api/poll" || /^\/api\/[^/]+\/export$/.test(req.path));
+    const guardedGet =
+      req.method === "GET" &&
+      (req.path === "/api/poll" ||
+        req.path === "/api/events" ||
+        req.path === "/api/pages" ||
+        req.path === "/api/search" ||
+        /^\/api\/[^/]+\/export$/.test(req.path));
     if (!guardedGet && (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS")) {
       next();
       return;
@@ -511,9 +573,22 @@ export async function serve({
         clearFeedbackDelivery(key, activePolls, deliveredFeedback, events);
       }
       logEvent?.(`session opened key=${key} file=${file}`);
+      logPageEvent("page.opened", session, { via: "cli", new: !existing });
       await syncOutstandingRepairs(key);
       await watchSession(session, watchers, events, logEvent, reloadDebounceMs);
-      res.json({ key, file, url, status: "opened" });
+      // A round page that continues an existing thread names its predecessor, and the open records
+      // that it supersedes it. The open itself never fails on the link: a refusal is reported.
+      let link;
+      if (typeof req.body?.supersedes === "string" && req.body.supersedes.trim()) {
+        try {
+          const result = await recordLink({ type: "supersedes", from: key, to: req.body.supersedes });
+          link = { status: result.status, ...result.link, records: result.records };
+        } catch (error) {
+          if (!(error instanceof LinkError)) throw error;
+          link = { status: "refused", type: "supersedes", from: key, to: req.body.supersedes, error: error.message };
+        }
+      }
+      res.json({ key, file, url, status: "opened", ...(link ? { link } : {}) });
     } catch (error) {
       next(error);
     }
@@ -692,8 +767,14 @@ export async function serve({
       // ordinary short poll to consume the feedback, so delivery semantics are
       // unchanged. Best-effort: the outbox must never fail the send.
       void appendOutboxSignal(req.params.key, shouldEndSession);
+      const promptCount = Array.isArray(req.body?.prompts) ? req.body.prompts.length : 0;
+      if (promptCount > 0) logPageEvent("page.feedback_sent", session, { prompts: promptCount });
+      if (shouldEndSession) logPageEvent("page.ended", session, { by: session.ended_by });
       res.json({ status: "queued", pending_prompts: session.pending_prompts });
-      if (shouldEndSession) await shutdownIfNoLiveSessions();
+      if (shouldEndSession) {
+        unwatchSession(req.params.key);
+        await shutdownIfNoLiveSessions();
+      }
     } catch (error) {
       next(error);
     }
@@ -823,6 +904,8 @@ export async function serve({
       const session = await store.endSession(req.params.key, "user");
       clearFeedbackDelivery(req.params.key, activePolls, deliveredFeedback, events);
       events.emit("ended", req.params.key, session?.ended_by);
+      logPageEvent("page.ended", session, { by: session?.ended_by });
+      unwatchSession(session?.key);
       res.json({ status: "ended" });
       await shutdownIfNoLiveSessions();
     } catch (error) {
@@ -839,6 +922,7 @@ export async function serve({
         return;
       }
       events.emit("agent-reply", req.params.key, text);
+      logPageEvent("page.agent_reply", session, { chars: text.length });
       // The reply concludes the delivered-feedback "working" state. Without this, a poll that
       // drains feedback and then releases leaves presence stuck on "working" even after the agent
       // answers. Human sends remain available while working because the server queues them for the
@@ -939,6 +1023,8 @@ export async function serve({
       const session = await store.endSession(key, "agent");
       clearFeedbackDelivery(key, activePolls, deliveredFeedback, events);
       events.emit("ended", key, session?.ended_by);
+      logPageEvent("page.ended", session, { by: session?.ended_by });
+      unwatchSession(session?.key);
       res.json({ status: "ended" });
       await shutdownIfNoLiveSessions();
     } catch (error) {
@@ -957,15 +1043,20 @@ export async function serve({
   app.get("/open", async (req, res, next) => {
     try {
       const raw = typeof req.query.file === "string" ? req.query.file : "";
+      // The chrome asks for JSON when a link inside an artifact names another page: it navigates
+      // itself to the answer instead of following a redirect a proxy might follow on its behalf.
+      const wantsJson = req.accepts(["html", "json"]) === "json";
       if (!raw) {
-        res.status(400).send("Usage: /open?file=<absolute path to an artifact>");
+        if (wantsJson) res.status(400).json({ error: "the link names no file." });
+        else res.status(400).send("Usage: /open?file=<absolute path to an artifact>");
         return;
       }
       let file;
       try {
         file = await canonicalFile(raw);
       } catch {
-        res.status(404).send(`No such artifact: ${raw}`);
+        if (wantsJson) res.status(404).json({ error: "that file does not exist." });
+        else res.status(404).send(`No such artifact: ${raw}`);
         return;
       }
       const key = sessionKey(file);
@@ -975,8 +1066,10 @@ export async function serve({
         const session = await store.upsertSession(file, sessionUrl);
         await watchSession(session, watchers, events, logEvent, reloadDebounceMs);
         logEvent?.(`session opened via link key=${key} file=${file}`);
+        logPageEvent("page.opened", session, { via: "link", new: !existing });
       }
-      res.redirect(302, `/session/${key}`);
+      if (wantsJson) res.json({ key, url: `/session/${key}` });
+      else res.redirect(302, `/session/${key}`);
     } catch (error) {
       next(error);
     }
@@ -1135,6 +1228,81 @@ export async function serve({
     } catch (error) {
       next(error);
     }
+  });
+
+  // The link write path: one typed link between two known pages, checked against the graph's rules.
+  app.post("/api/links", async (req, res, next) => {
+    try {
+      const { type, from, to } = req.body || {};
+      const result = await recordLink({ type: String(type || ""), from: String(from || ""), to: String(to || "") });
+      res.json(result);
+    } catch (error) {
+      if (error instanceof LinkError) {
+        res.status(linkErrorStatus(error)).json({ status: "refused", error: error.message });
+        return;
+      }
+      next(error);
+    }
+  });
+
+  // Read-only page query and raw search for host apps. Both list artifact paths, so both are
+  // origin-guarded like /api/events.
+  app.get("/api/pages", async (req, res, next) => {
+    try {
+      const query = (name) => (typeof req.query[name] === "string" ? req.query[name] : undefined);
+      const options = parsePageQuery({
+        under: query("under"),
+        depth: query("depth"),
+        state: query("state"),
+        text: query("text"),
+        replaced: query("replaced"),
+      });
+      res.json({ pages: queryPages(await pageGraphInputs(), options) });
+    } catch (error) {
+      if (error instanceof LinkError) {
+        res.status(linkErrorStatus(error)).json({ error: error.message });
+        return;
+      }
+      next(error);
+    }
+  });
+
+  app.get("/api/search", async (req, res, next) => {
+    try {
+      const q = typeof req.query.q === "string" ? req.query.q : "";
+      const kindParam = typeof req.query.kind === "string" ? req.query.kind : "";
+      const kinds = kindParam ? kindParam.split(",").filter((kind) => SEARCH_KINDS.includes(kind)) : undefined;
+      res.json({ hits: searchEverything(await loadSearchSources(await pageGraphInputs()), q, { kinds }) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // The event log, pushed. One stream for every session, so a host app attaches once and relays
+  // what it wants. A subscriber resumes with the standard `Last-Event-ID` header (EventSource sends
+  // it on reconnect) or `?after=<cursor>`; `?after=0` replays the whole log. The server stays up
+  // once started, so the stream only closes on an upgrade or `review-surface stop`; the durable
+  // log means a relay that reconnects to the replacement misses nothing.
+  app.get("/api/events", async (req, res) => {
+    const raw = req.get("last-event-id") ?? (typeof req.query.after === "string" ? req.query.after : "");
+    const after = /^\d+$/.test(raw) ? Number(raw) : null;
+    res.writeHead(200, {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      connection: "keep-alive",
+    });
+    res.write(": review-surface events\n\n");
+    let closed = false;
+    let unsubscribe = () => {};
+    req.on("close", () => {
+      closed = true;
+      unsubscribe();
+    });
+    const send = (event, cursor) => {
+      if (!closed) res.write(`id: ${cursor}\ndata: ${JSON.stringify(event)}\n\n`);
+    };
+    unsubscribe = await eventLog.subscribe(send, { after });
+    if (closed) unsubscribe();
   });
 
   app.get("/events/:key", async (req, res, next) => {
@@ -1605,13 +1773,14 @@ export async function serve({
     idleTimer.unref?.();
   }
 
-  // When the final open session ends with nothing connected, there is nothing left to serve,
-  // so step down immediately rather than waiting out the idle timeout. If a browser chrome or
+  // Only for a server that opted into self-shutdown: when the final open session ends with
+  // nothing connected, there is nothing left to serve, so step down immediately rather than
+  // waiting out the idle timeout. If a browser chrome or
   // poll is still attached (e.g. the user is about to reopen), leave the server up and let the
   // idle timer reap it once those connections drop. Best-effort: never let a read failure
   // block the end response.
   async function shutdownIfNoLiveSessions() {
-    if (sseClients.size > 0 || activePolls.size > 0) return;
+    if (idleTimeoutMs == null || sseClients.size > 0 || activePolls.size > 0) return;
     try {
       const sessions = await store.listSessions();
       if (sessions.every((session) => session.status === "ended")) {

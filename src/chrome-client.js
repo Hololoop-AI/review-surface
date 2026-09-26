@@ -2833,7 +2833,58 @@ window.addEventListener("message", (event) => {
   if (msg.type === "review-surface:sendQueuedPrompts") sendQueued();
   if (msg.type === "review-surface:endSession") endSession();
   if (msg.type === "review-surface:toggleAnnotationMode") toggleAnnotationMode();
+  // Only on a real click: the reviewer's click inside the frame activates this window too, and
+  // without that an artifact script could navigate the reviewer away on its own.
+  if (msg.type === "review-surface:openPage" && navigator.userActivation?.isActive !== false) {
+    openReviewPage(msg.href);
+  }
 });
+
+// A link inside the artifact to another review page. The artifact frame cannot show that page (it
+// refuses to be framed), so the chrome navigates itself - and only to this server's own page
+// routes, as a root-relative path, so an artifact can never send the reviewer to another origin.
+// `/open` is resolved to its session first rather than followed: a proxy in front of Review Surface
+// that follows the redirect itself would otherwise leave the chrome running at the /open URL.
+const REVIEW_PAGE_PATH = /^\/session\/[0-9a-f]{16}$/;
+
+async function openReviewPage(href) {
+  const path = String(href || "");
+  if (REVIEW_PAGE_PATH.test(path)) {
+    location.assign(path);
+    return;
+  }
+  const file = path.startsWith("/open?") ? new URLSearchParams(path.slice("/open?".length)).get("file") : "";
+  if (!file) return;
+  let failure = "Review Surface did not answer.";
+  try {
+    const response = await fetch("/open?file=" + encodeURIComponent(file), {
+      headers: { accept: "application/json" },
+    });
+    const data = await response.json().catch(() => ({}));
+    if (response.ok && REVIEW_PAGE_PATH.test(String(data?.url || ""))) {
+      location.assign(data.url);
+      return;
+    }
+    failure = String(data?.error || "Review Surface could not open it.");
+  } catch {
+    // keep the default failure line
+  }
+  renderPageLinkFailure(file, failure);
+}
+
+function renderPageLinkFailure(file, failure) {
+  if (!chatLog) return;
+  const el = document.createElement("div");
+  el.className = "bubble note";
+  el.innerHTML =
+    "<small>Link not opened</small><div>This page links to " +
+    escapeHtml(file) +
+    ", but " +
+    escapeHtml(failure) +
+    "</div>";
+  chatLog.appendChild(el);
+  scrollElementIntoView(el);
+}
 
 // The sandboxed artifact iframe can't reach the loopback server (opaque origin),
 // so it hands captured image bytes here and the chrome performs the same-origin

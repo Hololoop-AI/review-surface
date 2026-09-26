@@ -63,7 +63,9 @@ export function deriveReviewSurfaceQueueKey(element, options = {}) {
     const scope = closestElementMatching(el, "form,fieldset") || el?.parentElement || el;
     const tag = tagName(scope) || "scope";
     const explicit = stringValue(
-      attributeValue(scope, "data-review-surface-question") || attributeValue(scope, "id") || attributeValue(scope, "name"),
+      attributeValue(scope, "data-review-surface-question") ||
+        attributeValue(scope, "id") ||
+        attributeValue(scope, "name"),
     ).trim();
     if (explicit) return `${tag}:${explicit}`;
     return elementPath(scope) || tag;
@@ -528,7 +530,9 @@ export function createArtifactSdk(
     // Only a real (retryable) upload gets a Retry button; a rejected non-image has no file.
     const retry =
       item.status === "error" && item.file
-        ? '<button type="button" class="review-surface-attachment-retry" data-attachment-retry="' + index + '">Retry</button>'
+        ? '<button type="button" class="review-surface-attachment-retry" data-attachment-retry="' +
+          index +
+          '">Retry</button>'
         : "";
     return (
       '<div class="review-surface-attachment-chip' +
@@ -1292,7 +1296,8 @@ export function createArtifactSdk(
   }
 
   function isRequiredControl(el) {
-    if (!el?.matches?.("button,input,select,textarea,a[href],summary,[data-review-surface-action],[role]")) return false;
+    if (!el?.matches?.("button,input,select,textarea,a[href],summary,[data-review-surface-action],[role]"))
+      return false;
     if (el.matches("input[type='hidden'],[disabled],[aria-disabled='true']")) return false;
     if (!el.hasAttribute("role")) return true;
     return new Set(["button", "link", "checkbox", "radio", "switch", "textbox", "combobox"]).has(
@@ -1726,7 +1731,8 @@ export function createArtifactSdk(
 
   function opaqueSiblingBlocker(el, point, animationTargets) {
     const top = document.elementFromPoint(point.x, point.y);
-    if (!(top instanceof Element) || top === el || el.contains(top) || top.contains(el) || isReviewSurfaceUi(top)) return null;
+    if (!(top instanceof Element) || top === el || el.contains(top) || top.contains(el) || isReviewSurfaceUi(top))
+      return null;
 
     const targetAncestors = [];
     let targetNode = el;
@@ -2561,9 +2567,42 @@ export function createArtifactSdk(
     true,
   );
 
+  // A link to another review page on this server (`/open?file=...` or `/session/<key>`) cannot be
+  // followed inside this frame: the review page refuses to be framed, so the frame would show a
+  // blocked page. The chrome navigates itself instead. Such a link is navigation, not content, so
+  // it is followed in annotation mode too; selecting its text still annotates it. A modified or
+  // targeted click keeps the browser's own behavior (a new tab escapes the sandbox and works).
+  function reviewPagePath(href) {
+    let url;
+    try {
+      url = new URL(String(href || ""), window.location.origin);
+    } catch {
+      return "";
+    }
+    if (url.origin !== window.location.origin) return "";
+    if (/^\/session\/[0-9a-f]{16}$/.test(url.pathname)) return url.pathname;
+    const file = url.pathname === "/open" ? url.searchParams.get("file") : "";
+    return file ? `/open?file=${encodeURIComponent(file)}` : "";
+  }
+
+  function followReviewPageLink(event) {
+    if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return false;
+    const link = event.target?.closest?.("a");
+    if (!link || isReviewSurfaceUi(link)) return false;
+    const target = link.getAttribute("target");
+    if (target && target !== "_self") return false;
+    const path = reviewPagePath(typeof link.href === "string" ? link.href : link.getAttribute("href"));
+    if (!path) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    postArtifactMessage("review-surface:openPage", { href: path });
+    return true;
+  }
+
   document.addEventListener(
     "click",
     (event) => {
+      if (followReviewPageLink(event)) return;
       if (
         !annotationMode ||
         isReviewSurfaceUi(event.target) ||

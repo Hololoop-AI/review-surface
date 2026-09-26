@@ -53,10 +53,9 @@ test("/open turns an artifact path into its session, creating one on demand", as
 test("/open refuses a missing artifact and a missing file parameter", async () => {
   const { dir, server, base } = await servedDir();
   try {
-    const missing = await fetch(
-      `${base}/open?file=${encodeURIComponent(path.join(dir, "nope.html"))}`,
-      { redirect: "manual" },
-    );
+    const missing = await fetch(`${base}/open?file=${encodeURIComponent(path.join(dir, "nope.html"))}`, {
+      redirect: "manual",
+    });
     assert.equal(missing.status, 404);
     const bare = await fetch(`${base}/open`, { redirect: "manual" });
     assert.equal(bare.status, 400);
@@ -81,16 +80,38 @@ test("a link click never revives a session the human ended", async () => {
         body: JSON.stringify({ file }),
       }).then((response) => response.json());
     const created = await open(artifact);
-    await open(keepAlive);        // the server shuts down on its last session
+    await open(keepAlive); // the server shuts down on its last session
     const key = created.url.split("/").pop();
     await fetch(`${base}/api/${key}/end`, { method: "POST" });
 
     const response = await fetch(`${base}/open?file=${encodeURIComponent(artifact)}`, {
       redirect: "manual",
     });
-    assert.equal(response.status, 302);          // still points at the session
+    assert.equal(response.status, 302); // still points at the session
     const status = await fetch(`${base}/api/${key}/agent-status`).then((r) => r.json());
-    assert.equal(status.status, "ended");        // ...but did not reopen it
+    assert.equal(status.status, "ended"); // ...but did not reopen it
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("/open answers JSON when the chrome asks, so it can navigate itself", async () => {
+  const { dir, server, base } = await servedDir();
+  try {
+    const other = path.join(dir, "other-surface.html");
+    await writeFile(other, "<!doctype html><html><body><h1>Other</h1></body></html>");
+    const json = { headers: { accept: "application/json" } };
+
+    const found = await fetch(`${base}/open?file=${encodeURIComponent(other)}`, json);
+    assert.equal(found.status, 200);
+    const body = await found.json();
+    assert.match(body.key, /^[0-9a-f]{16}$/);
+    assert.equal(body.url, `/session/${body.key}`);
+
+    const missing = await fetch(`${base}/open?file=${encodeURIComponent(path.join(dir, "nope.html"))}`, json);
+    assert.equal(missing.status, 404);
+    assert.deepEqual(await missing.json(), { error: "that file does not exist." });
   } finally {
     await server.close();
     await rm(dir, { recursive: true, force: true });

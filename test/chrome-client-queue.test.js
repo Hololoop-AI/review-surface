@@ -42,6 +42,8 @@ async function createChromeHarness({
   // chrome's sheet breakpoint, with `setMobile` flipping it the way a resize would. Left off, the
   // window has no matchMedia at all, which is the desktop the other tests run against.
   mobile = false,
+  // Opt-in `navigator.userActivation`, the browser's record of whether a real click just happened.
+  userActivation = undefined,
 } = {}) {
   const source = await readFile(sourceUrl, "utf8");
   // Seed sessionStorage before the client boots, to model a tab whose queue was
@@ -62,6 +64,7 @@ async function createChromeHarness({
   let activeElement = null;
   let nextTimerId = 1;
   let reloadCount = 0;
+  const assigned = [];
   let artifactRevision = 0;
 
   function fakeSetTimeout(fn, ms) {
@@ -283,9 +286,13 @@ async function createChromeHarness({
       reload() {
         reloadCount += 1;
       },
+      assign(url) {
+        assigned.push(url);
+      },
     },
-    navigator: {},
+    navigator: userActivation ? { userActivation } : {},
     setTimeout: fakeSetTimeout,
+    URLSearchParams,
     URL: {
       createObjectURL() {
         return "blob:review-surface-test";
@@ -464,6 +471,7 @@ async function createChromeHarness({
     reloadCount() {
       return reloadCount;
     },
+    assigned,
     focusLog,
     storage,
     warningRows() {
@@ -630,11 +638,23 @@ test("chrome client replaces queued prompts with the same internal key", async (
 
   chrome.sendFrameMessage({
     type: "review-surface:queuePrompt",
-    prompt: { prompt: "Use plan A", selector: "input#plan-a", tag: "choice", text: "Plan A", _reviewSurfaceQueueKey: "plan" },
+    prompt: {
+      prompt: "Use plan A",
+      selector: "input#plan-a",
+      tag: "choice",
+      text: "Plan A",
+      _reviewSurfaceQueueKey: "plan",
+    },
   });
   chrome.sendFrameMessage({
     type: "review-surface:queuePrompt",
-    prompt: { prompt: "Use plan B", selector: "input#plan-b", tag: "choice", text: "Plan B", _reviewSurfaceQueueKey: "plan" },
+    prompt: {
+      prompt: "Use plan B",
+      selector: "input#plan-b",
+      tag: "choice",
+      text: "Plan B",
+      _reviewSurfaceQueueKey: "plan",
+    },
   });
   chrome.sendFrameMessage({
     type: "review-surface:queuePrompt",
@@ -751,7 +771,9 @@ test("chrome mediates attachment uploads: rate + cumulative-byte ceiling (confus
   });
   await flushPromises();
   assert.equal(fetches, 0, "quota-exceeding upload never hits the network");
-  const quotaResult = chrome.postedToFrame.find((m) => m.type === "review-surface:attachmentResult" && m.localId === "big");
+  const quotaResult = chrome.postedToFrame.find(
+    (m) => m.type === "review-surface:attachmentResult" && m.localId === "big",
+  );
   assert.equal(quotaResult.ok, false);
   assert.match(quotaResult.error, /Upload limit reached/);
 
@@ -777,7 +799,9 @@ test("chrome mediates attachment uploads: rate + cumulative-byte ceiling (confus
   });
   await flushPromises();
   assert.equal(fetches, 30, "the 31st upload in the window is throttled, not sent");
-  const throttled = chrome.postedToFrame.find((m) => m.type === "review-surface:attachmentResult" && m.localId === "throttled");
+  const throttled = chrome.postedToFrame.find(
+    (m) => m.type === "review-surface:attachmentResult" && m.localId === "throttled",
+  );
   assert.equal(throttled.ok, false);
   assert.match(throttled.error, /Too many uploads/);
 });
@@ -821,7 +845,9 @@ test("chrome only mediates uploads carrying the current artifact load token", as
   });
   await flushPromises();
   assert.equal(fetches, 1);
-  const result = chrome.postedToFrame.find((m) => m.type === "review-surface:attachmentResult" && m.localId === "with-token");
+  const result = chrome.postedToFrame.find(
+    (m) => m.type === "review-surface:attachmentResult" && m.localId === "with-token",
+  );
   assert.equal(result.ok, true);
 });
 
@@ -1657,7 +1683,12 @@ test("a failed diagnostic pass reports its incompleteness rather than an empty r
   const { posts, fetchImpl } = diagnosticsHarness([[warningPayload({ status: "unverified" })]]);
   const chrome = await createChromeHarness({ fetchImpl });
 
-  chrome.sendFrameMessage({ type: "review-surface:layoutDiagnostics", complete: false, viewport_width: 720, findings: [] });
+  chrome.sendFrameMessage({
+    type: "review-surface:layoutDiagnostics",
+    complete: false,
+    viewport_width: 720,
+    findings: [],
+  });
   await flushPromises();
 
   assert.equal(posts[0].body.complete, false);
@@ -2170,7 +2201,12 @@ test("the layout gate reveals after a completed pass with no findings", async ()
   assert.equal(chrome.element("layoutGateOverlay").hidden, false);
   assert.equal(chrome.element("body").classList.contains("layout-gate-active"), true);
 
-  chrome.sendFrameMessage({ type: "review-surface:layoutDiagnostics", complete: true, viewport_width: 720, findings: [] });
+  chrome.sendFrameMessage({
+    type: "review-surface:layoutDiagnostics",
+    complete: true,
+    viewport_width: 720,
+    findings: [],
+  });
   await flushPromises();
 
   assert.equal(chrome.element("layoutGateOverlay").hidden, true);
@@ -2751,7 +2787,10 @@ test("the outdated banner says what actually happened to the server", async () =
   );
 
   sendChromeOutdated(chrome, "stop");
-  assert.equal(chrome.element("outdatedText").textContent, "Review Surface was stopped. Reload after you start it again.");
+  assert.equal(
+    chrome.element("outdatedText").textContent,
+    "Review Surface was stopped. Reload after you start it again.",
+  );
 
   sendChromeOutdated(chrome, "local-build");
   const localBuild = chrome.element("outdatedText").textContent;
@@ -3506,7 +3545,9 @@ test("stale artifact messages are ignored until the current frame load", async (
     chrome.postedToFrame.some((message) => message.type === "review-surface:restoreReviewState"),
     false,
   );
-  const restoredScroll = chrome.postedToFrame.filter((message) => message.type === "review-surface:restoreScroll").at(-1);
+  const restoredScroll = chrome.postedToFrame
+    .filter((message) => message.type === "review-surface:restoreScroll")
+    .at(-1);
   assert.equal(restoredScroll.x, 0);
   assert.equal(restoredScroll.y, 0);
 
@@ -3678,7 +3719,12 @@ test("a zero-warning review keeps the top bar unchanged", async () => {
   const { posts, fetchImpl } = diagnosticsHarness([[]]);
   const chrome = await createChromeHarness({ fetchImpl });
 
-  chrome.sendFrameMessage({ type: "review-surface:layoutDiagnostics", complete: true, viewport_width: 1440, findings: [] });
+  chrome.sendFrameMessage({
+    type: "review-surface:layoutDiagnostics",
+    complete: true,
+    viewport_width: 1440,
+    findings: [],
+  });
   await flushPromises();
 
   assert.equal(chrome.element("warningsWrap").hidden, true);
@@ -3699,7 +3745,13 @@ test("chrome client strips the internal queue key before posting prompts", async
 
   chrome.sendFrameMessage({
     type: "review-surface:queuePrompt",
-    prompt: { prompt: "Use plan B", selector: "input#plan-b", tag: "choice", text: "Plan B", _reviewSurfaceQueueKey: "plan" },
+    prompt: {
+      prompt: "Use plan B",
+      selector: "input#plan-b",
+      tag: "choice",
+      text: "Plan B",
+      _reviewSurfaceQueueKey: "plan",
+    },
   });
   chrome.element("send").onclick();
   assert.equal(chrome.postedToFrame.at(-1).type, "review-surface:requestSnapshot");
@@ -4192,7 +4244,11 @@ test("whiteboard close waits for the authenticated overlay frame to flush", asyn
     channelId: "inline-channel",
     flushId: maximizePrepare.flushId,
   });
-  chrome.sendWhiteboardMessage({ type: "review-surface-whiteboard:ready", diagramIndex: 0, channelToken: "overlay-channel" });
+  chrome.sendWhiteboardMessage({
+    type: "review-surface-whiteboard:ready",
+    diagramIndex: 0,
+    channelToken: "overlay-channel",
+  });
   await flushPromises();
   await flushPromises();
 
@@ -4229,7 +4285,11 @@ test("whiteboard fullscreen close accepts the resumed inline frame", async () =>
     channelId: "inline-channel",
     flushId: maximizePrepare.flushId,
   });
-  chrome.sendWhiteboardMessage({ type: "review-surface-whiteboard:ready", diagramIndex: 0, channelToken: "overlay-channel" });
+  chrome.sendWhiteboardMessage({
+    type: "review-surface-whiteboard:ready",
+    diagramIndex: 0,
+    channelToken: "overlay-channel",
+  });
   await flushPromises();
   await flushPromises();
 
@@ -4344,7 +4404,11 @@ test("server restart flushes an authenticated overlay before reloading", async (
     channelId: "inline-channel",
     flushId: teardown.flushId,
   });
-  chrome.sendWhiteboardMessage({ type: "review-surface-whiteboard:ready", diagramIndex: 0, channelToken: "overlay-channel" });
+  chrome.sendWhiteboardMessage({
+    type: "review-surface-whiteboard:ready",
+    diagramIndex: 0,
+    channelToken: "overlay-channel",
+  });
   await flushPromises();
   await flushPromises();
 
@@ -4425,7 +4489,11 @@ test("whiteboard close stays responsive while overlay initialization is pending"
   });
 
   delayOverlaySources = true;
-  chrome.sendWhiteboardMessage({ type: "review-surface-whiteboard:ready", diagramIndex: 0, channelToken: "overlay-channel" });
+  chrome.sendWhiteboardMessage({
+    type: "review-surface-whiteboard:ready",
+    diagramIndex: 0,
+    channelToken: "overlay-channel",
+  });
   await flushPromises();
   chrome.element("whiteboardClose").click();
 
@@ -5093,4 +5161,63 @@ test("crossing the breakpoint in either direction leaves no sheet state behind",
   assert.equal(state.scrollInert, true);
   assert.equal(chrome.focusLog.at(-1), "panelToggle");
   assert.equal(chrome.storage.has("review-surface:sheet-open:abc"), false);
+});
+
+test("a link to another review page navigates the chrome, never another origin", async () => {
+  const fetched = [];
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url, init) => {
+      fetched.push({ url, accept: init?.headers?.accept });
+      return { ok: true, json: async () => ({ key: "0123456789abcdef", url: "/session/0123456789abcdef" }) };
+    },
+  });
+  const token = chrome.artifactLoadToken();
+  const open = (href) => chrome.sendFrameMessage({ type: "review-surface:openPage", href, artifact_load_token: token });
+
+  open("/open?file=%2Fwork%2Fother.html");
+  await flushPromises();
+  assert.deepEqual(fetched.at(-1), { url: "/open?file=%2Fwork%2Fother.html", accept: "application/json" });
+  assert.deepEqual(chrome.assigned, ["/session/0123456789abcdef"]);
+
+  open("/session/fedcba9876543210");
+  assert.deepEqual(chrome.assigned.at(-1), "/session/fedcba9876543210");
+
+  const before = chrome.assigned.length;
+  for (const href of ["//evil.test/session/0123456789abcdef", "https://evil.test/", "/api/sessions", "/open?x=1"]) {
+    open(href);
+  }
+  await flushPromises();
+  assert.equal(chrome.assigned.length, before, "nothing outside the page routes is followed");
+});
+
+test("a page link without a real click, or without the current load token, is ignored", async () => {
+  const chrome = await createChromeHarness({ userActivation: { isActive: false } });
+  chrome.sendFrameMessage({
+    type: "review-surface:openPage",
+    href: "/session/0123456789abcdef",
+    artifact_load_token: chrome.artifactLoadToken(),
+  });
+  const active = await createChromeHarness({ userActivation: { isActive: true } });
+  active.sendFrameMessage({
+    type: "review-surface:openPage",
+    href: "/session/0123456789abcdef",
+    artifact_load_token: "stale",
+  });
+  assert.deepEqual(chrome.assigned, []);
+  assert.deepEqual(active.assigned, []);
+});
+
+test("a page link that cannot be opened says so in the conversation", async () => {
+  const chrome = await createChromeHarness({
+    fetchImpl: async () => ({ ok: false, json: async () => ({ error: "that file does not exist." }) }),
+  });
+  chrome.sendFrameMessage({
+    type: "review-surface:openPage",
+    href: "/open?file=%2Fwork%2Fgone.html",
+    artifact_load_token: chrome.artifactLoadToken(),
+  });
+  await flushPromises();
+  assert.deepEqual(chrome.assigned, []);
+  const note = chrome.element("chatLog").lastAppendedChild;
+  assert.match(note.innerHTML, /\/work\/gone\.html, but that file does not exist\./);
 });
