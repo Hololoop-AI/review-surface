@@ -15,6 +15,7 @@ import {
   allowsAllHosts,
   buildAllowedHostnames,
   CHROME_BOOT_FAILSAFE_MS,
+  computePresence,
   createChromeHtml,
   createSdkJs,
   displayPathParts,
@@ -31,6 +32,7 @@ import {
   resolveIdleTimeoutMs,
   resolveWatchTarget,
   serve,
+  WORKING_MARKER_TTL_MS,
 } from "../src/server.js";
 import { canonicalFile, sessionKey, SessionStore } from "../src/session-store.js";
 
@@ -5111,6 +5113,67 @@ test("immediate send-and-end delivery clears working presence without an active 
     await server.close();
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("SSE agent-presence returns to waiting when the agent rewrites the page instead of replying", async () => {
+  // The failure this pins. An agent that answers by rewriting its artifact - which is what a
+  // Cadre dialogue does every round - never calls /api/:key/agent-reply, so nothing released the
+  // working marker. Presence reported a live agent on a finished page for two days, and the fleet
+  // rendered it as "agent working". A driver read that as proof a round was running and closed the
+  // tab on unsent annotations.
+  const dir = await mkdtemp(path.join(tmpdir(), "review-surface-serve-"));
+  const artifact = path.join(dir, "artifact.html");
+  await writeFile(artifact, "<!doctype html><html><body>round 1</body></html>");
+  const server = await serve({ port: 0, stateFile: path.join(dir, "state.json"), version: "9.9.9-test" });
+  try {
+    const base = `http://127.0.0.1:${server.port}`;
+    const open = await fetch(`${base}/api/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ file: artifact }),
+    });
+    const { key } = await open.json();
+    const presence = await startPresenceStream(base, key);
+    try {
+      assert.equal(await presence.next(), "waiting");
+      const poll = fetch(`${base}/api/poll?file=${encodeURIComponent(artifact)}`).then((r) => r.json());
+      assert.equal(await presence.next(), "listening");
+      await fetch(`${base}/api/${key}/prompts`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: base },
+        body: JSON.stringify({ prompts: [{ prompt: "another round please", tag: "message" }] }),
+      });
+      await poll;
+      assert.equal(await presence.next(), "working");
+
+      // The rewritten page IS the answer. No agent-reply is ever sent.
+      await writeFile(artifact, "<!doctype html><html><body>round 2</body></html>");
+      assert.equal(await presence.next(), "waiting");
+    } finally {
+      await presence.close();
+    }
+  } finally {
+    await server.close();
+    // The artifact watcher and the state write can still be settling; without
+    // retries the rmdir races them and fails on a green assertion.
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});
+
+test("a working marker older than the turn ceiling stops claiming the agent is on it", () => {
+  // Belt and braces for the turn that dies, or finishes writing nothing: there is no page
+  // rewrite to release the marker, and without an expiry it would claim "working" until the
+  // server restarted. Two days of that is what made the badge untrustworthy.
+  const polls = new Map();
+  const delivered = new Map();
+  const now = Date.UTC(2026, 8, 27, 12, 0, 0);
+  delivered.set("fresh", now - 60_000);
+  delivered.set("ancient", now - WORKING_MARKER_TTL_MS - 1);
+  assert.equal(computePresence("fresh", polls, delivered, {}, now), "working");
+  assert.equal(computePresence("ancient", polls, delivered, {}, now), "waiting");
+  // An attached poll always wins: it is direct evidence, not an inference from a timestamp.
+  polls.set("ancient", true);
+  assert.equal(computePresence("ancient", polls, delivered, {}, now), "listening");
 });
 
 test("SSE agent-presence returns to waiting after an agent reply", async () => {

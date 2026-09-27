@@ -9207,7 +9207,7 @@ async function serve({
   const linkStore = new LinkStore(linksPath);
   const watchers = /* @__PURE__ */ new Map();
   const activePolls = /* @__PURE__ */ new Map();
-  const deliveredFeedback = /* @__PURE__ */ new Set();
+  const deliveredFeedback = /* @__PURE__ */ new Map();
   const sseClients = /* @__PURE__ */ new Map();
   const whiteboardChannelSecret = crypto6.randomBytes(32);
   const outstandingRepairBatches = /* @__PURE__ */ new Set();
@@ -9248,6 +9248,7 @@ async function serve({
     });
   }
   events.on("reload", (key) => {
+    clearFeedbackDelivery(key, activePolls, deliveredFeedback, events);
     store.findByKey(key).then((session) => logPageEvent("page.version", session)).catch(() => {
     });
   });
@@ -10676,7 +10677,7 @@ function setPollActive(key, activePolls, deliveredFeedback, events, active) {
 }
 function markFeedbackDelivered(key, activePolls, deliveredFeedback, events) {
   const previousPresence = computePresence(key, activePolls, deliveredFeedback);
-  deliveredFeedback.add(key);
+  deliveredFeedback.set(key, Date.now());
   const nextPresence = computePresence(key, activePolls, deliveredFeedback);
   if (nextPresence !== previousPresence) {
     events.emit("agent-presence", key, nextPresence);
@@ -10690,9 +10691,13 @@ function clearFeedbackDelivery(key, activePolls, deliveredFeedback, events) {
     events.emit("agent-presence", key, nextPresence);
   }
 }
-function computePresence(key, activePolls, deliveredFeedback, env = process.env) {
+var WORKING_MARKER_TTL_MS = 2 * 60 * 60 * 1e3;
+function computePresence(key, activePolls, deliveredFeedback, env = process.env, now = Date.now()) {
   if (activePolls.has(key)) return "listening";
-  if (deliveredFeedback.has(key)) return "working";
+  if (deliveredFeedback.has(key)) {
+    const at = typeof deliveredFeedback.get === "function" ? deliveredFeedback.get(key) : 0;
+    if (!at || now - at < WORKING_MARKER_TTL_MS) return "working";
+  }
   if (env.REVIEW_SURFACE_TICK_CONSUMER) return "listening";
   return "waiting";
 }

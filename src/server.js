@@ -290,7 +290,8 @@ export async function serve({
   const linkStore = new LinkStore(linksPath);
   const watchers = new Map();
   const activePolls = new Map();
-  const deliveredFeedback = new Set();
+  // key -> when the batch was handed to an agent, so "working" can expire.
+  const deliveredFeedback = new Map();
   // Keyed by session so a version-driven shutdown can reload the one chrome whose artifact is
   // being reopened and leave every other open review page on screen.
   const sseClients = new Map();
@@ -341,6 +342,13 @@ export async function serve({
   }
   // A new page version is a debounced watcher change, which knows only the session key.
   events.on("reload", (key) => {
+    // The rewritten page IS the agent's answer. Agents that reply through
+    // /api/:key/agent-reply release the working marker there; one that answers
+    // by rewriting its artifact - which is what a Cadre dialogue does - never
+    // called that route, so presence reported "working" for as long as the
+    // session stayed open. It sat on a finished page for two days and was read,
+    // reasonably, as proof that a round was running.
+    clearFeedbackDelivery(key, activePolls, deliveredFeedback, events);
     store
       .findByKey(key)
       .then((session) => logPageEvent("page.version", session))
@@ -2194,7 +2202,7 @@ function setPollActive(key, activePolls, deliveredFeedback, events, active) {
 
 function markFeedbackDelivered(key, activePolls, deliveredFeedback, events) {
   const previousPresence = computePresence(key, activePolls, deliveredFeedback);
-  deliveredFeedback.add(key);
+  deliveredFeedback.set(key, Date.now());
   const nextPresence = computePresence(key, activePolls, deliveredFeedback);
   if (nextPresence !== previousPresence) {
     events.emit("agent-presence", key, nextPresence);
@@ -2210,9 +2218,23 @@ function clearFeedbackDelivery(key, activePolls, deliveredFeedback, events) {
   }
 }
 
-export function computePresence(key, activePolls, deliveredFeedback, env = process.env) {
+//: How long a delivered batch may claim "working" with nothing else to go on.
+//: Clearing on the page rewrite covers the normal case; this covers the turn
+//: that dies, or finishes without writing anything, and would otherwise leave
+//: the marker set until the server restarts. Matched to the runner's own
+//: two-hour ceiling on a turn: past that, no honest agent is still on it.
+export const WORKING_MARKER_TTL_MS = 2 * 60 * 60 * 1000;
+
+export function computePresence(key, activePolls, deliveredFeedback, env = process.env,
+                                now = Date.now()) {
   if (activePolls.has(key)) return "listening";
-  if (deliveredFeedback.has(key)) return "working";
+  if (deliveredFeedback.has(key)) {
+    // A Map carries when delivery happened; a bare Set (what this used to be)
+    // cannot tell a batch handed over a minute ago from one handed over on
+    // Friday, so every marker looked equally current.
+    const at = typeof deliveredFeedback.get === "function" ? deliveredFeedback.get(key) : 0;
+    if (!at || now - at < WORKING_MARKER_TTL_MS) return "working";
+  }
   // Tick-consumer deployments (a pipeline daemon reading the feedback outbox
   // on its own clock) have no long poll attached between sends, but feedback
   // IS being collected — "not listening" would tell the driver a lie.
