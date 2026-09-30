@@ -2341,8 +2341,21 @@ function normalizeFlagValue(value) {
   return value === undefined || value === null ? "" : String(value).trim().toLowerCase();
 }
 
-const LAVISH_DEFAULT_FAVICON =
-  "<link rel=\"icon\" href=\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>\u{1F48E}</text></svg>\">";
+// The Hololoop ring mark, copied from hololoop-site's public/favicon.svg. It
+// recolors with the viewer's system theme: deep amber on light, neon amber on
+// dark. Base64 keeps the `#` colors from ending the data URI as a fragment.
+const HOLOLOOP_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <style>
+    circle { fill: none; stroke: #b4530f; stroke-width: 2.8; }
+    @media (prefers-color-scheme: dark) {
+      circle { stroke: #f0a02a; }
+    }
+  </style>
+  <circle cx="16" cy="16" r="12.6"/>
+  <circle cx="16" cy="16" r="6" stroke-opacity="0.55"/>
+</svg>`;
+
+const LAVISH_DEFAULT_FAVICON = `<link rel="icon" href="data:image/svg+xml;base64,${Buffer.from(HOLOLOOP_FAVICON_SVG).toString("base64")}">`;
 
 function readTagAttr(tag, name) {
   // Tokenize real attributes rather than searching for the bare name anywhere in

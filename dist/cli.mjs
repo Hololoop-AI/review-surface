@@ -10783,7 +10783,17 @@ function normalizeFlagValue(value) {
   if (Array.isArray(value)) return normalizeFlagValue(value[0]);
   return value === void 0 || value === null ? "" : String(value).trim().toLowerCase();
 }
-var LAVISH_DEFAULT_FAVICON = `<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>\u{1F48E}</text></svg>">`;
+var HOLOLOOP_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <style>
+    circle { fill: none; stroke: #b4530f; stroke-width: 2.8; }
+    @media (prefers-color-scheme: dark) {
+      circle { stroke: #f0a02a; }
+    }
+  </style>
+  <circle cx="16" cy="16" r="12.6"/>
+  <circle cx="16" cy="16" r="6" stroke-opacity="0.55"/>
+</svg>`;
+var LAVISH_DEFAULT_FAVICON = `<link rel="icon" href="data:image/svg+xml;base64,${Buffer.from(HOLOLOOP_FAVICON_SVG).toString("base64")}">`;
 function readTagAttr(tag, name) {
   const attrRe = /([a-z][\w:-]*)\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/gi;
   const target = name.toLowerCase();
