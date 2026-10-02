@@ -1582,9 +1582,9 @@ export function createArtifactSdk(
   }
 
   function collectLayoutAuditElements() {
-    return [...(document.body?.querySelectorAll("*") || [])]
-      .filter((el) => el instanceof Element && !isReviewSurfaceUi(el))
-      .slice(0, 800);
+    return [...(document.body?.querySelectorAll("*") || [])].filter(
+      (el) => el instanceof Element && !isReviewSurfaceUi(el),
+    );
   }
 
   function pushLayoutFinding(findings, seen, finding) {

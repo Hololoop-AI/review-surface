@@ -143,6 +143,8 @@ test(
       await audit("control-broken-clipping", "390x844x1,mobile,touch", 3200, 3);
       await audit("control-broken-reachability", "1440x1000x1", 3200, 3);
       await audit("control-broken-reachability", "390x844x1,mobile,touch", 3200, 3);
+      // The check covers the whole page: a broken control after 1,200 table cells is still found.
+      await audit("control-broken-late", "1440x1000x1", 3200, 1);
 
       await audit("calibration-small-overflow", "390x844x1,mobile,touch", 3200, 0);
 
