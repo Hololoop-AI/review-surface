@@ -544,7 +544,7 @@ function syncChat(chat) {
 }
 
 function setAgentPresence(state) {
-  agentPresence = state === "listening" || state === "working" ? state : "waiting";
+  agentPresence = state === "listening" || state === "working" || state === "push" ? state : "waiting";
   updateSendState();
   renderSheetSummary();
   if (presenceBanner) presenceBanner.hidden = ended || agentPresence !== "waiting";
@@ -804,6 +804,7 @@ function sheetSummary() {
   if (unreadAgentReply) return { text: unreadAgentReply, accent: false, unread: true };
   if (agentPresence === "working") return { text: "Agent is working…", accent: false, unread: false };
   if (agentPresence === "listening") return { text: "Agent listening", accent: false, unread: false };
+  if (agentPresence === "push") return { text: "Sends are delivered", accent: false, unread: false };
   return { text: "Agent not listening", accent: false, unread: false };
 }
 
@@ -2770,6 +2771,12 @@ window.addEventListener("message", (event) => {
   const messageSequence = ++artifactMessageSequence;
   artifactSpokeToken = messageToken;
   clearTimeout(artifactSilenceTimer);
+  // The page looks final (loaded, fonts in, diagrams drawn): show it now. The layout check keeps
+  // running behind it and only feeds the warning inbox.
+  if (msg.type === "review-surface:readyToShow") {
+    handleLayoutGatePass();
+    return;
+  }
   if (msg.type === "review-surface:layoutDiagnostics") {
     const diagnosticSequence = ++layoutDiagnosticSequence;
     submitLayoutDiagnostics({
@@ -2788,7 +2795,9 @@ window.addEventListener("message", (event) => {
           if (messageSequence === artifactMessageSequence) armArtifactAvailabilityProbe(messageToken);
           return;
         }
-        if (msg.complete !== false) handleLayoutGatePass();
+        // Any finished pass reveals, complete or not: a page that keeps changing (a clock, a
+        // live list) never completes one, and used to sit behind the curtain until the hold limit.
+        handleLayoutGatePass();
       })
       .catch(() => {});
     return;

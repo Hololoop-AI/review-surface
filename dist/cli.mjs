@@ -5552,11 +5552,31 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
   function endSession() {
     postArtifactMessage("review-surface:endSession");
   }
+  const NON_TEXT_TAGS = /* @__PURE__ */ new Set(["SCRIPT", "STYLE", "TEMPLATE", "NOSCRIPT"]);
+  function leadingText(el, limit) {
+    if (NON_TEXT_TAGS.has(el.tagName)) return "";
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
+      acceptNode: (node) => node.nodeType !== 1 ? NodeFilter.FILTER_ACCEPT : NON_TEXT_TAGS.has(
+        /** @type {Element} */
+        node.tagName
+      ) || isReviewSurfaceUi(node) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_SKIP
+    });
+    let text = "";
+    while (walker.nextNode()) {
+      text += " " + walker.currentNode.nodeValue;
+      if (text.length >= limit && text.replace(/\s+/g, " ").trim().length >= limit) break;
+    }
+    return text.replace(/\s+/g, " ").trim().slice(0, limit);
+  }
+  function snapshotEntry(el) {
+    if (el.closest?.(".mermaid")) return context(el);
+    return { uid: uid(el), tag: (el.tagName || "").toLowerCase(), text: leadingText(el, 80) };
+  }
   function snapshot() {
     const lines = [];
     function walk(el, depth) {
       if (!(el instanceof Element) || depth > 6 || isReviewSurfaceUi(el)) return;
-      const c = context(el);
+      const c = snapshotEntry(el);
       const name = c.text ? ' "' + c.text.slice(0, 80).replace(/"/g, "'") + '"' : "";
       lines.push("  ".repeat(depth) + "uid=" + c.uid + " " + c.tag + name);
       for (const child of el.children) walk(child, depth + 1);
@@ -5572,6 +5592,30 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
   let layoutAuditRun = 0;
   let lastLayoutAuditSignature = null;
   let layoutAuditPassSequence = 0;
+  let auditPass = null;
+  function styleOf(el) {
+    if (!auditPass) return getComputedStyle(el);
+    let style = auditPass.style.get(el);
+    if (!style) auditPass.style.set(el, style = getComputedStyle(el));
+    return style;
+  }
+  function rectOf(el) {
+    if (!auditPass) return el.getBoundingClientRect();
+    let rect = auditPass.rect.get(el);
+    if (!rect) auditPass.rect.set(el, rect = el.getBoundingClientRect());
+    return rect;
+  }
+  function memoized(name, el, compute) {
+    if (!auditPass) return compute();
+    const cache = auditPass[name] || (auditPass[name] = /* @__PURE__ */ new Map());
+    if (cache.has(el)) return cache.get(el);
+    const value = compute();
+    cache.set(el, value);
+    return value;
+  }
+  function isAuditRoot(node) {
+    return !node || node === document.body || node === document.documentElement;
+  }
   function toPixelNumber(value) {
     const parsed = Number.parseFloat(String(value || "0"));
     return Number.isFinite(parsed) ? parsed : 0;
@@ -5602,12 +5646,15 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     );
   }
   function hasSemanticTextBoundaryAncestor(el) {
-    let node = el?.parentElement;
-    while (node && node !== document.body && node !== document.documentElement) {
-      if (isSemanticTextBoundary(node)) return true;
-      node = node.parentElement;
-    }
-    return false;
+    return semanticTextBoundaryUpFrom(el?.parentElement);
+  }
+  function semanticTextBoundaryUpFrom(node) {
+    if (isAuditRoot(node)) return false;
+    return memoized(
+      "semanticBoundary",
+      node,
+      () => isSemanticTextBoundary(node) || semanticTextBoundaryUpFrom(node.parentElement)
+    );
   }
   function auditedText(el) {
     return isSemanticTextBoundary(el) ? elementText(el) : directText(el);
@@ -5615,55 +5662,59 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
   function rectArea(rect) {
     return Math.max(0, rect.width) * Math.max(0, rect.height);
   }
-  function isVisibleForLayoutAudit(el, rect = el.getBoundingClientRect()) {
+  function isVisibleForLayoutAudit(el, rect = rectOf(el)) {
     if (!el || isReviewSurfaceUi(el) || rect.width <= 0 || rect.height <= 0) return false;
-    let node = el;
-    while (node && node.nodeType === 1) {
-      const style = getComputedStyle(node);
+    return chainIsShown(el);
+  }
+  function chainIsShown(node) {
+    if (!node || node.nodeType !== 1) return true;
+    return memoized("shown", node, () => {
+      const style = styleOf(node);
       const opacity = Number.parseFloat(style.opacity || "1");
       if (style.display === "none" || style.visibility === "hidden" || style.contentVisibility === "hidden" || Number.isFinite(opacity) && opacity <= 0.01) {
         return false;
       }
-      node = node.parentElement;
-    }
-    return true;
+      return chainIsShown(node.parentElement);
+    });
   }
   function isIntentionalHorizontalScroller(el) {
     if (!el || el === document.body || el === document.documentElement) return false;
-    const overflowX = getComputedStyle(el).overflowX;
+    const overflowX = styleOf(el).overflowX;
     return overflowX === "auto" || overflowX === "scroll";
   }
   function isIntentionalVerticalScroller(el) {
     if (!el || el === document.body || el === document.documentElement) return false;
-    const overflowY = getComputedStyle(el).overflowY;
+    const overflowY = styleOf(el).overflowY;
     return overflowY === "auto" || overflowY === "scroll";
   }
   function hasIntentionalHorizontalScrollerAncestor(el) {
-    let node = el;
-    while (node && node.nodeType === 1 && node !== document.body && node !== document.documentElement) {
-      if (isIntentionalHorizontalScroller(node)) return true;
-      node = node.parentElement;
-    }
-    return false;
+    if (!el || el.nodeType !== 1 || isAuditRoot(el)) return false;
+    return memoized(
+      "hScroller",
+      el,
+      () => isIntentionalHorizontalScroller(el) || hasIntentionalHorizontalScrollerAncestor(el.parentElement)
+    );
   }
   function hasReachableVerticalScrollerAncestor(el) {
-    let node = el?.parentElement;
-    while (node && node !== document.body && node !== document.documentElement) {
+    return reachableVerticalScrollerUpFrom(el?.parentElement);
+  }
+  function reachableVerticalScrollerUpFrom(node) {
+    if (isAuditRoot(node)) return false;
+    return memoized("vScroller", node, () => {
       if (isIntentionalVerticalScroller(node)) {
-        const rect = node.getBoundingClientRect();
+        const rect = rectOf(node);
         if (rect.bottom > 0 && rect.top < (window.innerHeight || 0)) return true;
       }
-      node = node.parentElement;
-    }
-    return false;
+      return reachableVerticalScrollerUpFrom(node.parentElement);
+    });
   }
   function rootVerticalScrollLocked() {
-    const values = [document.documentElement, document.body].filter(Boolean).map((node) => getComputedStyle(node).overflowY);
+    const values = [document.documentElement, document.body].filter(Boolean).map((node) => styleOf(node).overflowY);
     return values.some((value) => value === "hidden" || value === "clip");
   }
   function paddingBoxRect(el) {
-    const rect = el.getBoundingClientRect();
-    const style = getComputedStyle(el);
+    const rect = rectOf(el);
+    const style = styleOf(el);
     return {
       left: rect.left + toPixelNumber(style.borderLeftWidth),
       right: rect.right - toPixelNumber(style.borderRightWidth),
@@ -5718,28 +5769,28 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     return Boolean(el?.closest?.(".mermaid,svg,[data-review-surface-ui]"));
   }
   function hasVisualMaskAncestor(el) {
-    let node = el;
-    while (node && node.nodeType === 1) {
-      const style = getComputedStyle(node);
-      if (hasVisualMask(style) || isRoundedOverflowMask(style)) return true;
-      node = node.parentElement;
-    }
-    return false;
+    if (!el || el.nodeType !== 1) return false;
+    return memoized("mask", el, () => {
+      const style = styleOf(el);
+      return hasVisualMask(style) || isRoundedOverflowMask(style) || hasVisualMaskAncestor(el.parentElement);
+    });
   }
   function clippingBoundariesFor(el) {
-    const boundaries = [];
-    let node = el?.parentElement;
-    while (node && node !== document.body && node !== document.documentElement) {
-      const style = getComputedStyle(node);
+    return clippingBoundariesUpFrom(el?.parentElement);
+  }
+  function clippingBoundariesUpFrom(node) {
+    if (isAuditRoot(node)) return [];
+    return memoized("clipping", node, () => {
+      const style = styleOf(node);
       const axes = [];
       if (style.overflowX === "hidden" || style.overflowX === "clip") axes.push("horizontal");
       if (style.overflowY === "hidden" || style.overflowY === "clip") axes.push("vertical");
+      const above = clippingBoundariesUpFrom(node.parentElement);
       if (axes.length > 0 && !hasVisualMask(style) && !isRoundedOverflowMask(style)) {
-        boundaries.push({ el: node, box: paddingBoxRect(node), axes });
+        return [{ el: node, box: paddingBoxRect(node), axes }, ...above];
       }
-      node = node.parentElement;
-    }
-    return boundaries;
+      return above;
+    });
   }
   function isStandardVisuallyHidden(el, style, rect) {
     const positioned = style.position === "absolute" || style.position === "fixed";
@@ -5750,19 +5801,20 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     return positioned && clipped && rect.width <= 2 && rect.height <= 2 && (style.whiteSpace === "nowrap" || hasClip);
   }
   function hasStandardVisuallyHiddenAncestor(el) {
-    let node = el;
-    while (node && node.nodeType === 1) {
-      const rect = node.getBoundingClientRect();
-      if (isStandardVisuallyHidden(node, getComputedStyle(node), rect)) return true;
-      node = node.parentElement;
-    }
-    return false;
+    if (!el || el.nodeType !== 1) return false;
+    return memoized(
+      "visuallyHidden",
+      el,
+      () => isStandardVisuallyHidden(el, styleOf(el), rectOf(el)) || hasStandardVisuallyHiddenAncestor(el.parentElement)
+    );
   }
   function isExcludedLayoutAuditElement(el) {
     return isDiagramLayoutElement(el) || hasVisualMaskAncestor(el) || hasStandardVisuallyHiddenAncestor(el);
   }
   function collectLayoutAuditElements() {
-    return [...document.body?.querySelectorAll("*") || []].filter((el) => el instanceof Element && !isReviewSurfaceUi(el)).slice(0, 800);
+    return [...document.body?.querySelectorAll("*") || []].filter(
+      (el) => el instanceof Element && !isReviewSurfaceUi(el)
+    );
   }
   function pushLayoutFinding(findings, seen, finding) {
     if (finding.severity !== "error") return;
@@ -5787,9 +5839,9 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     if (!isSemanticTextBoundary(el) && hasSemanticTextBoundaryAncestor(el)) return;
     if (failedRoots.some((root) => root.contains(el))) return;
     if (isAnimationAssociatedWithElement(el, animationTargets)) return;
-    const rect = el.getBoundingClientRect();
+    const rect = rectOf(el);
     if (!isVisibleForLayoutAudit(el, rect)) return;
-    const style = getComputedStyle(el);
+    const style = styleOf(el);
     const fragments = textFragmentsForAudit(el);
     let severe = classifySevereTextOverflow({
       fragments,
@@ -5838,9 +5890,9 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     if (isAnimationAssociatedWithElement(el, animationTargets)) return false;
     if (isExcludedLayoutAuditElement(el)) return false;
     if (!isSemanticTextBoundary(el) && hasSemanticTextBoundaryAncestor(el)) return false;
-    const rect = el.getBoundingClientRect();
+    const rect = rectOf(el);
     if (!isVisibleForLayoutAudit(el, rect)) return false;
-    const style = getComputedStyle(el);
+    const style = styleOf(el);
     const positioned = style.position === "absolute" || style.position === "fixed" || style.position === "sticky";
     if (positioned && !isRequiredControl(el)) return false;
     if (isRequiredControl(el)) {
@@ -5858,9 +5910,9 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     if (isExcludedLayoutAuditElement(el)) return;
     if (!isSemanticTextBoundary(el) && hasSemanticTextBoundaryAncestor(el)) return;
     if (!auditedText(el)) return;
-    const rect = el.getBoundingClientRect();
+    const rect = rectOf(el);
     if (!isVisibleForLayoutAudit(el, rect)) return;
-    const style = getComputedStyle(el);
+    const style = styleOf(el);
     if (["absolute", "fixed", "sticky"].includes(style.position) && !isRequiredControl(el)) return;
     const materialPx = Math.max(24, viewportWidth * 0.05);
     let escape = null;
@@ -5881,7 +5933,7 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
   function auditRequiredControlBounds(el, viewportWidth, findings, seen, animationTargets, failedRoots) {
     if (!isRequiredControl(el) || isExcludedLayoutAuditElement(el)) return;
     if (isAnimationAssociatedWithElement(el, animationTargets)) return;
-    const rect = el.getBoundingClientRect();
+    const rect = rectOf(el);
     if (!isVisibleForLayoutAudit(el, rect)) return;
     let clipped = null;
     for (const boundary of clippingBoundariesFor(el)) {
@@ -5910,7 +5962,7 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
         severity: "error"
       });
     }
-    const style = getComputedStyle(el);
+    const style = styleOf(el);
     const fixedToViewport = style.position === "fixed" || style.position === "sticky";
     const lockedToViewport = rootVerticalScrollLocked() && !hasReachableVerticalScrollerAncestor(el);
     const scrollY = Number(window.scrollY || window.pageYOffset || 0);
@@ -5937,7 +5989,7 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     }
   }
   function backgroundIsOpaque(el) {
-    const style = getComputedStyle(el);
+    const style = styleOf(el);
     if (Number.parseFloat(style.opacity || "1") < 0.95) return false;
     const color = String(style.backgroundColor || "").trim().toLowerCase();
     if (!color || color === "transparent") return false;
@@ -5952,7 +6004,7 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     let opacity = 1;
     let current = node;
     while (current && current !== stopParent) {
-      const value = Number.parseFloat(getComputedStyle(current).opacity || "1");
+      const value = Number.parseFloat(styleOf(current).opacity || "1");
       if (Number.isFinite(value)) opacity *= value;
       current = current.parentElement;
     }
@@ -5993,7 +6045,7 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     const candidates = elements.filter((el) => !isExcludedLayoutAuditElement(el)).filter((el) => {
       const text = auditedText(el);
       return text.length >= 8 || text.length > 0 && isRequiredControl(el);
-    }).filter((el) => isSemanticTextBoundary(el) || !hasSemanticTextBoundaryAncestor(el)).filter((el) => isVisibleForLayoutAudit(el)).filter((el) => getComputedStyle(el).position === "static").filter((el) => !isAnimationAssociatedWithElement(el, animationTargets)).slice(0, 200);
+    }).filter((el) => isSemanticTextBoundary(el) || !hasSemanticTextBoundaryAncestor(el)).filter((el) => isVisibleForLayoutAudit(el)).filter((el) => styleOf(el).position === "static").filter((el) => !isAnimationAssociatedWithElement(el, animationTargets)).slice(0, 200);
     const failedRoots = [];
     for (const el of candidates) {
       if (failedRoots.some((root) => root.contains(el))) continue;
@@ -6022,6 +6074,14 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     }
   }
   function auditLayout() {
+    auditPass = { style: /* @__PURE__ */ new Map(), rect: /* @__PURE__ */ new Map() };
+    try {
+      return auditLayoutPass();
+    } finally {
+      auditPass = null;
+    }
+  }
+  function auditLayoutPass() {
     const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
     const findings = [];
     const seen = /* @__PURE__ */ new Set();
@@ -6202,7 +6262,7 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     const second = auditLayout();
     const domHydrationQuiescent = await waitForDomHydrationQuiescence();
     if (runId !== layoutAuditRun) return;
-    const final = domHydrationQuiescent ? auditLayout() : second;
+    const final = domHydrationQuiescent && second.length > 0 ? auditLayout() : second;
     const targetPresenceComplete = document.readyState === "complete" && domHydrationQuiescent;
     publishLayoutAudit(
       findStableLayoutFindings(domHydrationQuiescent ? second : first, final),
@@ -6219,7 +6279,31 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
       });
     }, 50);
   }
+  const readyToShowMaxWaitMs = 3e3;
+  function waitForDocumentLoad() {
+    if (document.readyState === "complete") return Promise.resolve();
+    return new Promise((resolve) => window.addEventListener("load", () => resolve(), { once: true }));
+  }
+  function diagramsDrawn() {
+    return [...document.querySelectorAll(".mermaid")].every((el) => el.querySelector("svg"));
+  }
+  function waitForDiagrams() {
+    return new Promise((resolve) => {
+      const check = () => diagramsDrawn() ? resolve() : window.setTimeout(check, 30);
+      check();
+    });
+  }
+  async function announceReadyToShow() {
+    await Promise.race([
+      Promise.all([waitForDocumentLoad(), waitForDocumentFontsReady()]).then(waitForDiagrams),
+      new Promise((resolve) => window.setTimeout(resolve, readyToShowMaxWaitMs))
+    ]);
+    await waitForAnimationFrames(2);
+    postArtifactMessage("review-surface:readyToShow", { artifact_revision: artifactRevision });
+  }
   function startLayoutAudit() {
+    announceReadyToShow().catch(() => {
+    });
     scheduleLayoutAudit();
     window.addEventListener("load", scheduleLayoutAudit, { once: true });
     window.addEventListener("resize", scheduleLayoutAudit, { passive: true });
@@ -7843,11 +7927,14 @@ var SessionStore = class {
       return state.sessions[key] || null;
     });
   }
-  async upsertSession(file, url) {
+  // `options.delivery` is how this session's feedback leaves: "poll" (an agent holds a long poll,
+  // the default) or "push" (the host collects sends from the outbox on its own clock, so nobody
+  // ever holds a poll and "not listening" would be false). Omitted keeps whatever was stored.
+  async upsertSession(file, url, options = {}) {
     const absolute = await canonicalFile(file);
-    return this.lock.runExclusive(() => this.#upsertSessionLocked(absolute, url));
+    return this.lock.runExclusive(() => this.#upsertSessionLocked(absolute, url, options));
   }
-  async #upsertSessionLocked(absolute, url) {
+  async #upsertSessionLocked(absolute, url, options = {}) {
     const key = sessionKey(absolute);
     const state = await this.readState();
     const existing = state.sessions[key] || {};
@@ -7873,6 +7960,7 @@ var SessionStore = class {
       delivered_attachments: Array.isArray(existing.delivered_attachments) ? existing.delivered_attachments : [],
       dom_snapshot: existing.dom_snapshot || "",
       chat: existing.chat || [],
+      delivery: normalizeDelivery(options.delivery) || normalizeDelivery(existing.delivery) || "poll",
       updated_at: (/* @__PURE__ */ new Date()).toISOString()
     };
     state.sessions[key] = session;
@@ -8400,6 +8488,9 @@ var SessionStore = class {
 async function canonicalFile(file) {
   const absolute = path7.resolve(file);
   return realpath3(absolute);
+}
+function normalizeDelivery(value) {
+  return value === "push" || value === "poll" ? value : "";
 }
 function sessionKey(file) {
   return crypto4.createHash("sha256").update(file).digest("hex").slice(0, 16);
@@ -9375,7 +9466,7 @@ async function serve({
       }
       const sessionUrl = `http://${hostForUrl(linkHostName)}:${publicPort}/session/${key}`;
       const url = shouldDisableLayoutGateOpen(req.body || {}) ? appendNoGateParam(sessionUrl) : sessionUrl;
-      const session = await store.upsertSession(file, sessionUrl);
+      const session = await store.upsertSession(file, sessionUrl, { delivery: req.body.delivery });
       if (existing?.status === "ended") {
         clearFeedbackDelivery(key, activePolls, deliveredFeedback, events);
       }
@@ -9602,6 +9693,7 @@ async function serve({
         status: session.status,
         ended_by: session.ended_by || null,
         presence: computePresence(req.params.key, activePolls, deliveredFeedback),
+        delivery: session.delivery === "push" ? "push" : "poll",
         pending_prompts: (session.prompts || []).length,
         updated_at: session.updated_at || null,
         last_agent_reply_at: lastAgentReply?.at || null
@@ -10016,10 +10108,12 @@ data: ${JSON.stringify({ text })}
 `);
         }
       };
+      let pushDelivery = false;
+      const displayPresence = (state) => state === "waiting" && pushDelivery ? "push" : state;
       const sendPresence = (key, state) => {
         if (key === req.params.key) {
           res.write(`event: agent-presence
-data: ${JSON.stringify({ state })}
+data: ${JSON.stringify({ state: displayPresence(state) })}
 
 `);
         }
@@ -10064,13 +10158,14 @@ data: ${JSON.stringify({ ended_by: endedBy || null })}
         cleanup();
         return;
       }
+      pushDelivery = session?.delivery === "push";
       res.write(`event: chat-sync
 data: ${JSON.stringify({ chat: session?.chat || [] })}
 
 `);
       res.write(
         `event: agent-presence
-data: ${JSON.stringify({ state: computePresence(req.params.key, activePolls, deliveredFeedback) })}
+data: ${JSON.stringify({ state: displayPresence(computePresence(req.params.key, activePolls, deliveredFeedback)) })}
 
 `
       );
@@ -10905,7 +11000,7 @@ ${faviconTag}
 </head>
 <body class="${bodyClass}">
 <div class="bar"><div class="brand"><span class="brand-mark">Cadre</span></div><div class="spacer" aria-hidden="true"></div><div class="warnings-wrap" id="warningsWrap" hidden><button class="warnings-button" id="warningsButton" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="warningsDrawer">${chromeIcons.warning}<span class="warnings-count" id="warningsCount">0</span></button><div class="menu warnings-drawer" id="warningsDrawer" role="dialog" aria-labelledby="warningsTitle" aria-describedby="warningsSummary" hidden><div class="warnings-head"><h2 class="warnings-title" id="warningsTitle">Layout issues</h2><p class="warnings-summary" id="warningsSummary"></p></div><div class="warnings-toolbar"><label class="warnings-selectall"><input type="checkbox" id="warningsSelectAll"><span>Select all</span></label><span class="warnings-selected" id="warningsSelected" role="status" aria-live="polite"></span></div><div class="warnings-list" id="warningsList"></div><div class="warnings-foot"><p class="warnings-note">Queueing sends a repair request with your next feedback. An issue is marked resolved only after a newer artifact load and a complete check at the same viewport no longer finds it.</p><button class="button" id="warningsQueueButton" type="button" disabled>Queue selected fixes</button></div></div></div><button class="annotate-switch" id="panelCollapse" type="button" aria-pressed="true" title="Show or hide the conversation panel"><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span><span>Chat</span></button><button class="annotate-switch" id="annotation" type="button" aria-pressed="true" title="${escapeHtml(modeToggleHint)}"><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span><span>Annotate</span></button><div class="more-wrap" id="moreWrap"><button class="more-button" id="moreButton" type="button" title="More" aria-haspopup="menu" aria-expanded="false">${chromeIcons.more}</button><div class="menu more-menu" id="moreMenu" hidden><div class="menu-head"><div class="menu-label">Editing</div><button class="menu-file" id="copyPath" type="button" title="Copy path \xB7 ${escapeHtml(session.file)}">${chromeIcons.file}<span class="menu-file-text"><span class="path-head">${escapeHtml(pathHead)}</span><span class="path-tail">${escapeHtml(pathTail)}</span></span><span class="copy-hint" id="copyHint"><span class="icon-copy">${chromeIcons.copy}</span><span class="icon-check">${chromeIcons.check}</span><span id="copyHintText">Copy</span></span></button></div><div class="menu-rule"></div><button class="menu-item" id="reloadArtifact" type="button">${chromeIcons.refresh}<span>Reload artifact</span></button><button class="menu-item" id="copySnapshot" type="button">${chromeIcons.camera}<span>Copy DOM snapshot</span></button><button class="menu-item" id="exportArtifact" type="button">${chromeIcons.download}<span>Export standalone HTML</span></button><button class="menu-item" id="shareArtifact" type="button">${chromeIcons.globe}<span>Publish link</span></button><div class="menu-rule"></div><button class="menu-item danger" id="end" type="button">${chromeIcons.exit}<span>End session</span></button></div></div></div>
-<div class="layout"><div class="frame"><iframe id="artifact" sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads" data-artifact-src="/artifact/${session.key}/index.html"></iframe></div><div class="panel-scrim" id="panelScrim"></div><aside class="panel" id="panel"><div class="panel-head" id="panelHead"><span class="panel-handle" aria-hidden="true"></span><div class="panel-head-row"><h2>Conversation</h2><span class="panel-summary" id="panelSummary" role="status" aria-live="polite"></span><button class="panel-toggle" id="panelToggle" type="button" aria-expanded="false" aria-controls="panel" aria-label="Show conversation">${chromeIcons.chevronUp}</button></div></div><div class="panel-scroll" id="panelScroll"><div class="chat" id="chatLog"></div><div class="annotation-pills" id="annotationPills"></div></div><div class="composer" id="chatComposer"><div class="presence-banner handoff-banner" id="handoffBanner" hidden><span>This review is open in another Review Surface tab.</span><button class="handoff-takeover" id="handoffTakeover" type="button">Take over here</button></div><div class="presence-banner handoff-banner" id="outdatedBanner" hidden><span id="outdatedText">The Review Surface server this page was connected to is no longer running. Reloading will work once it is running again.</span><span class="outdated-actions"><button class="handoff-takeover" id="outdatedReload" type="button">Check and reload</button><button class="handoff-takeover" id="outdatedDismiss" type="button">Dismiss</button></span></div><div class="presence-banner" id="presenceBanner" hidden>Your agent is not listening. If this persists, ask your agent to poll for updates from Review Surface.</div><textarea id="chatInput" placeholder="Write a message for the agent..."></textarea><div class="chat-attachments" id="chatAttachments"></div><div class="chat-attachment-toolbar"><button class="chat-attach" id="chatAttach" type="button">Attach images</button><input id="chatAttachInput" type="file" accept="${escapeHtml(acceptedMime.join(","))}" multiple hidden><span class="chat-attachment-notice" id="chatAttachmentNotice" role="status"></span></div><div class="send-hint" id="sendHint" hidden>Write a message or annotate an element first.</div><div class="actions" id="sendActions"><button class="button button-danger" id="sendAndEnd" type="button">${chromeIcons.exit}<span>Send &amp; End</span></button><button class="button" id="send">Send to Agent</button></div></div></aside></div>
+<div class="layout"><div class="frame"><iframe id="artifact" sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads" allow="fullscreen" data-artifact-src="/artifact/${session.key}/index.html"></iframe></div><div class="panel-scrim" id="panelScrim"></div><aside class="panel" id="panel"><div class="panel-head" id="panelHead"><span class="panel-handle" aria-hidden="true"></span><div class="panel-head-row"><h2>Conversation</h2><span class="panel-summary" id="panelSummary" role="status" aria-live="polite"></span><button class="panel-toggle" id="panelToggle" type="button" aria-expanded="false" aria-controls="panel" aria-label="Show conversation">${chromeIcons.chevronUp}</button></div></div><div class="panel-scroll" id="panelScroll"><div class="chat" id="chatLog"></div><div class="annotation-pills" id="annotationPills"></div></div><div class="composer" id="chatComposer"><div class="presence-banner handoff-banner" id="handoffBanner" hidden><span>This review is open in another Review Surface tab.</span><button class="handoff-takeover" id="handoffTakeover" type="button">Take over here</button></div><div class="presence-banner handoff-banner" id="outdatedBanner" hidden><span id="outdatedText">The Review Surface server this page was connected to is no longer running. Reloading will work once it is running again.</span><span class="outdated-actions"><button class="handoff-takeover" id="outdatedReload" type="button">Check and reload</button><button class="handoff-takeover" id="outdatedDismiss" type="button">Dismiss</button></span></div><div class="presence-banner" id="presenceBanner" hidden>Your agent is not listening. If this persists, ask your agent to poll for updates from Review Surface.</div><textarea id="chatInput" placeholder="Write a message for the agent..."></textarea><div class="chat-attachments" id="chatAttachments"></div><div class="chat-attachment-toolbar"><button class="chat-attach" id="chatAttach" type="button">Attach images</button><input id="chatAttachInput" type="file" accept="${escapeHtml(acceptedMime.join(","))}" multiple hidden><span class="chat-attachment-notice" id="chatAttachmentNotice" role="status"></span></div><div class="send-hint" id="sendHint" hidden>Write a message or annotate an element first.</div><div class="actions" id="sendActions"><button class="button button-danger" id="sendAndEnd" type="button">${chromeIcons.exit}<span>Send &amp; End</span></button><button class="button" id="send">Send to Agent</button></div></div></aside></div>
 <div class="share-overlay" id="shareDialog" role="dialog" aria-modal="true" aria-labelledby="shareTitleText" hidden><form class="share-card" id="shareForm"><div class="share-head"><div><div class="share-kicker">Publish to <a class="share-link" href="https://ht-ml.app" target="_blank" rel="noopener noreferrer">ht-ml.app</a></div><h2 id="shareTitleText">Publish artifact</h2></div><button class="share-close" id="shareClose" type="button" aria-label="Close publish dialog"><svg width="14" height="14" viewBox="0 0 10 10" fill="none" aria-hidden="true" focusable="false"><path d="M1 1L9 9M9 1L1 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button></div><p class="share-note">ht-ml.app is a separate, third-party hosting service, not part of Review Surface. Publishing sends this artifact to its servers.</p><p class="share-copy">This uploads this artifact to ht-ml.app with local assets inlined. Without a password, the page is PUBLIC and anyone with the link can open it. With a password, the page is PRIVATE and viewers must supply the password to view.</p><p class="share-note">Do not publish secrets. The Review Surface annotation SDK is not included.</p><div class="share-grid"><label>Password (optional)<input id="sharePassword" name="password" type="password" autocomplete="new-password" placeholder="Leave blank for a public page"></label></div><div class="share-status" id="shareStatus" role="status"></div><div class="share-result" id="shareResult" hidden><label>Share URL<div class="share-copy-row"><input id="shareUrl" readonly><button class="share-copy-btn" id="copyShareUrl" type="button">Copy URL</button></div></label><label>Update key (secret)<div class="share-copy-row"><input id="shareUpdateKey" readonly><button class="share-copy-btn" id="copyUpdateKey" type="button">Copy key</button></div></label><p class="share-note">Keep the update key private. ht-ml.app returns it once and it is the only way to update or delete this page later.</p></div><div class="share-actions"><button class="share-cancel" id="shareCancel" type="button">Cancel</button><button class="button" id="sharePublish" type="submit">Publish</button></div></form></div>
 <div class="ended-overlay layout-gate-overlay" id="layoutGateOverlay"${layoutGateHidden}><div class="ended-card"><div class="ended-title" id="layoutGateTitle">Checking layout.<br>One moment.</div><p class="ended-copy" id="layoutGateCopy">Review Surface is waiting for fonts and final geometry before revealing this artifact.</p><button class="button ended-action" id="layoutGateAction" type="button">Show anyway</button></div></div>
 <div class="ended-overlay" id="endedOverlay" hidden><div class="ended-card"><div class="ended-title">Session ended.<br>Return to your agent to continue.</div><p class="ended-copy">${escapeHtml(session.file)}</p></div></div>
