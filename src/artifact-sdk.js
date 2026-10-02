@@ -1,4 +1,4 @@
-/* global CSS, Element, MutationObserver, ResizeObserver, document, getComputedStyle, parent, window */
+/* global CSS, Element, MutationObserver, NodeFilter, ResizeObserver, document, getComputedStyle, parent, window */
 
 import * as mermaidHelpers from "./mermaid-node.js";
 import { tableCellTarget } from "./table-cell.js";
@@ -1246,13 +1246,46 @@ export function createArtifactSdk(
     postArtifactMessage("review-surface:endSession");
   }
 
+  const NON_TEXT_TAGS = new Set(["SCRIPT", "STYLE", "TEMPLATE", "NOSCRIPT"]);
+
+  // The first `limit` characters of an element's text, read from the DOM without layout. innerText
+  // lays out every element it is asked about, and the copy asks about every element, which made it
+  // take about a second on a large page. Text nodes are joined with a space so table cells and
+  // blocks do not run together; script and style bodies are not page text. Unlike innerText this
+  // keeps text the page hides (a closed <details>, say), which a fresh agent can use.
+  function leadingText(el, limit) {
+    if (NON_TEXT_TAGS.has(el.tagName)) return "";
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
+      acceptNode: (node) =>
+        node.nodeType !== 1
+          ? NodeFilter.FILTER_ACCEPT
+          : NON_TEXT_TAGS.has(/** @type {Element} */ (node).tagName) || isReviewSurfaceUi(node)
+            ? NodeFilter.FILTER_REJECT
+            : NodeFilter.FILTER_SKIP,
+    });
+    let text = "";
+    while (walker.nextNode()) {
+      text += " " + walker.currentNode.nodeValue;
+      if (text.length >= limit && text.replace(/\s+/g, " ").trim().length >= limit) break;
+    }
+    return text.replace(/\s+/g, " ").trim().slice(0, limit);
+  }
+
+  // The outline only needs each element's uid, tag and leading text. `context()` also builds a
+  // selector, which compares every sibling at every level - quadratic on a long table - so it is
+  // kept for diagram nodes, whose tag and label it resolves.
+  function snapshotEntry(el) {
+    if (el.closest?.(".mermaid")) return context(el);
+    return { uid: uid(el), tag: (el.tagName || "").toLowerCase(), text: leadingText(el, 80) };
+  }
+
   function snapshot() {
     const lines = [];
 
     function walk(el, depth) {
       if (!(el instanceof Element) || depth > 6 || isReviewSurfaceUi(el)) return;
 
-      const c = context(el);
+      const c = snapshotEntry(el);
       const name = c.text ? ' "' + c.text.slice(0, 80).replace(/"/g, "'") + '"' : "";
       lines.push("  ".repeat(depth) + "uid=" + c.uid + " " + c.tag + name);
       for (const child of el.children) walk(child, depth + 1);
@@ -1270,6 +1303,38 @@ export function createArtifactSdk(
   let layoutAuditRun = 0;
   let lastLayoutAuditSignature = null;
   let layoutAuditPassSequence = 0;
+  // One audit pass only reads layout; nothing writes the DOM between its reads, so an element's
+  // style, box and ancestor verdicts cannot change under it. They are computed once per pass and
+  // shared by every check and every descendant that asks, instead of each check re-walking each
+  // element's ancestors (elements x depth x checks style reads). Outside a pass nothing is cached.
+  let auditPass = null;
+
+  function styleOf(el) {
+    if (!auditPass) return getComputedStyle(el);
+    let style = auditPass.style.get(el);
+    if (!style) auditPass.style.set(el, (style = getComputedStyle(el)));
+    return style;
+  }
+
+  function rectOf(el) {
+    if (!auditPass) return el.getBoundingClientRect();
+    let rect = auditPass.rect.get(el);
+    if (!rect) auditPass.rect.set(el, (rect = el.getBoundingClientRect()));
+    return rect;
+  }
+
+  function memoized(name, el, compute) {
+    if (!auditPass) return compute();
+    const cache = auditPass[name] || (auditPass[name] = new Map());
+    if (cache.has(el)) return cache.get(el);
+    const value = compute();
+    cache.set(el, value);
+    return value;
+  }
+
+  function isAuditRoot(node) {
+    return !node || node === document.body || node === document.documentElement;
+  }
 
   function toPixelNumber(value) {
     const parsed = Number.parseFloat(String(value || "0"));
@@ -1314,12 +1379,16 @@ export function createArtifactSdk(
   }
 
   function hasSemanticTextBoundaryAncestor(el) {
-    let node = el?.parentElement;
-    while (node && node !== document.body && node !== document.documentElement) {
-      if (isSemanticTextBoundary(node)) return true;
-      node = node.parentElement;
-    }
-    return false;
+    return semanticTextBoundaryUpFrom(el?.parentElement);
+  }
+
+  function semanticTextBoundaryUpFrom(node) {
+    if (isAuditRoot(node)) return false;
+    return memoized(
+      "semanticBoundary",
+      node,
+      () => isSemanticTextBoundary(node) || semanticTextBoundaryUpFrom(node.parentElement),
+    );
   }
 
   function auditedText(el) {
@@ -1330,11 +1399,15 @@ export function createArtifactSdk(
     return Math.max(0, rect.width) * Math.max(0, rect.height);
   }
 
-  function isVisibleForLayoutAudit(el, rect = el.getBoundingClientRect()) {
+  function isVisibleForLayoutAudit(el, rect = rectOf(el)) {
     if (!el || isReviewSurfaceUi(el) || rect.width <= 0 || rect.height <= 0) return false;
-    let node = el;
-    while (node && node.nodeType === 1) {
-      const style = getComputedStyle(node);
+    return chainIsShown(el);
+  }
+
+  function chainIsShown(node) {
+    if (!node || node.nodeType !== 1) return true;
+    return memoized("shown", node, () => {
+      const style = styleOf(node);
       const opacity = Number.parseFloat(style.opacity || "1");
       if (
         style.display === "none" ||
@@ -1344,54 +1417,54 @@ export function createArtifactSdk(
       ) {
         return false;
       }
-      node = node.parentElement;
-    }
-    return true;
+      return chainIsShown(node.parentElement);
+    });
   }
 
   function isIntentionalHorizontalScroller(el) {
     if (!el || el === document.body || el === document.documentElement) return false;
-    const overflowX = getComputedStyle(el).overflowX;
+    const overflowX = styleOf(el).overflowX;
     return overflowX === "auto" || overflowX === "scroll";
   }
 
   function isIntentionalVerticalScroller(el) {
     if (!el || el === document.body || el === document.documentElement) return false;
-    const overflowY = getComputedStyle(el).overflowY;
+    const overflowY = styleOf(el).overflowY;
     return overflowY === "auto" || overflowY === "scroll";
   }
 
   function hasIntentionalHorizontalScrollerAncestor(el) {
-    let node = el;
-    while (node && node.nodeType === 1 && node !== document.body && node !== document.documentElement) {
-      if (isIntentionalHorizontalScroller(node)) return true;
-      node = node.parentElement;
-    }
-    return false;
+    if (!el || el.nodeType !== 1 || isAuditRoot(el)) return false;
+    return memoized(
+      "hScroller",
+      el,
+      () => isIntentionalHorizontalScroller(el) || hasIntentionalHorizontalScrollerAncestor(el.parentElement),
+    );
   }
 
   function hasReachableVerticalScrollerAncestor(el) {
-    let node = el?.parentElement;
-    while (node && node !== document.body && node !== document.documentElement) {
+    return reachableVerticalScrollerUpFrom(el?.parentElement);
+  }
+
+  function reachableVerticalScrollerUpFrom(node) {
+    if (isAuditRoot(node)) return false;
+    return memoized("vScroller", node, () => {
       if (isIntentionalVerticalScroller(node)) {
-        const rect = node.getBoundingClientRect();
+        const rect = rectOf(node);
         if (rect.bottom > 0 && rect.top < (window.innerHeight || 0)) return true;
       }
-      node = node.parentElement;
-    }
-    return false;
+      return reachableVerticalScrollerUpFrom(node.parentElement);
+    });
   }
 
   function rootVerticalScrollLocked() {
-    const values = [document.documentElement, document.body]
-      .filter(Boolean)
-      .map((node) => getComputedStyle(node).overflowY);
+    const values = [document.documentElement, document.body].filter(Boolean).map((node) => styleOf(node).overflowY);
     return values.some((value) => value === "hidden" || value === "clip");
   }
 
   function paddingBoxRect(el) {
-    const rect = el.getBoundingClientRect();
-    const style = getComputedStyle(el);
+    const rect = rectOf(el);
+    const style = styleOf(el);
     return {
       left: rect.left + toPixelNumber(style.borderLeftWidth),
       right: rect.right - toPixelNumber(style.borderRightWidth),
@@ -1457,29 +1530,32 @@ export function createArtifactSdk(
   }
 
   function hasVisualMaskAncestor(el) {
-    let node = el;
-    while (node && node.nodeType === 1) {
-      const style = getComputedStyle(node);
-      if (hasVisualMask(style) || isRoundedOverflowMask(style)) return true;
-      node = node.parentElement;
-    }
-    return false;
+    if (!el || el.nodeType !== 1) return false;
+    return memoized("mask", el, () => {
+      const style = styleOf(el);
+      return hasVisualMask(style) || isRoundedOverflowMask(style) || hasVisualMaskAncestor(el.parentElement);
+    });
   }
 
+  // Nearest clipping ancestor first. The list is shared between descendants within a pass, so
+  // callers only read it.
   function clippingBoundariesFor(el) {
-    const boundaries = [];
-    let node = el?.parentElement;
-    while (node && node !== document.body && node !== document.documentElement) {
-      const style = getComputedStyle(node);
+    return clippingBoundariesUpFrom(el?.parentElement);
+  }
+
+  function clippingBoundariesUpFrom(node) {
+    if (isAuditRoot(node)) return [];
+    return memoized("clipping", node, () => {
+      const style = styleOf(node);
       const axes = [];
       if (style.overflowX === "hidden" || style.overflowX === "clip") axes.push("horizontal");
       if (style.overflowY === "hidden" || style.overflowY === "clip") axes.push("vertical");
+      const above = clippingBoundariesUpFrom(node.parentElement);
       if (axes.length > 0 && !hasVisualMask(style) && !isRoundedOverflowMask(style)) {
-        boundaries.push({ el: node, box: paddingBoxRect(node), axes });
+        return [{ el: node, box: paddingBoxRect(node), axes }, ...above];
       }
-      node = node.parentElement;
-    }
-    return boundaries;
+      return above;
+    });
   }
 
   function isStandardVisuallyHidden(el, style, rect) {
@@ -1492,13 +1568,13 @@ export function createArtifactSdk(
   }
 
   function hasStandardVisuallyHiddenAncestor(el) {
-    let node = el;
-    while (node && node.nodeType === 1) {
-      const rect = node.getBoundingClientRect();
-      if (isStandardVisuallyHidden(node, getComputedStyle(node), rect)) return true;
-      node = node.parentElement;
-    }
-    return false;
+    if (!el || el.nodeType !== 1) return false;
+    return memoized(
+      "visuallyHidden",
+      el,
+      () =>
+        isStandardVisuallyHidden(el, styleOf(el), rectOf(el)) || hasStandardVisuallyHiddenAncestor(el.parentElement),
+    );
   }
 
   function isExcludedLayoutAuditElement(el) {
@@ -1536,9 +1612,9 @@ export function createArtifactSdk(
     if (failedRoots.some((root) => root.contains(el))) return;
     if (isAnimationAssociatedWithElement(el, animationTargets)) return;
 
-    const rect = el.getBoundingClientRect();
+    const rect = rectOf(el);
     if (!isVisibleForLayoutAudit(el, rect)) return;
-    const style = getComputedStyle(el);
+    const style = styleOf(el);
     const fragments = textFragmentsForAudit(el);
     let severe = classifySevereTextOverflow({
       fragments,
@@ -1591,9 +1667,9 @@ export function createArtifactSdk(
     if (isExcludedLayoutAuditElement(el)) return false;
     if (!isSemanticTextBoundary(el) && hasSemanticTextBoundaryAncestor(el)) return false;
 
-    const rect = el.getBoundingClientRect();
+    const rect = rectOf(el);
     if (!isVisibleForLayoutAudit(el, rect)) return false;
-    const style = getComputedStyle(el);
+    const style = styleOf(el);
     const positioned = style.position === "absolute" || style.position === "fixed" || style.position === "sticky";
     if (positioned && !isRequiredControl(el)) return false;
     if (isRequiredControl(el)) {
@@ -1612,9 +1688,9 @@ export function createArtifactSdk(
     if (isExcludedLayoutAuditElement(el)) return;
     if (!isSemanticTextBoundary(el) && hasSemanticTextBoundaryAncestor(el)) return;
     if (!auditedText(el)) return;
-    const rect = el.getBoundingClientRect();
+    const rect = rectOf(el);
     if (!isVisibleForLayoutAudit(el, rect)) return;
-    const style = getComputedStyle(el);
+    const style = styleOf(el);
     if (["absolute", "fixed", "sticky"].includes(style.position) && !isRequiredControl(el)) return;
     const materialPx = Math.max(24, viewportWidth * 0.05);
     let escape = null;
@@ -1636,7 +1712,7 @@ export function createArtifactSdk(
   function auditRequiredControlBounds(el, viewportWidth, findings, seen, animationTargets, failedRoots) {
     if (!isRequiredControl(el) || isExcludedLayoutAuditElement(el)) return;
     if (isAnimationAssociatedWithElement(el, animationTargets)) return;
-    const rect = el.getBoundingClientRect();
+    const rect = rectOf(el);
     if (!isVisibleForLayoutAudit(el, rect)) return;
 
     let clipped = null;
@@ -1670,7 +1746,7 @@ export function createArtifactSdk(
       });
     }
 
-    const style = getComputedStyle(el);
+    const style = styleOf(el);
     const fixedToViewport = style.position === "fixed" || style.position === "sticky";
     const lockedToViewport = rootVerticalScrollLocked() && !hasReachableVerticalScrollerAncestor(el);
     const scrollY = Number(window.scrollY || window.pageYOffset || 0);
@@ -1704,7 +1780,7 @@ export function createArtifactSdk(
   }
 
   function backgroundIsOpaque(el) {
-    const style = getComputedStyle(el);
+    const style = styleOf(el);
     if (Number.parseFloat(style.opacity || "1") < 0.95) return false;
     const color = String(style.backgroundColor || "")
       .trim()
@@ -1722,7 +1798,7 @@ export function createArtifactSdk(
     let opacity = 1;
     let current = node;
     while (current && current !== stopParent) {
-      const value = Number.parseFloat(getComputedStyle(current).opacity || "1");
+      const value = Number.parseFloat(styleOf(current).opacity || "1");
       if (Number.isFinite(value)) opacity *= value;
       current = current.parentElement;
     }
@@ -1773,7 +1849,7 @@ export function createArtifactSdk(
       })
       .filter((el) => isSemanticTextBoundary(el) || !hasSemanticTextBoundaryAncestor(el))
       .filter((el) => isVisibleForLayoutAudit(el))
-      .filter((el) => getComputedStyle(el).position === "static")
+      .filter((el) => styleOf(el).position === "static")
       .filter((el) => !isAnimationAssociatedWithElement(el, animationTargets))
       .slice(0, 200);
     const failedRoots = [];
@@ -1806,6 +1882,15 @@ export function createArtifactSdk(
   }
 
   function auditLayout() {
+    auditPass = { style: new Map(), rect: new Map() };
+    try {
+      return auditLayoutPass();
+    } finally {
+      auditPass = null;
+    }
+  }
+
+  function auditLayoutPass() {
     const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
     const findings = [];
     const seen = new Set();
@@ -2010,7 +2095,9 @@ export function createArtifactSdk(
     const second = auditLayout();
     const domHydrationQuiescent = await waitForDomHydrationQuiescence();
     if (runId !== layoutAuditRun) return;
-    const final = domHydrationQuiescent ? auditLayout() : second;
+    // Only findings seen in two passes are reported, so an empty second pass already decides the
+    // result: the third pass would be intersected with nothing.
+    const final = domHydrationQuiescent && second.length > 0 ? auditLayout() : second;
     const targetPresenceComplete = document.readyState === "complete" && domHydrationQuiescent;
     publishLayoutAudit(
       findStableLayoutFindings(domHydrationQuiescent ? second : first, final),
@@ -2029,7 +2116,38 @@ export function createArtifactSdk(
     }, 50);
   }
 
+  // What would still visibly change once the page is shown: subresources and scripts finishing (the
+  // load event), web fonts swapping in, and Mermaid diagrams replacing their source text. The chrome
+  // reveals on this signal; it does not wait for the layout audit, which only feeds the inbox.
+  const readyToShowMaxWaitMs = 3000;
+
+  function waitForDocumentLoad() {
+    if (document.readyState === "complete") return Promise.resolve();
+    return new Promise((resolve) => window.addEventListener("load", () => resolve(), { once: true }));
+  }
+
+  function diagramsDrawn() {
+    return [...document.querySelectorAll(".mermaid")].every((el) => el.querySelector("svg"));
+  }
+
+  function waitForDiagrams() {
+    return new Promise((resolve) => {
+      const check = () => (diagramsDrawn() ? resolve() : window.setTimeout(check, 30));
+      check();
+    });
+  }
+
+  async function announceReadyToShow() {
+    await Promise.race([
+      Promise.all([waitForDocumentLoad(), waitForDocumentFontsReady()]).then(waitForDiagrams),
+      new Promise((resolve) => window.setTimeout(resolve, readyToShowMaxWaitMs)),
+    ]);
+    await waitForAnimationFrames(2);
+    postArtifactMessage("review-surface:readyToShow", { artifact_revision: artifactRevision });
+  }
+
   function startLayoutAudit() {
+    announceReadyToShow().catch(() => {});
     scheduleLayoutAudit();
     window.addEventListener("load", scheduleLayoutAudit, { once: true });
     window.addEventListener("resize", scheduleLayoutAudit, { passive: true });

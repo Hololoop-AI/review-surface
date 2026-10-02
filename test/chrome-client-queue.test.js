@@ -1693,7 +1693,21 @@ test("a failed diagnostic pass reports its incompleteness rather than an empty r
 
   assert.equal(posts[0].body.complete, false);
   assert.equal(chrome.element("warningsWrap").hidden, false);
+  // A page that keeps changing never completes a pass; it is shown anyway rather than held to
+  // the curtain's time limit.
+  assert.equal(chrome.element("layoutGateOverlay").hidden, true);
+});
+
+test("the page is shown when it is ready, before any layout check has finished", async () => {
+  const { posts, fetchImpl } = diagnosticsHarness([[]]);
+  const chrome = await createChromeHarness({ fetchImpl });
   assert.equal(chrome.element("layoutGateOverlay").hidden, false);
+
+  chrome.sendFrameMessage({ type: "review-surface:readyToShow" });
+  await flushPromises();
+
+  assert.equal(chrome.element("layoutGateOverlay").hidden, true);
+  assert.equal(posts.length, 0, "showing the page sends no diagnostics");
 });
 
 test("warning-only observations are discarded before they reach the server", async () => {

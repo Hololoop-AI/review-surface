@@ -2770,6 +2770,12 @@ window.addEventListener("message", (event) => {
   const messageSequence = ++artifactMessageSequence;
   artifactSpokeToken = messageToken;
   clearTimeout(artifactSilenceTimer);
+  // The page looks final (loaded, fonts in, diagrams drawn): show it now. The layout check keeps
+  // running behind it and only feeds the warning inbox.
+  if (msg.type === "review-surface:readyToShow") {
+    handleLayoutGatePass();
+    return;
+  }
   if (msg.type === "review-surface:layoutDiagnostics") {
     const diagnosticSequence = ++layoutDiagnosticSequence;
     submitLayoutDiagnostics({
@@ -2788,7 +2794,9 @@ window.addEventListener("message", (event) => {
           if (messageSequence === artifactMessageSequence) armArtifactAvailabilityProbe(messageToken);
           return;
         }
-        if (msg.complete !== false) handleLayoutGatePass();
+        // Any finished pass reveals, complete or not: a page that keeps changing (a clock, a
+        // live list) never completes one, and used to sit behind the curtain until the hold limit.
+        handleLayoutGatePass();
       })
       .catch(() => {});
     return;
