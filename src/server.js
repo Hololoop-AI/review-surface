@@ -576,7 +576,7 @@ export async function serve({
       }
       const sessionUrl = `http://${hostForUrl(linkHostName)}:${publicPort}/session/${key}`;
       const url = shouldDisableLayoutGateOpen(req.body || {}) ? appendNoGateParam(sessionUrl) : sessionUrl;
-      const session = await store.upsertSession(file, sessionUrl);
+      const session = await store.upsertSession(file, sessionUrl, { delivery: req.body.delivery });
       if (existing?.status === "ended") {
         clearFeedbackDelivery(key, activePolls, deliveredFeedback, events);
       }
@@ -844,6 +844,7 @@ export async function serve({
         status: session.status,
         ended_by: session.ended_by || null,
         presence: computePresence(req.params.key, activePolls, deliveredFeedback),
+        delivery: session.delivery === "push" ? "push" : "poll",
         pending_prompts: (session.prompts || []).length,
         updated_at: session.updated_at || null,
         last_agent_reply_at: lastAgentReply?.at || null,
@@ -1333,9 +1334,13 @@ export async function serve({
           res.write(`event: agent-reply\ndata: ${JSON.stringify({ text })}\n\n`);
         }
       };
+      // A push-delivery session has no poller by design: its host collects sends on its own
+      // clock. "Waiting" there means nothing is wrong, so the chrome is told "push" instead.
+      let pushDelivery = false;
+      const displayPresence = (state) => (state === "waiting" && pushDelivery ? "push" : state);
       const sendPresence = (key, state) => {
         if (key === req.params.key) {
-          res.write(`event: agent-presence\ndata: ${JSON.stringify({ state })}\n\n`);
+          res.write(`event: agent-presence\ndata: ${JSON.stringify({ state: displayPresence(state) })}\n\n`);
         }
       };
       // Warning-inbox state lives on the server, so every attached chrome - including one that
@@ -1380,9 +1385,10 @@ export async function serve({
         cleanup();
         return;
       }
+      pushDelivery = session?.delivery === "push";
       res.write(`event: chat-sync\ndata: ${JSON.stringify({ chat: session?.chat || [] })}\n\n`);
       res.write(
-        `event: agent-presence\ndata: ${JSON.stringify({ state: computePresence(req.params.key, activePolls, deliveredFeedback) })}\n\n`,
+        `event: agent-presence\ndata: ${JSON.stringify({ state: displayPresence(computePresence(req.params.key, activePolls, deliveredFeedback)) })}\n\n`,
       );
       // A connection that attaches (or reconnects) to a session already ended - including one
       // that misses the live "ended" event entirely by connecting after it fired - still needs to

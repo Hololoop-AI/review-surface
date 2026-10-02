@@ -544,7 +544,7 @@ function syncChat(chat) {
 }
 
 function setAgentPresence(state) {
-  agentPresence = state === "listening" || state === "working" ? state : "waiting";
+  agentPresence = state === "listening" || state === "working" || state === "push" ? state : "waiting";
   updateSendState();
   renderSheetSummary();
   if (presenceBanner) presenceBanner.hidden = ended || agentPresence !== "waiting";
@@ -804,6 +804,7 @@ function sheetSummary() {
   if (unreadAgentReply) return { text: unreadAgentReply, accent: false, unread: true };
   if (agentPresence === "working") return { text: "Agent is working…", accent: false, unread: false };
   if (agentPresence === "listening") return { text: "Agent listening", accent: false, unread: false };
+  if (agentPresence === "push") return { text: "Sends are delivered", accent: false, unread: false };
   return { text: "Agent not listening", accent: false, unread: false };
 }
 

@@ -88,3 +88,58 @@ test("agent-status is 404 for an unknown session", async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+async function firstPresenceEvent(base, key) {
+  const controller = new AbortController();
+  const response = await fetch(`${base}/events/${key}`, { signal: controller.signal });
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  try {
+    while (!/event: agent-presence\ndata: (.*)\n/.test(text)) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value);
+    }
+  } finally {
+    controller.abort();
+  }
+  return JSON.parse(text.match(/event: agent-presence\ndata: (.*)\n/)[1]).state;
+}
+
+test("a push-delivery session never tells the driver the agent is not listening", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "review-surface-push-"));
+  const artifact = path.join(dir, "artifact.html");
+  await writeFile(artifact, "<!doctype html><html><body><h1>Hi</h1></body></html>");
+  const server = await serve({ port: 0, stateFile: path.join(dir, "state.json"), version: "9.9.9-test" });
+  const base = `http://127.0.0.1:${server.port}`;
+  const open = (body) =>
+    fetch(`${base}/api/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ file: artifact, ...body }),
+    }).then((response) => response.json());
+  try {
+    const created = await open({ delivery: "push" });
+    const key = created.url.split("/").pop();
+
+    // The status endpoint stays truthful about polls (the host's own logic reads "waiting")
+    // and names the delivery mode separately.
+    const status = await fetch(`${base}/api/${key}/agent-status`).then((r) => r.json());
+    assert.equal(status.presence, "waiting");
+    assert.equal(status.delivery, "push");
+    // The chrome is told "push", which shows no "not listening" banner.
+    assert.equal(await firstPresenceEvent(base, key), "push");
+
+    // Reopening without a delivery keeps the stored mode.
+    await open({});
+    assert.equal((await fetch(`${base}/api/${key}/agent-status`).then((r) => r.json())).delivery, "push");
+
+    // A poll session still reports plain waiting to its chrome.
+    await open({ delivery: "poll" });
+    assert.equal(await firstPresenceEvent(base, key), "waiting");
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
