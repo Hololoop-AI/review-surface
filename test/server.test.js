@@ -834,10 +834,10 @@ test("chrome top bar follows the design mock wordmark and overflow menu treatmen
   const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
   const css = await chromeCssSource();
 
-  assert.match(html, /class="brand-mark">Review Surface/);
-  assert.match(html, /class="brand-support">Editor/);
+  assert.match(html, /<span class="brand-mark">Cadre<\/span><\/div>/);
+  assert.doesNotMatch(html, /brand-support/);
+  assert.doesNotMatch(html, /Review Surface<\/span>/);
   assert.match(css, /font-family:var\(--font-serif\)/);
-  assert.match(css, /letter-spacing:\.18em/);
   assert.match(html, /class="more-button" id="moreButton"/);
   assert.match(html, /class="menu more-menu" id="moreMenu" hidden/);
   assert.doesNotMatch(html, /class="file-input"/);
@@ -5549,8 +5549,39 @@ function restoreEnv(name, value) {
 test("chrome falls back to a default favicon and title when none are provided", () => {
   const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
 
-  assert.match(html, /<link rel="icon" href="data:image\/svg\+xml,/);
+  assert.match(html, /<link rel="icon" href="data:image\/svg\+xml[;,]/);
   assert.match(html, /<title>Review Surface<\/title>/);
+});
+
+test("the default favicon is the Hololoop ring mark", () => {
+  const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
+  const href = html.match(/<link rel="icon" href="data:image\/svg\+xml;base64,([^"]+)">/);
+  assert.ok(href, "default favicon is a base64 SVG data URI");
+  const svg = Buffer.from(href[1], "base64").toString("utf8");
+
+  assert.match(svg, /<circle cx="16" cy="16" r="12\.6"\/>/, "outer ring");
+  assert.match(svg, /<circle cx="16" cy="16" r="6" stroke-opacity="0\.55"\/>/, "dimmed inner ring");
+  assert.match(svg, /stroke: #b4530f/, "deep amber on light");
+  assert.match(svg, /@media \(prefers-color-scheme: dark\)\s*\{\s*circle \{ stroke: #f0a02a; \}/, "neon amber on dark");
+  assert.doesNotMatch(html, /\u{1F48E}/u, "the old gem emoji is gone");
+});
+
+test("GET /favicon.ico serves the same Hololoop mark for pages that declare no icon", async () => {
+  // A host app that frames the chrome (Cadre's /view wrapper) declares no icon of its own,
+  // so the browser falls back to /favicon.ico on that origin, which is proxied here.
+  const dir = await mkdtemp(path.join(tmpdir(), "review-surface-favicon-"));
+  const server = await serve({ port: 0, stateFile: path.join(dir, "state.json"), version: "9.9.9-test" });
+  try {
+    const res = await fetch(`http://127.0.0.1:${server.port}/favicon.ico`);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type") || "", /^image\/svg\+xml/);
+    const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
+    const href = html.match(/<link rel="icon" href="data:image\/svg\+xml;base64,([^"]+)">/);
+    assert.ok(href, "default favicon is a base64 SVG data URI");
+    assert.equal(await res.text(), Buffer.from(href[1], "base64").toString("utf8"), "one source for both");
+  } finally {
+    await server.close();
+  }
 });
 
 test("chrome adopts a favicon tag and tab title passed from the artifact", () => {

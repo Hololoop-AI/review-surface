@@ -156,16 +156,6 @@ body.review-surface {
   line-height: 1;
   color: var(--fg);
 }
-.brand-support {
-  font-family: var(--font-sans);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--fg-muted);
-  position: relative;
-  top: 1px;
-}
 .spacer {
   flex: 1;
 }
@@ -1345,9 +1335,6 @@ body.layout-gate-active iframe#artifact {
   .bar {
     gap: 10px;
     --bar-pad: var(--space-6);
-  }
-  .brand-support {
-    display: none;
   }
   .warnings-drawer {
     position: fixed;
