@@ -3240,7 +3240,7 @@ setWarningsDrawerOpen(false);
 renderWarnings();
 initialChat.forEach((item) => addChat(item.role, item.text));
 retiredDrafts.forEach((text) => renderRetiredDraft(text));
-setAgentPresence("waiting");
+setAgentPresence(sessionData.delivery === "push" ? "push" : "waiting");
 // The session already ended before this page (re)loaded, so there is no future SSE `ended` event
 // to wait for - start read-only instead of looking live until a Send gets silently refused.
 if (sessionData.initialEnded) markSessionEnded();

@@ -2485,6 +2485,7 @@ export function createChromeHtml(
     // to send and gets refused (#171).
     initialEnded: session.status === "ended",
     initialEndedBy: session.ended_by || null,
+    delivery: session.delivery === "push" ? "push" : "poll",
     initialChat: session.chat || [],
     // Bootstrapping the inbox from the server is what makes it survive a browser refresh or a
     // reconnect: the chrome never owns warning state, it only renders it.

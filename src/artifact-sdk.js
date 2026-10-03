@@ -2140,17 +2140,23 @@ export function createArtifactSdk(
     return [...document.querySelectorAll(".mermaid")].every((el) => el.querySelector("svg"));
   }
 
-  function waitForDiagrams() {
+  function waitForDiagrams(gaveUp) {
     return new Promise((resolve) => {
-      const check = () => (diagramsDrawn() ? resolve() : window.setTimeout(check, 30));
+      const check = () => (gaveUp() || diagramsDrawn() ? resolve() : window.setTimeout(check, 30));
       check();
     });
   }
 
   async function announceReadyToShow() {
+    let timedOut = false;
     await Promise.race([
-      Promise.all([waitForDocumentLoad(), waitForDocumentFontsReady()]).then(waitForDiagrams),
-      new Promise((resolve) => window.setTimeout(resolve, readyToShowMaxWaitMs)),
+      Promise.all([waitForDocumentLoad(), waitForDocumentFontsReady()]).then(() => waitForDiagrams(() => timedOut)),
+      new Promise((resolve) =>
+        window.setTimeout(() => {
+          timedOut = true;
+          resolve();
+        }, readyToShowMaxWaitMs),
+      ),
     ]);
     await waitForAnimationFrames(2);
     postArtifactMessage("review-surface:readyToShow", { artifact_revision: artifactRevision });

@@ -16,7 +16,7 @@ const servedChromeIds = new Set(
   ),
 );
 
-/** @typedef {{ key: string, file: string, layoutGateEnabled?: boolean, layoutGateMaxHoldMs?: number, modeToggleHotkeyKey?: string, initialLayoutWarnings?: any[], chromeLoadToken?: string, initialArtifactRevision?: number, initialArtifactLoadToken?: string, initialArtifactLoadSequence?: number, attachmentMaxBytes?: number, attachmentMaxCount?: number, attachmentAcceptedMime?: string[], initialEnded?: boolean, initialEndedBy?: string | null }} HarnessSessionData */
+/** @typedef {{ key: string, file: string, layoutGateEnabled?: boolean, layoutGateMaxHoldMs?: number, modeToggleHotkeyKey?: string, initialLayoutWarnings?: any[], chromeLoadToken?: string, initialArtifactRevision?: number, initialArtifactLoadToken?: string, initialArtifactLoadSequence?: number, attachmentMaxBytes?: number, attachmentMaxCount?: number, attachmentAcceptedMime?: string[], initialEnded?: boolean, initialEndedBy?: string | null, delivery?: string }} HarnessSessionData */
 /** @type {HarnessSessionData} */
 const defaultSessionData = {
   key: "abc",
@@ -3968,6 +3968,14 @@ test("chrome goes read-only when the server forwards an ended SSE event (#171)",
 
 // #171: a page loaded (or reloaded) after the session already ended has no future `ended` SSE
 // event to wait for - it must start read-only, not wait for a Send to be silently refused.
+test("a push-delivery chrome never shows the not-listening banner, even before its first presence event", async () => {
+  const push = await createChromeHarness({ sessionData: { ...defaultSessionData, delivery: "push" } });
+  assert.equal(push.element("presenceBanner").hidden, true);
+
+  const poll = await createChromeHarness();
+  assert.equal(poll.element("presenceBanner").hidden, false);
+});
+
 test("chrome boots read-only when the session already ended before this page load (#171)", async () => {
   const chrome = await createChromeHarness({
     sessionData: { ...defaultSessionData, initialEnded: true, initialEndedBy: "user" },

@@ -5077,6 +5077,30 @@ test("a chrome page served after the session already ended boots read-only (#171
   }
 });
 
+test("a chrome page bootstraps the session's delivery mode", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "review-surface-serve-"));
+  const artifact = path.join(dir, "artifact.html");
+  await writeFile(artifact, "<!doctype html><html><body></body></html>");
+  const server = await serve({ port: 0, stateFile: path.join(dir, "state.json"), version: "9.9.9-test" });
+  try {
+    const base = `http://127.0.0.1:${server.port}`;
+    const openAs = async (delivery) => {
+      const res = await fetch(`${base}/api/sessions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ file: artifact, delivery }),
+      });
+      const { key } = await res.json();
+      return chromeSessionData(await (await fetch(`${base}/session/${key}`)).text());
+    };
+    assert.equal((await openAs("push")).delivery, "push");
+    assert.equal((await openAs("poll")).delivery, "poll");
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("immediate send-and-end delivery clears working presence without an active poll", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "review-surface-serve-"));
   const artifact = path.join(dir, "artifact.html");
