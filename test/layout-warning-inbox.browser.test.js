@@ -420,83 +420,87 @@ test(
   },
 );
 
-test("a live reload preserves the review context Review Surface owns", { skip: !runBrowserE2e, timeout: 240_000 }, async () => {
-  const temp = await mkdtemp(path.join(tmpdir(), "review-surface-review-context-"));
-  const port = await freePort();
-  const reviewSurfaceEnv = {
-    REVIEW_SURFACE_PORT: String(port),
-    REVIEW_SURFACE_STATE_DIR: path.join(temp, "state"),
-    REVIEW_SURFACE_NO_OPEN: "1",
-    REVIEW_SURFACE_TELEMETRY: "0",
-    REVIEW_SURFACE_HOST: "127.0.0.1",
-    REVIEW_SURFACE_LINK_HOST: "127.0.0.1",
-  };
-  const chromeEnv = {
-    CHROME_DEVTOOLS_AXI_SESSION: `review-surface-review-context-${process.pid}`,
-    CHROME_DEVTOOLS_AXI_USER_DATA_DIR: path.join(temp, "chrome"),
-  };
+test(
+  "a live reload preserves the review context Review Surface owns",
+  { skip: !runBrowserE2e, timeout: 240_000 },
+  async () => {
+    const temp = await mkdtemp(path.join(tmpdir(), "review-surface-review-context-"));
+    const port = await freePort();
+    const reviewSurfaceEnv = {
+      REVIEW_SURFACE_PORT: String(port),
+      REVIEW_SURFACE_STATE_DIR: path.join(temp, "state"),
+      REVIEW_SURFACE_NO_OPEN: "1",
+      REVIEW_SURFACE_TELEMETRY: "0",
+      REVIEW_SURFACE_HOST: "127.0.0.1",
+      REVIEW_SURFACE_LINK_HOST: "127.0.0.1",
+    };
+    const chromeEnv = {
+      CHROME_DEVTOOLS_AXI_SESSION: `review-surface-review-context-${process.pid}`,
+      CHROME_DEVTOOLS_AXI_USER_DATA_DIR: path.join(temp, "chrome"),
+    };
 
-  // Accessibility-tree refs go stale after every action, so always resolve a fresh one.
-  function snapshot() {
-    return run("chrome-devtools-axi", ["snapshot"], chromeEnv);
-  }
-  function ref(pattern) {
-    const line = snapshot()
-      .split("\n")
-      .find((candidate) => pattern.test(candidate));
-    assert.ok(line, `no snapshot line matching ${pattern}`);
-    return line.trim().split(/\s+/)[0].replace(/^uid=/, "");
-  }
-  function click(pattern) {
-    run("chrome-devtools-axi", ["click", `@${ref(pattern)}`], chromeEnv);
-  }
-  function wait(ms) {
-    run("chrome-devtools-axi", ["wait", String(ms)], chromeEnv, ms + 45_000);
-  }
+    // Accessibility-tree refs go stale after every action, so always resolve a fresh one.
+    function snapshot() {
+      return run("chrome-devtools-axi", ["snapshot"], chromeEnv);
+    }
+    function ref(pattern) {
+      const line = snapshot()
+        .split("\n")
+        .find((candidate) => pattern.test(candidate));
+      assert.ok(line, `no snapshot line matching ${pattern}`);
+      return line.trim().split(/\s+/)[0].replace(/^uid=/, "");
+    }
+    function click(pattern) {
+      run("chrome-devtools-axi", ["click", `@${ref(pattern)}`], chromeEnv);
+    }
+    function wait(ms) {
+      run("chrome-devtools-axi", ["wait", String(ms)], chromeEnv, ms + 45_000);
+    }
 
-  try {
-    const artifact = path.join(temp, "review-context.html");
-    await copyFile(path.join(fixtures, "review-context.html"), artifact);
-    const output = run(process.execPath, ["bin/review-surface.js", artifact, "--no-open"], reviewSurfaceEnv);
-    const url = output.match(/url:\s*"([^"]+)"/)?.[1];
-    assert.ok(url, output);
-    run("chrome-devtools-axi", ["emulate", "--viewport", "1440x1000x1"], chromeEnv);
-    run("chrome-devtools-axi", ["open", url], chromeEnv);
-    wait(4500);
+    try {
+      const artifact = path.join(temp, "review-context.html");
+      await copyFile(path.join(fixtures, "review-context.html"), artifact);
+      const output = run(process.execPath, ["bin/review-surface.js", artifact, "--no-open"], reviewSurfaceEnv);
+      const url = output.match(/url:\s*"([^"]+)"/)?.[1];
+      assert.ok(url, output);
+      run("chrome-devtools-axi", ["emulate", "--viewport", "1440x1000x1"], chromeEnv);
+      run("chrome-devtools-axi", ["open", url], chromeEnv);
+      wait(4500);
 
-    // surface-owned answers: a radio and a checkbox inside a data-review-surface-question scope.
-    click(/radio " Pro"/);
-    click(/checkbox " Include beta cohort"/);
-    // Unsent annotation text on an element the reload will replace.
-    click(/Annotate this paragraph/);
-    wait(800);
-    run("chrome-devtools-axi", ["type", "Shorten this to one sentence"], chromeEnv);
-    wait(800);
+      // surface-owned answers: a radio and a checkbox inside a data-review-surface-question scope.
+      click(/radio " Pro"/);
+      click(/checkbox " Include beta cohort"/);
+      // Unsent annotation text on an element the reload will replace.
+      click(/Annotate this paragraph/);
+      wait(800);
+      run("chrome-devtools-axi", ["type", "Shorten this to one sentence"], chromeEnv);
+      wait(800);
 
-    const before = snapshot();
-    assert.match(before, /radio " Pro" checked/);
-    assert.match(before, /checkbox " Include beta cohort" checked/);
+      const before = snapshot();
+      assert.match(before, /radio " Pro" checked/);
+      assert.match(before, /checkbox " Include beta cohort" checked/);
 
-    await writeFile(artifact, `${await readFile(artifact, "utf8")}\n<!-- revision -->\n`);
-    wait(5000);
+      await writeFile(artifact, `${await readFile(artifact, "utf8")}\n<!-- revision -->\n`);
+      wait(5000);
 
-    const after = snapshot();
-    assert.match(after, /radio " Pro" checked/, "a surface-owned answer survives the reload");
-    assert.match(after, /checkbox " Include beta cohort" checked/);
-    assert.match(after, /Annotate <p>/, "the open annotation card comes back");
+      const after = snapshot();
+      assert.match(after, /radio " Pro" checked/, "a surface-owned answer survives the reload");
+      assert.match(after, /checkbox " Include beta cohort" checked/);
+      assert.match(after, /Annotate <p>/, "the open annotation card comes back");
 
-    // Queueing the restored card proves the unsent text itself survived, not just the card.
-    click(/button "Queue"/);
-    wait(800);
-    const pills = run(
-      "chrome-devtools-axi",
-      ["eval", '[...document.querySelectorAll(".pill-preview")].map((pill) => pill.textContent).join("|")'],
-      chromeEnv,
-    );
-    assert.match(pills, /Shorten this to one sentence/);
-  } finally {
-    run(process.execPath, ["bin/review-surface.js", "stop", "--port", String(port)], reviewSurfaceEnv, 15_000);
-    run("chrome-devtools-axi", ["stop"], chromeEnv);
-    await rm(temp, { recursive: true, force: true });
-  }
-});
+      // Queueing the restored card proves the unsent text itself survived, not just the card.
+      click(/button "Queue"/);
+      wait(800);
+      const pills = run(
+        "chrome-devtools-axi",
+        ["eval", '[...document.querySelectorAll(".pill-preview")].map((pill) => pill.textContent).join("|")'],
+        chromeEnv,
+      );
+      assert.match(pills, /Shorten this to one sentence/);
+    } finally {
+      run(process.execPath, ["bin/review-surface.js", "stop", "--port", String(port)], reviewSurfaceEnv, 15_000);
+      run("chrome-devtools-axi", ["stop"], chromeEnv);
+      await rm(temp, { recursive: true, force: true });
+    }
+  },
+);

@@ -114,11 +114,14 @@ export const PLAYBOOKS = [
       "Do not only focus on ambiguous decisions and omit the actual proposal.",
       "Do not omit failure modes, migration concerns, or backwards compatibility questions.",
     ],
-    review_surface_notes: ["A Review Surface plan should make a plan and its uncertainties easy to annotate before code exists."],
+    review_surface_notes: [
+      "A Review Surface plan should make a plan and its uncertainties easy to annotate before code exists.",
+    ],
   },
   {
     id: "code",
-    use_when: "Render source code, code files, patches, PR diffs, and before/after code inside Review Surface artifacts",
+    use_when:
+      "Render source code, code files, patches, PR diffs, and before/after code inside Review Surface artifacts",
     choose: [
       "Use this whenever an artifact shows source code: a snippet, full file, patch, PR diff, local change set, or before/after code.",
       "Use File for one code file, FileDiff for old/new versions or parsed patch metadata, and CodeView only when several files or diffs need coordinated navigation.",

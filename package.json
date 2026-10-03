@@ -2,7 +2,7 @@
   "name": "review-surface",
   "version": "0.2.0",
   "packageManager": "pnpm@11.1.1",
-  "description": "Artifact-first review surface for AI agents: annotate, decide, whiteboard \u2014 locally served, feedback as consumable events.",
+  "description": "Artifact-first review surface for AI agents: annotate, decide, whiteboard — locally served, feedback as consumable events.",
   "type": "module",
   "bin": {
     "review-surface": "dist/cli.mjs"

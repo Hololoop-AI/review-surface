@@ -729,6 +729,7 @@ async function shareCommand(args) {
     next_step: "Use `review-surface export <html-file>` for a portable single-file copy instead.",
   };
 
+  // eslint-disable-next-line no-unreachable -- retired path kept for a future re-enable
   const file = firstPositionalArg(args, ["--password", "--token"]);
   if (!file) {
     throw new AxiError("HTML file path is required", "VALIDATION_ERROR", ["Run `review-surface share <html-file>`"]);

@@ -130,7 +130,9 @@ var PLAYBOOKS = [
       "Do not only focus on ambiguous decisions and omit the actual proposal.",
       "Do not omit failure modes, migration concerns, or backwards compatibility questions."
     ],
-    review_surface_notes: ["A Review Surface plan should make a plan and its uncertainties easy to annotate before code exists."]
+    review_surface_notes: [
+      "A Review Surface plan should make a plan and its uncertainties easy to annotate before code exists."
+    ]
   },
   {
     id: "code",

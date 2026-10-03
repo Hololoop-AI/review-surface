@@ -138,7 +138,8 @@ function buildShell(theme, mode) {
       textContent: "Fullscreen",
       title: "Open this whiteboard full screen",
     });
-    fullscreenButton.onclick = () => post({ type: "review-surface-whiteboard:maximize", diagramIndex: state.diagramIndex });
+    fullscreenButton.onclick = () =>
+      post({ type: "review-surface-whiteboard:maximize", diagramIndex: state.diagramIndex });
     header.append(fullscreenButton);
   }
   const fallbackBanner = el("div", { id: "wbFallbackBanner", className: "wb-banner", hidden: true });
@@ -691,7 +692,12 @@ function main() {
   window.addEventListener("message", (event) => {
     if (event.source !== chromeWindow) return;
     const msg = event.data || {};
-    if (msg.type === "review-surface-whiteboard:init" && !initialized && typeof msg.channelId === "string" && msg.channelId) {
+    if (
+      msg.type === "review-surface-whiteboard:init" &&
+      !initialized &&
+      typeof msg.channelId === "string" &&
+      msg.channelId
+    ) {
       initialized = true;
       state.channelId = msg.channelId;
       buildShell(msg.theme === "dark" ? "dark" : "light", msg.mode === "inline" ? "inline" : "overlay");

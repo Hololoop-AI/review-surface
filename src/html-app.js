@@ -34,6 +34,7 @@ export function createHtmlAppPayload(html, options = {}) {
  */
 export async function publishToHtmlApp(html, options = {}) {
   throw new Error("review-surface: remote share disabled by local patch (local-only policy)");
+  // eslint-disable-next-line no-unreachable -- retired path kept for a future re-enable
   const env = options.env || process.env;
   const apiUrl = (options.apiUrl ? String(options.apiUrl).replace(/\/+$/, "") : "") || htmlAppApiUrl(env);
   const fetchImpl = options.fetch || fetch;
