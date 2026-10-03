@@ -1581,10 +1581,20 @@ export function createArtifactSdk(
     return isDiagramLayoutElement(el) || hasVisualMaskAncestor(el) || hasStandardVisuallyHiddenAncestor(el);
   }
 
+  // A pass reads every checked element's geometry and text, about 45 ms per 1,000 elements in
+  // Chromium, and blocks the page while it runs. Past the cap only controls are checked: they are
+  // few and cheap, so a broken button anywhere on a large page is still found while the long tail
+  // of text goes unchecked.
+  const layoutAuditElementCap = 2000;
+
   function collectLayoutAuditElements() {
-    return [...(document.body?.querySelectorAll("*") || [])].filter(
+    const elements = [...(document.body?.querySelectorAll("*") || [])].filter(
       (el) => el instanceof Element && !isReviewSurfaceUi(el),
     );
+    if (elements.length <= layoutAuditElementCap) return elements;
+    return elements
+      .slice(0, layoutAuditElementCap)
+      .concat(elements.slice(layoutAuditElementCap).filter((el) => isRequiredControl(el)));
   }
 
   function pushLayoutFinding(findings, seen, finding) {
