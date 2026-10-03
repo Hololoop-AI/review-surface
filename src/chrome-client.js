@@ -3219,12 +3219,19 @@ initializeLayoutGate();
 // ended, reload count) catches it up on what it missed.
 /** @type {EventSource | null} */
 let liveStream = null;
-/** @type {number | null} */
-let seenReloadCount = null;
+let lastSyncedChat = JSON.stringify(initialChat);
+/** @type {{ boot: string, version: string, count: number } | null} */
+let seenReloadState = readReloadState(sessionData.initialReloadState);
 
-function reloadCountOf(event) {
-  const count = Number(JSON.parse(event?.data || "{}").count);
-  return Number.isFinite(count) ? count : null;
+function readReloadState(value) {
+  const count = Number(value?.count);
+  return typeof value?.boot === "string" && Number.isFinite(count)
+    ? { boot: value.boot, version: String(value.version || ""), count }
+    : null;
+}
+
+function reloadStateOf(event) {
+  return readReloadState(JSON.parse(event?.data || "{}"));
 }
 
 function reloadArtifactFrame() {
@@ -3238,17 +3245,27 @@ function openLiveStream() {
   const stream = new EventSource("/events/" + key);
   liveStream = stream;
   stream.addEventListener("reload", (event) => {
-    seenReloadCount = reloadCountOf(event) ?? seenReloadCount;
+    seenReloadState = reloadStateOf(event) ?? seenReloadState;
     reloadArtifactFrame();
   });
   // Sent on every (re)connect: a count that moved while the stream was closed is a rewrite this
-  // page missed.
+  // page missed. A different server means the count restarted, so what changed is unknown and
+  // the page reloads once; one running another version also missed the shutdown notice a
+  // connected tab would have had, so it raises that notice itself.
   stream.addEventListener("reload-count", (event) => {
-    const count = reloadCountOf(event);
-    if (count === null) return;
-    const missed = seenReloadCount !== null && count !== seenReloadCount;
-    seenReloadCount = count;
-    if (missed) reloadArtifactFrame();
+    const state = reloadStateOf(event);
+    if (!state) return;
+    const previous = seenReloadState;
+    seenReloadState = state;
+    if (!previous) return;
+    if (previous.boot !== state.boot) {
+      if (previous.version && state.version && previous.version !== state.version) {
+        setChromeOutdated(true, "upgrade");
+      }
+      reloadArtifactFrame();
+    } else if (previous.count !== state.count) {
+      reloadArtifactFrame();
+    }
   });
   stream.addEventListener("chrome-reload", (event) => reloadAfterServerRestart(shutdownEventReason(event)));
   // The replacement server serves a different artifact's review. This page keeps working against
@@ -3259,7 +3276,15 @@ function openLiveStream() {
     addChat("agent", text);
     noteAgentReply(text);
   });
-  stream.addEventListener("chat-sync", (event) => syncChat(JSON.parse(event.data).chat || []));
+  // Every reopen resends the whole chat. Rebuilding an unchanged one would scroll the reader to the
+  // end and drop a message still being sent, so only a chat that changed is rebuilt.
+  stream.addEventListener("chat-sync", (event) => {
+    const chat = JSON.parse(event.data).chat || [];
+    const synced = JSON.stringify(chat);
+    if (synced === lastSyncedChat) return;
+    lastSyncedChat = synced;
+    syncChat(chat);
+  });
   stream.addEventListener("agent-presence", (event) => setAgentPresence(JSON.parse(event.data).state));
   stream.addEventListener("layout-warnings", (event) => setLayoutWarnings(JSON.parse(event.data).warnings || []));
   stream.addEventListener("ended", () => markSessionEnded());

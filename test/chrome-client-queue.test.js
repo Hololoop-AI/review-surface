@@ -16,7 +16,7 @@ const servedChromeIds = new Set(
   ),
 );
 
-/** @typedef {{ key: string, file: string, layoutGateEnabled?: boolean, layoutGateMaxHoldMs?: number, modeToggleHotkeyKey?: string, initialLayoutWarnings?: any[], chromeLoadToken?: string, initialArtifactRevision?: number, initialArtifactLoadToken?: string, initialArtifactLoadSequence?: number, attachmentMaxBytes?: number, attachmentMaxCount?: number, attachmentAcceptedMime?: string[], initialEnded?: boolean, initialEndedBy?: string | null, delivery?: string }} HarnessSessionData */
+/** @typedef {{ key: string, file: string, layoutGateEnabled?: boolean, layoutGateMaxHoldMs?: number, modeToggleHotkeyKey?: string, initialLayoutWarnings?: any[], chromeLoadToken?: string, initialArtifactRevision?: number, initialArtifactLoadToken?: string, initialArtifactLoadSequence?: number, attachmentMaxBytes?: number, attachmentMaxCount?: number, attachmentAcceptedMime?: string[], initialEnded?: boolean, initialEndedBy?: string | null, delivery?: string, initialReloadState?: { boot: string, version: string, count: number }, initialChat?: { role: string, text: string }[] }} HarnessSessionData */
 /** @type {HarnessSessionData} */
 const defaultSessionData = {
   key: "abc",
@@ -2317,19 +2317,87 @@ test("a rewrite missed while hidden reloads the page on reconnect, and an unchan
   const chrome = await createChromeHarness({
     sessionData: { key: "abc", file: "/tmp/artifact.html", layoutGateMaxHoldMs: 25 },
   });
-  chrome.eventSource().listeners.get("reload-count")({ data: JSON.stringify({ count: 2 }) });
+  chrome.eventSource().listeners.get("reload-count")({
+    data: JSON.stringify({ boot: "b1", version: "1.0.0", count: 2 }),
+  });
   chrome.runTimers(25);
   assert.equal(chrome.element("layoutGateOverlay").hidden, true);
 
   chrome.setDocumentHidden(true);
   chrome.setDocumentHidden(false);
-  chrome.eventSource().listeners.get("reload-count")({ data: JSON.stringify({ count: 2 }) });
+  chrome.eventSource().listeners.get("reload-count")({
+    data: JSON.stringify({ boot: "b1", version: "1.0.0", count: 2 }),
+  });
   assert.equal(chrome.element("layoutGateOverlay").hidden, true, "nothing changed, so nothing reloads");
 
   chrome.setDocumentHidden(true);
   chrome.setDocumentHidden(false);
-  chrome.eventSource().listeners.get("reload-count")({ data: JSON.stringify({ count: 3 }) });
+  chrome.eventSource().listeners.get("reload-count")({
+    data: JSON.stringify({ boot: "b1", version: "1.0.0", count: 3 }),
+  });
   assert.equal(chrome.element("layoutGateOverlay").hidden, false, "the missed rewrite reloads the page");
+});
+
+test("a tab opened in the background reloads on first show if the page was rewritten after it was served", async () => {
+  const chrome = await createChromeHarness({
+    sessionData: {
+      key: "abc",
+      file: "/tmp/artifact.html",
+      layoutGateMaxHoldMs: 25,
+      initialReloadState: { boot: "b1", version: "1.0.0", count: 2 },
+    },
+  });
+  chrome.runTimers(25);
+  assert.equal(chrome.element("layoutGateOverlay").hidden, true);
+
+  chrome.eventSource().listeners.get("reload-count")({
+    data: JSON.stringify({ boot: "b1", version: "1.0.0", count: 4 }),
+  });
+  assert.equal(chrome.element("layoutGateOverlay").hidden, false);
+});
+
+test("coming back to a server running another version raises the outdated notice and reloads the page", async () => {
+  const chrome = await createChromeHarness({
+    sessionData: {
+      key: "abc",
+      file: "/tmp/artifact.html",
+      layoutGateMaxHoldMs: 25,
+      initialReloadState: { boot: "b1", version: "1.0.0", count: 0 },
+    },
+  });
+  chrome.runTimers(25);
+  chrome.setDocumentHidden(true);
+  chrome.setDocumentHidden(false);
+  chrome.eventSource().listeners.get("reload-count")({
+    data: JSON.stringify({ boot: "b2", version: "1.1.0", count: 0 }),
+  });
+  assert.equal(chrome.element("outdatedBanner").hidden, false, "the shutdown notice this tab missed while hidden");
+  assert.equal(
+    chrome.element("layoutGateOverlay").hidden,
+    false,
+    "a restarted count cannot be compared, so it reloads",
+  );
+});
+
+test("an unchanged chat is not rebuilt when a shown tab reconnects", async () => {
+  const chrome = await createChromeHarness({
+    sessionData: { key: "abc", file: "/tmp/artifact.html", initialChat: [{ role: "agent", text: "hello" }] },
+  });
+  const bubbles = () => chrome.element("chatLog").children.filter((el) => /bubble/.test(el.className || ""));
+  const first = bubbles()[0];
+  chrome.eventSource().listeners.get("chat-sync")({
+    data: JSON.stringify({ chat: [{ role: "agent", text: "hello" }] }),
+  });
+  assert.equal(bubbles()[0], first, "the same bubble, not a rebuilt one");
+  chrome.eventSource().listeners.get("chat-sync")({
+    data: JSON.stringify({
+      chat: [
+        { role: "agent", text: "hello" },
+        { role: "agent", text: "again" },
+      ],
+    }),
+  });
+  assert.match(String(bubbles().at(-1).innerHTML), /again/, "a changed chat is rebuilt with the new message");
 });
 
 test("a stale prior-document diagnostic cannot reveal the new gate or clear its probe", async () => {
