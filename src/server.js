@@ -287,6 +287,10 @@ export async function serve({
   const app = express();
   const store = new SessionStore(stateFile);
   const events = new EventEmitter();
+  // How many times each page has been rewritten since this server started. A tab that closed its
+  // live stream while hidden compares this on reconnect to learn it missed a rewrite.
+  const reloadCounts = new Map();
+  events.on("reload", (key) => reloadCounts.set(key, (reloadCounts.get(key) || 0) + 1));
   const eventLog = new EventLog(eventLogPath);
   const linkStore = new LinkStore(linksPath);
   const watchers = new Map();
@@ -1329,7 +1333,7 @@ export async function serve({
       refreshIdleTimer();
       const sendReload = (key) => {
         if (key === req.params.key) {
-          res.write("event: reload\ndata: {}\n\n");
+          res.write(`event: reload\ndata: ${JSON.stringify({ count: reloadCounts.get(key) || 0 })}\n\n`);
         }
       };
       const sendAgentReply = (key, text) => {
@@ -1389,6 +1393,7 @@ export async function serve({
         return;
       }
       pushDelivery = session?.delivery === "push";
+      res.write(`event: reload-count\ndata: ${JSON.stringify({ count: reloadCounts.get(req.params.key) || 0 })}\n\n`);
       res.write(`event: chat-sync\ndata: ${JSON.stringify({ chat: session?.chat || [] })}\n\n`);
       res.write(
         `event: agent-presence\ndata: ${JSON.stringify({ state: displayPresence(computePresence(req.params.key, activePolls, deliveredFeedback)) })}\n\n`,

@@ -55,6 +55,7 @@ async function createChromeHarness({
   const eventSources = [];
   const windowListeners = new Map();
   const documentListeners = new Map();
+  let documentHidden = false;
   const elements = new Map();
   const timers = new Map();
   const srcLoads = [];
@@ -303,15 +304,23 @@ async function createChromeHarness({
       constructor(url) {
         this.url = url;
         this.listeners = new Map();
+        this.closed = false;
         eventSources.push(this);
       }
 
       addEventListener(type, handler) {
         this.listeners.set(type, handler);
       }
+
+      close() {
+        this.closed = true;
+      }
     },
     document: {
       body: element("body"),
+      get hidden() {
+        return documentHidden;
+      },
       get activeElement() {
         return activeElement;
       },
@@ -413,8 +422,14 @@ async function createChromeHarness({
       return { source, posted };
     },
     eventSource() {
-      assert.equal(eventSources.length, 1);
-      return eventSources[0];
+      const open = eventSources.filter((source) => !source.closed);
+      assert.equal(open.length, 1, "exactly one live stream is open");
+      return open[0];
+    },
+    eventSources: () => eventSources,
+    setDocumentHidden(hidden) {
+      documentHidden = hidden;
+      for (const { handler } of documentListeners.get("visibilitychange") || []) handler({});
     },
     sendFrameMessage(data) {
       const handlers = windowListeners.get("message") || [];
@@ -2282,6 +2297,39 @@ test("layout gate re-arms on reload and still reveals on the next completed pass
   await flushPromises();
 
   assert.equal(chrome.element("layoutGateOverlay").hidden, true);
+});
+
+test("a hidden tab closes its live stream and reopens one when shown", async () => {
+  const chrome = await createChromeHarness({});
+  const first = chrome.eventSource();
+
+  chrome.setDocumentHidden(true);
+  assert.equal(first.closed, true, "a hidden tab holds none of the browser's connections");
+  assert.equal(chrome.eventSources().filter((source) => !source.closed).length, 0);
+
+  chrome.setDocumentHidden(false);
+  const second = chrome.eventSource();
+  assert.notEqual(second, first);
+  assert.equal(second.url, "/events/abc");
+});
+
+test("a rewrite missed while hidden reloads the page on reconnect, and an unchanged count does not", async () => {
+  const chrome = await createChromeHarness({
+    sessionData: { key: "abc", file: "/tmp/artifact.html", layoutGateMaxHoldMs: 25 },
+  });
+  chrome.eventSource().listeners.get("reload-count")({ data: JSON.stringify({ count: 2 }) });
+  chrome.runTimers(25);
+  assert.equal(chrome.element("layoutGateOverlay").hidden, true);
+
+  chrome.setDocumentHidden(true);
+  chrome.setDocumentHidden(false);
+  chrome.eventSource().listeners.get("reload-count")({ data: JSON.stringify({ count: 2 }) });
+  assert.equal(chrome.element("layoutGateOverlay").hidden, true, "nothing changed, so nothing reloads");
+
+  chrome.setDocumentHidden(true);
+  chrome.setDocumentHidden(false);
+  chrome.eventSource().listeners.get("reload-count")({ data: JSON.stringify({ count: 3 }) });
+  assert.equal(chrome.element("layoutGateOverlay").hidden, false, "the missed rewrite reloads the page");
 });
 
 test("a stale prior-document diagnostic cannot reveal the new gate or clear its probe", async () => {
