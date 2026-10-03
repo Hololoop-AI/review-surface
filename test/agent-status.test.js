@@ -143,3 +143,51 @@ test("a push-delivery session never tells the driver the agent is not listening"
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+async function firstEvent(base, key, name) {
+  const controller = new AbortController();
+  const response = await fetch(`${base}/events/${key}`, { signal: controller.signal });
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const pattern = new RegExp(`event: ${name}\\ndata: (.*)\\n`);
+  let text = "";
+  try {
+    while (!pattern.test(text)) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value);
+    }
+  } finally {
+    controller.abort();
+  }
+  return JSON.parse(text.match(pattern)[1]);
+}
+
+test("a reconnecting stream and a freshly served page both report how often the page was rewritten", async () => {
+  const { dir, server, base, key, artifact } = await servedSession();
+  try {
+    const before = await firstEvent(base, key, "reload-count");
+    assert.equal(before.count, 0);
+    assert.equal(before.version, "9.9.9-test");
+    assert.equal(typeof before.boot, "string");
+
+    // The page is rewritten while no stream is open, as when its tab is hidden.
+    await fetch(`${base}/session/${key}`);
+    await writeFile(artifact, "<!doctype html><html><body><h1>Rewritten</h1></body></html>");
+    let after = before;
+    for (let i = 0; i < 60 && after.count === 0; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      after = await firstEvent(base, key, "reload-count");
+    }
+    assert.deepEqual(after, { ...before, count: 1 }, "same server, one rewrite");
+
+    const page = await fetch(`${base}/session/${key}`).then((r) => r.text());
+    const served = JSON.parse(
+      page.match(/<script id="review-surface-session" type="application\/json">([\s\S]*?)<\/script>/)[1],
+    );
+    assert.deepEqual(served.initialReloadState, after, "a tab opened in the background starts from the served count");
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

@@ -16,7 +16,7 @@ const servedChromeIds = new Set(
   ),
 );
 
-/** @typedef {{ key: string, file: string, layoutGateEnabled?: boolean, layoutGateMaxHoldMs?: number, modeToggleHotkeyKey?: string, initialLayoutWarnings?: any[], chromeLoadToken?: string, initialArtifactRevision?: number, initialArtifactLoadToken?: string, initialArtifactLoadSequence?: number, attachmentMaxBytes?: number, attachmentMaxCount?: number, attachmentAcceptedMime?: string[], initialEnded?: boolean, initialEndedBy?: string | null, delivery?: string }} HarnessSessionData */
+/** @typedef {{ key: string, file: string, layoutGateEnabled?: boolean, layoutGateMaxHoldMs?: number, modeToggleHotkeyKey?: string, initialLayoutWarnings?: any[], chromeLoadToken?: string, initialArtifactRevision?: number, initialArtifactLoadToken?: string, initialArtifactLoadSequence?: number, attachmentMaxBytes?: number, attachmentMaxCount?: number, attachmentAcceptedMime?: string[], initialEnded?: boolean, initialEndedBy?: string | null, delivery?: string, initialReloadState?: { boot: string, version: string, count: number }, initialChat?: { role: string, text: string }[] }} HarnessSessionData */
 /** @type {HarnessSessionData} */
 const defaultSessionData = {
   key: "abc",
@@ -55,6 +55,7 @@ async function createChromeHarness({
   const eventSources = [];
   const windowListeners = new Map();
   const documentListeners = new Map();
+  let documentHidden = false;
   const elements = new Map();
   const timers = new Map();
   const srcLoads = [];
@@ -303,15 +304,26 @@ async function createChromeHarness({
       constructor(url) {
         this.url = url;
         this.listeners = new Map();
+        this.closed = false;
+        this.readyState = 0;
         eventSources.push(this);
       }
 
       addEventListener(type, handler) {
         this.listeners.set(type, handler);
       }
+
+      close() {
+        this.closed = true;
+      }
+
+      static OPEN = 1;
     },
     document: {
       body: element("body"),
+      get hidden() {
+        return documentHidden;
+      },
       get activeElement() {
         return activeElement;
       },
@@ -413,8 +425,14 @@ async function createChromeHarness({
       return { source, posted };
     },
     eventSource() {
-      assert.equal(eventSources.length, 1);
-      return eventSources[0];
+      const open = eventSources.filter((source) => !source.closed);
+      assert.equal(open.length, 1, "exactly one live stream is open");
+      return open[0];
+    },
+    eventSources: () => eventSources,
+    setDocumentHidden(hidden) {
+      documentHidden = hidden;
+      for (const { handler } of documentListeners.get("visibilitychange") || []) handler({});
     },
     sendFrameMessage(data) {
       const handlers = windowListeners.get("message") || [];
@@ -2282,6 +2300,167 @@ test("layout gate re-arms on reload and still reveals on the next completed pass
   await flushPromises();
 
   assert.equal(chrome.element("layoutGateOverlay").hidden, true);
+});
+
+test("a hidden tab closes its live stream and reopens one when shown", async () => {
+  const chrome = await createChromeHarness({});
+  const first = chrome.eventSource();
+
+  chrome.setDocumentHidden(true);
+  assert.equal(first.closed, true, "a hidden tab holds none of the browser's connections");
+  assert.equal(chrome.eventSources().filter((source) => !source.closed).length, 0);
+
+  chrome.setDocumentHidden(false);
+  const second = chrome.eventSource();
+  assert.notEqual(second, first);
+  assert.equal(second.url, "/events/abc");
+});
+
+test("a rewrite missed while hidden reloads the page on reconnect, and an unchanged count does not", async () => {
+  const chrome = await createChromeHarness({
+    sessionData: { key: "abc", file: "/tmp/artifact.html", layoutGateMaxHoldMs: 25 },
+  });
+  chrome.eventSource().listeners.get("reload-count")({
+    data: JSON.stringify({ boot: "b1", version: "1.0.0", count: 2 }),
+  });
+  chrome.runTimers(25);
+  assert.equal(chrome.element("layoutGateOverlay").hidden, true);
+
+  chrome.setDocumentHidden(true);
+  chrome.setDocumentHidden(false);
+  chrome.eventSource().listeners.get("reload-count")({
+    data: JSON.stringify({ boot: "b1", version: "1.0.0", count: 2 }),
+  });
+  assert.equal(chrome.element("layoutGateOverlay").hidden, true, "nothing changed, so nothing reloads");
+
+  chrome.setDocumentHidden(true);
+  chrome.setDocumentHidden(false);
+  chrome.eventSource().listeners.get("reload-count")({
+    data: JSON.stringify({ boot: "b1", version: "1.0.0", count: 3 }),
+  });
+  assert.equal(chrome.element("layoutGateOverlay").hidden, false, "the missed rewrite reloads the page");
+});
+
+test("a tab opened in the background reloads on first show if the page was rewritten after it was served", async () => {
+  const chrome = await createChromeHarness({
+    sessionData: {
+      key: "abc",
+      file: "/tmp/artifact.html",
+      layoutGateMaxHoldMs: 25,
+      initialReloadState: { boot: "b1", version: "1.0.0", count: 2 },
+    },
+  });
+  chrome.runTimers(25);
+  assert.equal(chrome.element("layoutGateOverlay").hidden, true);
+
+  chrome.eventSource().listeners.get("reload-count")({
+    data: JSON.stringify({ boot: "b1", version: "1.0.0", count: 4 }),
+  });
+  assert.equal(chrome.element("layoutGateOverlay").hidden, false);
+});
+
+test("coming back to a server running another version raises the outdated notice and reloads the page", async () => {
+  const chrome = await createChromeHarness({
+    sessionData: {
+      key: "abc",
+      file: "/tmp/artifact.html",
+      layoutGateMaxHoldMs: 25,
+      initialReloadState: { boot: "b1", version: "1.0.0", count: 0 },
+    },
+  });
+  chrome.runTimers(25);
+  chrome.setDocumentHidden(true);
+  chrome.setDocumentHidden(false);
+  chrome.eventSource().listeners.get("reload-count")({
+    data: JSON.stringify({ boot: "b2", version: "1.1.0", count: 0 }),
+  });
+  assert.equal(chrome.element("outdatedBanner").hidden, false, "the shutdown notice this tab missed while hidden");
+  assert.equal(
+    chrome.element("layoutGateOverlay").hidden,
+    false,
+    "a restarted count cannot be compared, so it reloads",
+  );
+});
+
+test("an unchanged chat is not rebuilt when a shown tab reconnects", async () => {
+  const chrome = await createChromeHarness({
+    sessionData: { key: "abc", file: "/tmp/artifact.html", initialChat: [{ role: "agent", text: "hello" }] },
+  });
+  const bubbles = () => chrome.element("chatLog").children.filter((el) => /bubble/.test(el.className || ""));
+  const first = bubbles()[0];
+  chrome.eventSource().listeners.get("chat-sync")({
+    data: JSON.stringify({ chat: [{ role: "agent", text: "hello" }] }),
+  });
+  assert.equal(bubbles()[0], first, "the same bubble, not a rebuilt one");
+  chrome.eventSource().listeners.get("chat-sync")({
+    data: JSON.stringify({
+      chat: [
+        { role: "agent", text: "hello" },
+        { role: "agent", text: "again" },
+      ],
+    }),
+  });
+  assert.match(String(bubbles().at(-1).innerHTML), /again/, "a changed chat is rebuilt with the new message");
+});
+
+test("a chat that only grew by live replies is not rebuilt when a shown tab reconnects", async () => {
+  const chrome = await createChromeHarness({
+    sessionData: { key: "abc", file: "/tmp/artifact.html", initialChat: [{ role: "agent", text: "hello" }] },
+  });
+  const bubbles = () => chrome.element("chatLog").children.filter((el) => /bubble/.test(el.className || ""));
+  chrome.eventSource().listeners.get("agent-reply")({ data: JSON.stringify({ text: "again" }) });
+  const shown = bubbles();
+
+  chrome.setDocumentHidden(true);
+  chrome.setDocumentHidden(false);
+  chrome.eventSource().listeners.get("chat-sync")({
+    data: JSON.stringify({
+      chat: [
+        { role: "agent", text: "hello", at: "t1" },
+        { role: "agent", text: "again", at: "t2" },
+      ],
+    }),
+  });
+  assert.deepEqual(bubbles(), shown, "the screen already matches the server, so nothing is rebuilt");
+});
+
+test("a message still being sent survives a reconnect whose chat has not recorded it yet", async () => {
+  const chrome = await createChromeHarness({
+    sessionData: { key: "abc", file: "/tmp/artifact.html", initialChat: [{ role: "agent", text: "hello" }] },
+  });
+  const bubbles = () => chrome.element("chatLog").children.filter((el) => /bubble/.test(el.className || ""));
+  chrome.element("chatInput").value = "on its way";
+  chrome.element("send").click();
+  assert.match(String(bubbles().at(-1).innerHTML), /on its way/);
+
+  chrome.eventSource().listeners.get("chat-sync")({
+    data: JSON.stringify({ chat: [{ role: "agent", text: "hello" }] }),
+  });
+  assert.match(String(bubbles().at(-1).innerHTML), /on its way/, "the pending message stays on screen");
+});
+
+test("a tab shown after the server stopped says the server is no longer running", async () => {
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url) => {
+      if (String(url) === "/health") throw new Error("connection refused");
+      return { ok: true, json: async () => ({}) };
+    },
+  });
+  chrome.setDocumentHidden(true);
+  chrome.setDocumentHidden(false);
+  chrome.eventSource().listeners.get("error")({});
+  await flushPromises();
+  assert.equal(chrome.element("outdatedBanner").hidden, false);
+  assert.match(chrome.element("outdatedText").textContent, /no longer running/);
+});
+
+test("a stream error while the server still answers raises no notice", async () => {
+  const chrome = await createChromeHarness({
+    fetchImpl: async () => ({ ok: true, json: async () => ({}) }),
+  });
+  chrome.eventSource().listeners.get("error")({});
+  await flushPromises();
+  assert.equal(chrome.element("outdatedBanner").hidden, true);
 });
 
 test("a stale prior-document diagnostic cannot reveal the new gate or clear its probe", async () => {

@@ -1190,6 +1190,7 @@ function sendQueued(endAfter) {
       queued.push(prompt);
       persistQueuedPrompts();
       addChat("user", text || "Image message");
+      if (text) renderedChat.push({ role: "user", text });
       chatInput.value = "";
       chatAttachmentController.reset();
       render();
@@ -3211,27 +3212,124 @@ frame.addEventListener("load", () => {
 
 initializeLayoutGate();
 
-const events = new EventSource("/events/" + key);
-events.addEventListener("reload", () => {
+// The live stream is how the server tells this page what it did not ask for: the agent replied,
+// the page was rewritten, the review ended. Sending never uses it; that is plain requests. Each
+// open stream holds one of the browser's six connections to this host for as long as it is open,
+// so six open tabs used to stall every request from every tab. Only a tab someone can see needs
+// it: a hidden tab closes its stream, and on reopening the server's snapshot (chat, presence,
+// ended, reload count) catches it up on what it missed.
+/** @type {EventSource | null} */
+let liveStream = null;
+let renderedChat = chatEntries(initialChat);
+/** @type {{ boot: string, version: string, count: number } | null} */
+let seenReloadState = readReloadState(sessionData.initialReloadState);
+
+function readReloadState(value) {
+  const count = Number(value?.count);
+  return typeof value?.boot === "string" && Number.isFinite(count)
+    ? { boot: value.boot, version: String(value.version || ""), count }
+    : null;
+}
+
+function reloadStateOf(event) {
+  return readReloadState(JSON.parse(event?.data || "{}"));
+}
+
+function chatEntries(chat) {
+  return (Array.isArray(chat) ? chat : [])
+    .map((item) => ({ role: String(item?.role || ""), text: String(item?.text || "") }))
+    .filter((item) => item.text);
+}
+
+function chatShowsAll(chat) {
+  if (chat.length > renderedChat.length) return false;
+  return renderedChat.every((item, index) =>
+    index < chat.length ? item.role === chat[index].role && item.text === chat[index].text : item.role === "user",
+  );
+}
+
+async function noticeServerGone() {
+  if (chromeRestartReloadPromise || (outdatedBanner && !outdatedBanner.hidden)) return;
+  if ((await probeChromeHealth()) !== "not-running") return;
+  if (chromeRestartReloadPromise || (outdatedBanner && !outdatedBanner.hidden)) return;
+  setChromeOutdated(true, "");
+}
+
+function reloadArtifactFrame() {
   resetFrame().then((reloaded) => {
     if (reloaded) refreshWhiteboardSource();
   });
-});
-events.addEventListener("chrome-reload", (event) => reloadAfterServerRestart(shutdownEventReason(event)));
-// The replacement server serves a different artifact's review. This page keeps working against
-// it; it is only running the previous version of the chrome, which is the user's to act on.
-events.addEventListener("chrome-outdated", (event) => setChromeOutdated(true, shutdownEventReason(event)));
-events.addEventListener("agent-reply", (event) => {
-  const text = JSON.parse(event.data).text;
-  addChat("agent", text);
-  noteAgentReply(text);
-});
-events.addEventListener("chat-sync", (event) => syncChat(JSON.parse(event.data).chat || []));
-events.addEventListener("agent-presence", (event) => setAgentPresence(JSON.parse(event.data).state));
-events.addEventListener("layout-warnings", (event) => setLayoutWarnings(JSON.parse(event.data).warnings || []));
-events.addEventListener("ended", () => markSessionEnded());
-// A reconnecting stream means this chrome may have missed updates while it was away.
-events.addEventListener("open", () => refreshLayoutWarnings());
+}
+
+function openLiveStream() {
+  if (liveStream) return;
+  const stream = new EventSource("/events/" + key);
+  liveStream = stream;
+  stream.addEventListener("reload", (event) => {
+    seenReloadState = reloadStateOf(event) ?? seenReloadState;
+    reloadArtifactFrame();
+  });
+  // Sent on every (re)connect: a count that moved while the stream was closed is a rewrite this
+  // page missed. A different server means the count restarted, so what changed is unknown and
+  // the page reloads once; one running another version also missed the shutdown notice a
+  // connected tab would have had, so it raises that notice itself.
+  stream.addEventListener("reload-count", (event) => {
+    const state = reloadStateOf(event);
+    if (!state) return;
+    const previous = seenReloadState;
+    seenReloadState = state;
+    if (!previous || chromeRestartReloadPromise) return;
+    if (previous.boot !== state.boot) {
+      if (previous.version && state.version && previous.version !== state.version) {
+        setChromeOutdated(true, "upgrade");
+      }
+      reloadArtifactFrame();
+    } else if (previous.count !== state.count) {
+      reloadArtifactFrame();
+    }
+  });
+  stream.addEventListener("chrome-reload", (event) => reloadAfterServerRestart(shutdownEventReason(event)));
+  // The replacement server serves a different artifact's review. This page keeps working against
+  // it; it is only running the previous version of the chrome, which is the user's to act on.
+  stream.addEventListener("chrome-outdated", (event) => setChromeOutdated(true, shutdownEventReason(event)));
+  stream.addEventListener("agent-reply", (event) => {
+    const text = JSON.parse(event.data).text;
+    addChat("agent", text);
+    if (text) renderedChat.push({ role: "agent", text: String(text) });
+    noteAgentReply(text);
+  });
+  // Every reopen resends the whole chat. Rebuilding an unchanged one would scroll the reader to the
+  // end and drop a message still being sent, so only a chat that changed is rebuilt.
+  stream.addEventListener("chat-sync", (event) => {
+    const chat = JSON.parse(event.data).chat || [];
+    const entries = chatEntries(chat);
+    if (chatShowsAll(entries)) return;
+    renderedChat = entries;
+    syncChat(chat);
+  });
+  stream.addEventListener("agent-presence", (event) => setAgentPresence(JSON.parse(event.data).state));
+  stream.addEventListener("layout-warnings", (event) => setLayoutWarnings(JSON.parse(event.data).warnings || []));
+  stream.addEventListener("ended", () => markSessionEnded());
+  // A reconnecting stream means this chrome may have missed updates while it was away.
+  let checkedOutage = false;
+  stream.addEventListener("open", () => {
+    checkedOutage = false;
+    refreshLayoutWarnings();
+  });
+  stream.addEventListener("error", () => {
+    if (checkedOutage || liveStream !== stream || stream.readyState === EventSource.OPEN) return;
+    checkedOutage = true;
+    noticeServerGone();
+  });
+}
+
+function closeLiveStream() {
+  liveStream?.close();
+  liveStream = null;
+}
+
+document.addEventListener("visibilitychange", () => (document.hidden ? closeLiveStream() : openLiveStream()));
+if (!document.hidden) openLiveStream();
 
 applySheetState();
 render();

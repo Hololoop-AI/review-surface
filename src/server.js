@@ -287,6 +287,15 @@ export async function serve({
   const app = express();
   const store = new SessionStore(stateFile);
   const events = new EventEmitter();
+  // How many times each page has been rewritten since this server started. A tab that closed its
+  // live stream while hidden compares this on reconnect to learn it missed a rewrite.
+  const reloadCounts = new Map();
+  events.on("reload", (key) => reloadCounts.set(key, (reloadCounts.get(key) || 0) + 1));
+  // The count restarts with the server, so it travels with this server's identity and version: a
+  // tab that comes back to a different server cannot compare counts, and may be running an older
+  // chrome than the one now serving it.
+  const serverBoot = crypto.randomUUID();
+  const reloadState = (key) => ({ boot: serverBoot, version, count: reloadCounts.get(key) || 0 });
   const eventLog = new EventLog(eventLogPath);
   const linkStore = new LinkStore(linksPath);
   const watchers = new Map();
@@ -1127,6 +1136,7 @@ export async function serve({
           chromeLoadToken: chromeLoad.chrome_load_token,
           attachmentMaxBytes: attachmentConfig.maxBytes,
           attachmentMaxCount: attachmentConfig.maxPerPrompt,
+          reloadState: reloadState(session.key),
         }),
       );
     } catch (error) {
@@ -1329,7 +1339,7 @@ export async function serve({
       refreshIdleTimer();
       const sendReload = (key) => {
         if (key === req.params.key) {
-          res.write("event: reload\ndata: {}\n\n");
+          res.write(`event: reload\ndata: ${JSON.stringify(reloadState(key))}\n\n`);
         }
       };
       const sendAgentReply = (key, text) => {
@@ -1389,6 +1399,7 @@ export async function serve({
         return;
       }
       pushDelivery = session?.delivery === "push";
+      res.write(`event: reload-count\ndata: ${JSON.stringify(reloadState(req.params.key))}\n\n`);
       res.write(`event: chat-sync\ndata: ${JSON.stringify({ chat: session?.chat || [] })}\n\n`);
       res.write(
         `event: agent-presence\ndata: ${JSON.stringify({ state: displayPresence(computePresence(req.params.key, activePolls, deliveredFeedback)) })}\n\n`,
@@ -2474,6 +2485,7 @@ export function createChromeHtml(
     attachmentMaxBytes = 0,
     attachmentMaxCount = 0,
     attachmentAcceptedMime = ACCEPTED_IMAGE_MIME,
+    reloadState = null,
   } = {},
 ) {
   const acceptedMime = attachmentAcceptedMime.map(String);
@@ -2485,6 +2497,9 @@ export function createChromeHtml(
     // to send and gets refused (#171).
     initialEnded: session.status === "ended",
     initialEndedBy: session.ended_by || null,
+    // The rewrite count this page was served at, so a tab opened in the background and shown
+    // later knows whether it missed a rewrite before its first live stream.
+    initialReloadState: reloadState,
     delivery: session.delivery === "push" ? "push" : "poll",
     initialChat: session.chat || [],
     // Bootstrapping the inbox from the server is what makes it survive a browser refresh or a
