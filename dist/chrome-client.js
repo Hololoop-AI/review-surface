@@ -1295,7 +1295,14 @@ function clearLayoutGateTimer() {
   layoutGateTimer = undefined;
 }
 
+// "checking" shows only the Hololoop ring, and only once a load has run past 300 ms; "held" and
+// "failure" show the card with its words and action.
+function setLayoutGateState(state) {
+  if (layoutGateOverlay) layoutGateOverlay.dataset.state = state;
+}
+
 function setLayoutGateCard(state) {
+  setLayoutGateState(state);
   if (!layoutGateTitle || !layoutGateCopy) return;
 
   if (state === "held") {
@@ -1331,6 +1338,7 @@ function setLayoutGateFailure(title, copy, actionLabel = "Reload", onAction, { s
   layoutGateCycle += 1;
   clearLayoutGateTimer();
   layoutGateArmed = false;
+  setLayoutGateState("failure");
   if (layoutGateTitle) layoutGateTitle.textContent = title;
   if (layoutGateCopy) layoutGateCopy.textContent = copy;
   if (layoutGateAction) {

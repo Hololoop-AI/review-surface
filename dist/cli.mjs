@@ -5811,10 +5811,13 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
   function isExcludedLayoutAuditElement(el) {
     return isDiagramLayoutElement(el) || hasVisualMaskAncestor(el) || hasStandardVisuallyHiddenAncestor(el);
   }
+  const layoutAuditElementCap = 2e3;
   function collectLayoutAuditElements() {
-    return [...document.body?.querySelectorAll("*") || []].filter(
+    const elements = [...document.body?.querySelectorAll("*") || []].filter(
       (el) => el instanceof Element && !isReviewSurfaceUi(el)
     );
+    if (elements.length <= layoutAuditElementCap) return elements;
+    return elements.slice(0, layoutAuditElementCap).concat(elements.slice(layoutAuditElementCap).filter((el) => isRequiredControl(el)));
   }
   function pushLayoutFinding(findings, seen, finding) {
     if (finding.severity !== "error") return;
@@ -7876,6 +7879,22 @@ async function canonicalPageRef(ref) {
   }
 }
 
+// src/hololoop-ring.js
+var HOLOLOOP_RING_SVG = `<svg class="hololoop-ring" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Loading">
+<style>
+.hololoop-ring circle{fill:none;stroke:var(--hololoop-ring-color,#f0a02a);stroke-width:2.8}
+.hololoop-ring .hololoop-ring-track{stroke-opacity:.22}
+.hololoop-ring .hololoop-ring-arc{stroke-linecap:round;stroke-dasharray:22 78;transform-origin:16px 16px;animation:hololoop-ring-turn 1.1s linear infinite}
+.hololoop-ring .hololoop-ring-core{stroke-opacity:.55;transform-origin:16px 16px;animation:hololoop-ring-breathe 1.6s ease-in-out infinite}
+@keyframes hololoop-ring-turn{to{transform:rotate(360deg)}}
+@keyframes hololoop-ring-breathe{50%{stroke-opacity:.2;transform:scale(.86)}}
+@media (prefers-reduced-motion:reduce){.hololoop-ring .hololoop-ring-arc{animation:none}.hololoop-ring .hololoop-ring-core{animation-duration:3.2s}}
+</style>
+<circle class="hololoop-ring-track" cx="16" cy="16" r="12.6"/>
+<circle class="hololoop-ring-arc" cx="16" cy="16" r="12.6" pathLength="100"/>
+<circle class="hololoop-ring-core" cx="16" cy="16" r="6"/>
+</svg>`;
+
 // src/html-transform.js
 function injectReviewSurfaceSdk(html, key, artifactRevision, artifactLoadToken = "") {
   const revisionNumber = Number(artifactRevision);
@@ -9385,7 +9404,9 @@ async function serve({
         `[review-surface] closed poll feedback restore failed; the batch was lost: ${restoreError?.message || restoreError}`
       );
     } else if (persistedNothing) {
-      writeLog("[review-surface] closed poll feedback restore was refused; nothing was persisted and the batch was lost");
+      writeLog(
+        "[review-surface] closed poll feedback restore was refused; nothing was persisted and the batch was lost"
+      );
     } else if (!restoredPrompts || JSON.stringify(restoredPrompts) !== JSON.stringify(prompts) || !failuresRestored) {
       writeLog("[review-surface] closed poll feedback restore was incomplete; delivery was not marked");
     }
@@ -10192,6 +10213,9 @@ data: ${JSON.stringify({ state: displayPresence(computePresence(req.params.key, 
   app.get("/favicon.ico", (req, res) => {
     res.type("image/svg+xml").set("Cache-Control", "no-cache").send(HOLOLOOP_FAVICON_SVG);
   });
+  app.get("/hololoop-ring.svg", (req, res) => {
+    res.type("image/svg+xml").set("Cache-Control", "no-cache").send(HOLOLOOP_RING_SVG);
+  });
   app.get("/design/:asset", async (req, res, next) => {
     try {
       const asset = designAssetUrls[req.params.asset];
@@ -10757,7 +10781,9 @@ function hasLiveReloadRootOptIn(html) {
   if (typeof html !== "string") return false;
   const searchableHtml = html.replace(/<!--[\s\S]*?-->/g, "");
   if (/<html\b[^>]*\sdata-review-surface-live-reload-root(?:[\s=>/]|$)[^>]*>/i.test(searchableHtml)) return true;
-  return /<meta\b(?=[^>]*name=["']review-surface-live-reload["'])(?=[^>]*content=["']root["'])[^>]*>/i.test(searchableHtml);
+  return /<meta\b(?=[^>]*name=["']review-surface-live-reload["'])(?=[^>]*content=["']root["'])[^>]*>/i.test(
+    searchableHtml
+  );
 }
 function setPollActive(key, activePolls, deliveredFeedback, events, active) {
   const previousPresence = computePresence(key, activePolls, deliveredFeedback);
@@ -10934,7 +10960,7 @@ a=document.getElementById("layoutGateAction");
 if(h)h.textContent="Review Surface could not finish loading.";
 if(c)c.textContent="The Review Surface editor script did not load. The server usually restarted while this page was opening. Check and reload to reconnect.";
 if(a){a.textContent="Check and reload";a.disabled=false;a.onclick=check;}
-if(o)o.hidden=false;
+if(o){o.dataset.state="failure";o.hidden=false;}
 if(document.body)document.body.classList.add("layout-gate-active");
 }
 function check(){
@@ -11002,7 +11028,7 @@ ${faviconTag}
 <div class="bar"><div class="brand"><span class="brand-mark">Cadre</span></div><div class="spacer" aria-hidden="true"></div><div class="warnings-wrap" id="warningsWrap" hidden><button class="warnings-button" id="warningsButton" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="warningsDrawer">${chromeIcons.warning}<span class="warnings-count" id="warningsCount">0</span></button><div class="menu warnings-drawer" id="warningsDrawer" role="dialog" aria-labelledby="warningsTitle" aria-describedby="warningsSummary" hidden><div class="warnings-head"><h2 class="warnings-title" id="warningsTitle">Layout issues</h2><p class="warnings-summary" id="warningsSummary"></p></div><div class="warnings-toolbar"><label class="warnings-selectall"><input type="checkbox" id="warningsSelectAll"><span>Select all</span></label><span class="warnings-selected" id="warningsSelected" role="status" aria-live="polite"></span></div><div class="warnings-list" id="warningsList"></div><div class="warnings-foot"><p class="warnings-note">Queueing sends a repair request with your next feedback. An issue is marked resolved only after a newer artifact load and a complete check at the same viewport no longer finds it.</p><button class="button" id="warningsQueueButton" type="button" disabled>Queue selected fixes</button></div></div></div><button class="annotate-switch" id="panelCollapse" type="button" aria-pressed="true" title="Show or hide the conversation panel"><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span><span>Chat</span></button><button class="annotate-switch" id="annotation" type="button" aria-pressed="true" title="${escapeHtml(modeToggleHint)}"><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span><span>Annotate</span></button><div class="more-wrap" id="moreWrap"><button class="more-button" id="moreButton" type="button" title="More" aria-haspopup="menu" aria-expanded="false">${chromeIcons.more}</button><div class="menu more-menu" id="moreMenu" hidden><div class="menu-head"><div class="menu-label">Editing</div><button class="menu-file" id="copyPath" type="button" title="Copy path \xB7 ${escapeHtml(session.file)}">${chromeIcons.file}<span class="menu-file-text"><span class="path-head">${escapeHtml(pathHead)}</span><span class="path-tail">${escapeHtml(pathTail)}</span></span><span class="copy-hint" id="copyHint"><span class="icon-copy">${chromeIcons.copy}</span><span class="icon-check">${chromeIcons.check}</span><span id="copyHintText">Copy</span></span></button></div><div class="menu-rule"></div><button class="menu-item" id="reloadArtifact" type="button">${chromeIcons.refresh}<span>Reload artifact</span></button><button class="menu-item" id="copySnapshot" type="button">${chromeIcons.camera}<span>Copy DOM snapshot</span></button><button class="menu-item" id="exportArtifact" type="button">${chromeIcons.download}<span>Export standalone HTML</span></button><button class="menu-item" id="shareArtifact" type="button">${chromeIcons.globe}<span>Publish link</span></button><div class="menu-rule"></div><button class="menu-item danger" id="end" type="button">${chromeIcons.exit}<span>End session</span></button></div></div></div>
 <div class="layout"><div class="frame"><iframe id="artifact" sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads" allow="fullscreen" data-artifact-src="/artifact/${session.key}/index.html"></iframe></div><div class="panel-scrim" id="panelScrim"></div><aside class="panel" id="panel"><div class="panel-head" id="panelHead"><span class="panel-handle" aria-hidden="true"></span><div class="panel-head-row"><h2>Conversation</h2><span class="panel-summary" id="panelSummary" role="status" aria-live="polite"></span><button class="panel-toggle" id="panelToggle" type="button" aria-expanded="false" aria-controls="panel" aria-label="Show conversation">${chromeIcons.chevronUp}</button></div></div><div class="panel-scroll" id="panelScroll"><div class="chat" id="chatLog"></div><div class="annotation-pills" id="annotationPills"></div></div><div class="composer" id="chatComposer"><div class="presence-banner handoff-banner" id="handoffBanner" hidden><span>This review is open in another Review Surface tab.</span><button class="handoff-takeover" id="handoffTakeover" type="button">Take over here</button></div><div class="presence-banner handoff-banner" id="outdatedBanner" hidden><span id="outdatedText">The Review Surface server this page was connected to is no longer running. Reloading will work once it is running again.</span><span class="outdated-actions"><button class="handoff-takeover" id="outdatedReload" type="button">Check and reload</button><button class="handoff-takeover" id="outdatedDismiss" type="button">Dismiss</button></span></div><div class="presence-banner" id="presenceBanner" hidden>Your agent is not listening. If this persists, ask your agent to poll for updates from Review Surface.</div><textarea id="chatInput" placeholder="Write a message for the agent..."></textarea><div class="chat-attachments" id="chatAttachments"></div><div class="chat-attachment-toolbar"><button class="chat-attach" id="chatAttach" type="button">Attach images</button><input id="chatAttachInput" type="file" accept="${escapeHtml(acceptedMime.join(","))}" multiple hidden><span class="chat-attachment-notice" id="chatAttachmentNotice" role="status"></span></div><div class="send-hint" id="sendHint" hidden>Write a message or annotate an element first.</div><div class="actions" id="sendActions"><button class="button button-danger" id="sendAndEnd" type="button">${chromeIcons.exit}<span>Send &amp; End</span></button><button class="button" id="send">Send to Agent</button></div></div></aside></div>
 <div class="share-overlay" id="shareDialog" role="dialog" aria-modal="true" aria-labelledby="shareTitleText" hidden><form class="share-card" id="shareForm"><div class="share-head"><div><div class="share-kicker">Publish to <a class="share-link" href="https://ht-ml.app" target="_blank" rel="noopener noreferrer">ht-ml.app</a></div><h2 id="shareTitleText">Publish artifact</h2></div><button class="share-close" id="shareClose" type="button" aria-label="Close publish dialog"><svg width="14" height="14" viewBox="0 0 10 10" fill="none" aria-hidden="true" focusable="false"><path d="M1 1L9 9M9 1L1 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button></div><p class="share-note">ht-ml.app is a separate, third-party hosting service, not part of Review Surface. Publishing sends this artifact to its servers.</p><p class="share-copy">This uploads this artifact to ht-ml.app with local assets inlined. Without a password, the page is PUBLIC and anyone with the link can open it. With a password, the page is PRIVATE and viewers must supply the password to view.</p><p class="share-note">Do not publish secrets. The Review Surface annotation SDK is not included.</p><div class="share-grid"><label>Password (optional)<input id="sharePassword" name="password" type="password" autocomplete="new-password" placeholder="Leave blank for a public page"></label></div><div class="share-status" id="shareStatus" role="status"></div><div class="share-result" id="shareResult" hidden><label>Share URL<div class="share-copy-row"><input id="shareUrl" readonly><button class="share-copy-btn" id="copyShareUrl" type="button">Copy URL</button></div></label><label>Update key (secret)<div class="share-copy-row"><input id="shareUpdateKey" readonly><button class="share-copy-btn" id="copyUpdateKey" type="button">Copy key</button></div></label><p class="share-note">Keep the update key private. ht-ml.app returns it once and it is the only way to update or delete this page later.</p></div><div class="share-actions"><button class="share-cancel" id="shareCancel" type="button">Cancel</button><button class="button" id="sharePublish" type="submit">Publish</button></div></form></div>
-<div class="ended-overlay layout-gate-overlay" id="layoutGateOverlay"${layoutGateHidden}><div class="ended-card"><div class="ended-title" id="layoutGateTitle">Checking layout.<br>One moment.</div><p class="ended-copy" id="layoutGateCopy">Review Surface is waiting for fonts and final geometry before revealing this artifact.</p><button class="button ended-action" id="layoutGateAction" type="button">Show anyway</button></div></div>
+<div class="ended-overlay layout-gate-overlay" id="layoutGateOverlay"${layoutGateHidden} data-state="checking"><img class="layout-gate-ring" src="/hololoop-ring.svg" alt=""><div class="ended-card"><div class="ended-title" id="layoutGateTitle">Checking layout.<br>One moment.</div><p class="ended-copy" id="layoutGateCopy">Review Surface is waiting for fonts and final geometry before revealing this artifact.</p><button class="button ended-action" id="layoutGateAction" type="button">Show anyway</button></div></div>
 <div class="ended-overlay" id="endedOverlay" hidden><div class="ended-card"><div class="ended-title">Session ended.<br>Return to your agent to continue.</div><p class="ended-copy">${escapeHtml(session.file)}</p></div></div>
 <div class="whiteboard-overlay" id="whiteboardOverlay" hidden><div class="whiteboard-shell"><div class="whiteboard-error" id="whiteboardError" hidden></div><button class="whiteboard-close" id="whiteboardClose" type="button" aria-label="Close whiteboard"><svg width="14" height="14" viewBox="0 0 10 10" fill="none" aria-hidden="true" focusable="false"><path d="M1 1L9 9M9 1L1 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button><iframe id="whiteboardFrame" title="Excalidraw whiteboard" sandbox="allow-scripts allow-popups"></iframe></div></div>
 <script id="review-surface-session" type="application/json">${sessionJson}</script>
