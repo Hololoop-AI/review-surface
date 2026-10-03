@@ -43,7 +43,6 @@ test("telemetry can be disabled by environment", () => {
   assert.equal(config.enabled, false);
 });
 
-
 test("telemetry disables when no website id is configured", () => {
   const config = resolveTelemetryConfig({
     env: {},
@@ -120,6 +119,8 @@ test("telemetry close waits only up to the requested timeout", async () => {
 });
 
 test("telemetry is hard-disabled regardless of env", () => {
-  const cfg = resolveTelemetryConfig({ env: { REVIEW_SURFACE_TELEMETRY: "1", REVIEW_SURFACE_TELEMETRY_HOST: "https://x.example" } });
+  const cfg = resolveTelemetryConfig({
+    env: { REVIEW_SURFACE_TELEMETRY: "1", REVIEW_SURFACE_TELEMETRY_HOST: "https://x.example" },
+  });
   assert.equal(cfg.enabled, false);
 });

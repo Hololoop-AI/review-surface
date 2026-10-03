@@ -248,7 +248,10 @@ test("resolveAttachmentConfig reads REVIEW_SURFACE_* limits with sane fallbacks"
   // Non-positive / unparseable values fall back rather than throwing.
   assert.equal(resolveAttachmentConfig({ REVIEW_SURFACE_MAX_ATTACHMENT_BYTES: "-1" }).maxBytes, 10 * 1024 * 1024);
   assert.equal(resolveAttachmentConfig({ REVIEW_SURFACE_ATTACHMENT_TTL_MS: "0" }).ttlMs, null);
-  assert.equal(resolveAttachmentConfig({ REVIEW_SURFACE_MAX_ATTACHMENT_DISK_MB: "-5" }).maxDiskBytes, 512 * 1024 * 1024);
+  assert.equal(
+    resolveAttachmentConfig({ REVIEW_SURFACE_MAX_ATTACHMENT_DISK_MB: "-5" }).maxDiskBytes,
+    512 * 1024 * 1024,
+  );
 });
 
 test("a fractional limit that floors below 1 falls back instead of disabling the cap (W5)", () => {

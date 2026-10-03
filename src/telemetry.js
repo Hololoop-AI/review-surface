@@ -6,6 +6,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 1_000;
 
 export function resolveTelemetryConfig(input) {
   return { enabled: false, host: "", websiteID: "" }; // PATCHED: telemetry hard-disabled (local-only tool)
+  // eslint-disable-next-line no-unreachable -- retired path kept for a future re-enable
   const optOut = String(input.env.REVIEW_SURFACE_TELEMETRY || "")
     .trim()
     .toLowerCase();

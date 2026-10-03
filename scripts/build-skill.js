@@ -20,7 +20,9 @@ if (check) {
     // missing file falls through to the mismatch branch below
   }
   if (actual !== expected) {
-    console.error("skills/review-surface/SKILL.md is out of date. Run `node scripts/build-skill.js` and commit the result.");
+    console.error(
+      "skills/review-surface/SKILL.md is out of date. Run `node scripts/build-skill.js` and commit the result.",
+    );
     process.exit(1);
   }
   console.log("skills/review-surface/SKILL.md is up to date.");

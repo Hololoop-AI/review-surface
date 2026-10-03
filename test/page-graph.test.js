@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -187,7 +187,9 @@ test("search covers pages, feedback, replies, and events, ignoring the tree", ()
 });
 
 async function served() {
-  const dir = await tempDir();
+  // Canonical, like the CLI's canonicalPageRef: on Windows tmpdir() can be an 8.3 short path
+  // the server's realpath expands, so a raw temp path would not match the stored session file.
+  const dir = await realpath(await tempDir());
   const server = await serve({ port: 0, stateFile: path.join(dir, "state.json"), version: "9.9.9-test" });
   const base = `http://127.0.0.1:${server.port}`;
   const post = (route, body, headers = {}) =>

@@ -84,15 +84,18 @@ export class SessionStore {
     });
   }
 
-  async upsertSession(file, url) {
+  // `options.delivery` is how this session's feedback leaves: "poll" (an agent holds a long poll,
+  // the default) or "push" (the host collects sends from the outbox on its own clock, so nobody
+  // ever holds a poll and "not listening" would be false). Omitted keeps whatever was stored.
+  async upsertSession(file, url, options = {}) {
     // `canonicalFile` (a realpath) does not touch state, so resolve it before
     // taking the lock and keep only the read-modify-write inside the critical
     // section.
     const absolute = await canonicalFile(file);
-    return this.lock.runExclusive(() => this.#upsertSessionLocked(absolute, url));
+    return this.lock.runExclusive(() => this.#upsertSessionLocked(absolute, url, options));
   }
 
-  async #upsertSessionLocked(absolute, url) {
+  async #upsertSessionLocked(absolute, url, options = {}) {
     const key = sessionKey(absolute);
     const state = await this.readState();
     const existing = state.sessions[key] || {};
@@ -118,6 +121,7 @@ export class SessionStore {
       delivered_attachments: Array.isArray(existing.delivered_attachments) ? existing.delivered_attachments : [],
       dom_snapshot: existing.dom_snapshot || "",
       chat: existing.chat || [],
+      delivery: normalizeDelivery(options.delivery) || normalizeDelivery(existing.delivery) || "poll",
       updated_at: new Date().toISOString(),
     };
     state.sessions[key] = session;
@@ -738,6 +742,10 @@ export class SessionStore {
 export async function canonicalFile(file) {
   const absolute = path.resolve(file);
   return realpath(absolute);
+}
+
+export function normalizeDelivery(value) {
+  return value === "push" || value === "poll" ? value : "";
 }
 
 export function sessionKey(file) {

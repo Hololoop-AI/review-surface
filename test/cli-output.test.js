@@ -191,7 +191,7 @@ test("design output is the sole emitted concise explicit-background guidance", (
   const output = createDesignOutput();
   const instruction = "Paint an explicit page background and readable text.";
   assert.match(output.design.summary, new RegExp(instruction.replaceAll(".", "\\.")));
-  assert.equal(output.self_paint_rule, undefined);
+  assert.equal(Object.hasOwn(output, "self_paint_rule"), false);
 
   const otherAgentSurfaces = [
     JSON.stringify(createHomeOutput({ bin: "review-surface", sessions: [] })),
@@ -1015,8 +1015,6 @@ test("password-protected share output with unresolved assets still mentions the 
   assert.match(output.next_step, /ht-ml\.app \(https:\/\/ht-ml\.app\), a third-party host not part of Review Surface/);
   assert.doesNotMatch(output.next_step, /anyone with the link can view/);
 });
-
-
 
 test("poll help requires an observable wake path", () => {
   const help = getCommandHelp("poll");
@@ -2072,7 +2070,10 @@ test("local built CLI opens force a server restart while source and installed ru
 
   assert.equal(shouldForceRestartForLocalBuild(`${root}/dist/cli.mjs`, true), true);
   assert.equal(shouldForceRestartForLocalBuild(`${root}/bin/review-surface.js`, true), false);
-  assert.equal(shouldForceRestartForLocalBuild("/usr/local/lib/node_modules/review-surface/dist/cli.mjs", false), false);
+  assert.equal(
+    shouldForceRestartForLocalBuild("/usr/local/lib/node_modules/review-surface/dist/cli.mjs", false),
+    false,
+  );
 });
 
 test("shouldRestartServer reuses a server running the same version", () => {
@@ -2114,7 +2115,10 @@ test("serverReplacementReason names a local-build force apart from a real versio
     "local-build",
   );
   // A version difference is an upgrade even when the local-build force is also set.
-  assert.equal(serverReplacementReason("0.1.4", { ok: true, app: "review-surface", version: "0.1.3" }, true), "upgrade");
+  assert.equal(
+    serverReplacementReason("0.1.4", { ok: true, app: "review-surface", version: "0.1.3" }, true),
+    "upgrade",
+  );
 });
 
 test("serverReplacementReason names nothing when no replacement is warranted", () => {
@@ -2315,34 +2319,6 @@ test("stop command reports when no server is running", async () => {
     await rm(dir, { force: true, recursive: true });
   }
 });
-
-async function startFakeHtmlApp(requests) {
-  const server = createServer((req, res) => {
-    let raw = "";
-    req.setEncoding("utf8");
-    req.on("data", (chunk) => {
-      raw += chunk;
-    });
-    req.on("end", () => {
-      requests.push({ method: req.method, url: req.url, body: raw ? JSON.parse(raw) : null });
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(
-        JSON.stringify({
-          site_id: "abc123",
-          url: "https://abc123.ht-ml.app/",
-          update_key: "uk_secret",
-          status: "active",
-        }),
-      );
-    });
-  });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
-  const address = server.address();
-  return {
-    port: typeof address === "object" && address ? address.port : 0,
-    close: () => new Promise((resolve) => server.close(() => resolve())),
-  };
-}
 
 // A stand-in for a running server of another version: it answers /health, records what the CLI
 // actually puts on the wire at /shutdown, and then frees the port like a real one.

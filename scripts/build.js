@@ -16,7 +16,9 @@ await esbuild.build({
   target: "node22",
   define: {
     "process.env.REVIEW_SURFACE_BUILD_UMAMI_HOST": JSON.stringify(process.env.REVIEW_SURFACE_UMAMI_HOST || ""),
-    "process.env.REVIEW_SURFACE_BUILD_UMAMI_WEBSITE_ID": JSON.stringify(process.env.REVIEW_SURFACE_UMAMI_WEBSITE_ID || ""),
+    "process.env.REVIEW_SURFACE_BUILD_UMAMI_WEBSITE_ID": JSON.stringify(
+      process.env.REVIEW_SURFACE_UMAMI_WEBSITE_ID || "",
+    ),
     "process.env.REVIEW_SURFACE_BUILD_VERSION": JSON.stringify(packageJson.version),
   },
 });

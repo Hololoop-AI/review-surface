@@ -544,7 +544,7 @@ function syncChat(chat) {
 }
 
 function setAgentPresence(state) {
-  agentPresence = state === "listening" || state === "working" ? state : "waiting";
+  agentPresence = state === "listening" || state === "working" || state === "push" ? state : "waiting";
   updateSendState();
   renderSheetSummary();
   if (presenceBanner) presenceBanner.hidden = ended || agentPresence !== "waiting";
@@ -804,6 +804,7 @@ function sheetSummary() {
   if (unreadAgentReply) return { text: unreadAgentReply, accent: false, unread: true };
   if (agentPresence === "working") return { text: "Agent is working…", accent: false, unread: false };
   if (agentPresence === "listening") return { text: "Agent listening", accent: false, unread: false };
+  if (agentPresence === "push") return { text: "Sends are delivered", accent: false, unread: false };
   return { text: "Agent not listening", accent: false, unread: false };
 }
 
@@ -1294,7 +1295,14 @@ function clearLayoutGateTimer() {
   layoutGateTimer = undefined;
 }
 
+// "checking" shows only the Hololoop ring, and only once a load has run past 300 ms; "held" and
+// "failure" show the card with its words and action.
+function setLayoutGateState(state) {
+  if (layoutGateOverlay) layoutGateOverlay.dataset.state = state;
+}
+
 function setLayoutGateCard(state) {
+  setLayoutGateState(state);
   if (!layoutGateTitle || !layoutGateCopy) return;
 
   if (state === "held") {
@@ -1330,6 +1338,7 @@ function setLayoutGateFailure(title, copy, actionLabel = "Reload", onAction, { s
   layoutGateCycle += 1;
   clearLayoutGateTimer();
   layoutGateArmed = false;
+  setLayoutGateState("failure");
   if (layoutGateTitle) layoutGateTitle.textContent = title;
   if (layoutGateCopy) layoutGateCopy.textContent = copy;
   if (layoutGateAction) {
@@ -2770,6 +2779,12 @@ window.addEventListener("message", (event) => {
   const messageSequence = ++artifactMessageSequence;
   artifactSpokeToken = messageToken;
   clearTimeout(artifactSilenceTimer);
+  // The page looks final (loaded, fonts in, diagrams drawn): show it now. The layout check keeps
+  // running behind it and only feeds the warning inbox.
+  if (msg.type === "review-surface:readyToShow") {
+    handleLayoutGatePass();
+    return;
+  }
   if (msg.type === "review-surface:layoutDiagnostics") {
     const diagnosticSequence = ++layoutDiagnosticSequence;
     submitLayoutDiagnostics({
@@ -2788,7 +2803,9 @@ window.addEventListener("message", (event) => {
           if (messageSequence === artifactMessageSequence) armArtifactAvailabilityProbe(messageToken);
           return;
         }
-        if (msg.complete !== false) handleLayoutGatePass();
+        // Any finished pass reveals, complete or not: a page that keeps changing (a clock, a
+        // live list) never completes one, and used to sit behind the curtain until the hold limit.
+        handleLayoutGatePass();
       })
       .catch(() => {});
     return;
@@ -3223,7 +3240,7 @@ setWarningsDrawerOpen(false);
 renderWarnings();
 initialChat.forEach((item) => addChat(item.role, item.text));
 retiredDrafts.forEach((text) => renderRetiredDraft(text));
-setAgentPresence("waiting");
+setAgentPresence(sessionData.delivery === "push" ? "push" : "waiting");
 // The session already ended before this page (re)loaded, so there is no future SSE `ended` event
 // to wait for - start read-only instead of looking live until a Send gets silently refused.
 if (sessionData.initialEnded) markSessionEnded();

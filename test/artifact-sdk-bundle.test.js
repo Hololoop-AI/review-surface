@@ -104,7 +104,7 @@ function cell(tag, text) {
   return element;
 }
 
-function bootSdk() {
+function bootSdk({ querySelectorAll = () => [] } = {}) {
   const posted = [];
   const documentListeners = [];
   // Deferred work the SDK schedules, run only when a test asks for it: the draft-anchor settle
@@ -157,7 +157,7 @@ function bootSdk() {
       createElement,
       getElementById: () => null,
       querySelector: (selector) => documentQuery(selector),
-      querySelectorAll: () => [],
+      querySelectorAll,
       getSelection: () => null,
     },
   };
@@ -200,6 +200,9 @@ function bootSdk() {
     },
     setDocumentQuery(query) {
       documentQuery = query;
+    },
+    pendingTimers() {
+      return timers.filter((timer) => !timer.cancelled);
     },
     runTimers() {
       const pending = timers.splice(0, timers.length);
@@ -474,4 +477,25 @@ test("ordinary, foreign, targeted, and modified link clicks keep their old behav
   sdk.click(pageLink(sdk, "/open?file=%2Fx.html", { target: "_blank" }));
   sdk.click(pageLink(sdk, "/open?file=%2Fx.html"), { ctrlKey: true });
   assert.equal(sdk.posted.slice(before).filter((message) => message.type === "review-surface:openPage").length, 0);
+});
+
+test("the ready-to-show wait stops re-checking diagrams once its cap gives up on one that never draws", async () => {
+  const undrawn = { querySelector: () => null };
+  const sdk = bootSdk({ querySelectorAll: (selector) => (selector === ".mermaid" ? [undrawn] : []) });
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+  const diagramChecks = () => sdk.pendingTimers().filter((timer) => timer.ms === 30).length;
+
+  await flush();
+  assert.equal(diagramChecks(), 1, "an undrawn diagram is re-checked while the page is still settling");
+
+  let capFired = false;
+  for (let round = 0; round < 5 && !capFired; round += 1) {
+    capFired = sdk.pendingTimers().some((timer) => timer.ms === 3000);
+    sdk.runTimers();
+    await flush();
+  }
+  assert.ok(capFired, "the ready-to-show cap ran");
+  sdk.runTimers();
+  await flush();
+  assert.equal(diagramChecks(), 0, "nothing keeps polling for the diagram after the cap");
 });

@@ -6,8 +6,8 @@ This page documents the contract that backend must implement.
 
 ## Configuration
 
-| Env var                       | Purpose                                                                                                |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Env var                           | Purpose                                                                                                |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `REVIEW_SURFACE_HTML_APP_API_URL` | Base URL of your share backend. Defaults to `https://api.ht-ml.app`; trailing slashes are stripped.    |
 | `REVIEW_SURFACE_HTML_APP_TOKEN`   | Optional bearer token, sent as `Authorization: Bearer <token>`. Also settable per call with `--token`. |
 

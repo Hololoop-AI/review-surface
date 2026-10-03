@@ -16,6 +16,7 @@ This project began as a hardened import of [lavish-axi](https://github.com/kunch
   allowlist and DNS-rebinding defense inherited from upstream.
 
 Known-open, tracked:
+
 - The bundled Excalidraw whiteboard retains its stock "publish shape library"
   UI reachable through deliberate steps this app doesn't surface (planned:
   disable via UIOptions).

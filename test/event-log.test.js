@@ -53,7 +53,7 @@ async function readFrames(response, count, timeoutMs = 5_000) {
 }
 
 test("eventLogFile sits beside the state file unless REVIEW_SURFACE_EVENTS names one", () => {
-  assert.equal(eventLogFile("/s/state.json", {}), "/s/events.jsonl");
+  assert.equal(eventLogFile(path.join("/s", "state.json"), {}), path.join("/s", "events.jsonl"));
   assert.equal(eventLogFile("/s/state.json", { REVIEW_SURFACE_EVENTS: "/elsewhere/e.jsonl" }), "/elsewhere/e.jsonl");
 });
 

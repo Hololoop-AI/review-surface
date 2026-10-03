@@ -16,7 +16,7 @@ const servedChromeIds = new Set(
   ),
 );
 
-/** @typedef {{ key: string, file: string, layoutGateEnabled?: boolean, layoutGateMaxHoldMs?: number, modeToggleHotkeyKey?: string, initialLayoutWarnings?: any[], chromeLoadToken?: string, initialArtifactRevision?: number, initialArtifactLoadToken?: string, initialArtifactLoadSequence?: number, attachmentMaxBytes?: number, attachmentMaxCount?: number, attachmentAcceptedMime?: string[], initialEnded?: boolean, initialEndedBy?: string | null }} HarnessSessionData */
+/** @typedef {{ key: string, file: string, layoutGateEnabled?: boolean, layoutGateMaxHoldMs?: number, modeToggleHotkeyKey?: string, initialLayoutWarnings?: any[], chromeLoadToken?: string, initialArtifactRevision?: number, initialArtifactLoadToken?: string, initialArtifactLoadSequence?: number, attachmentMaxBytes?: number, attachmentMaxCount?: number, attachmentAcceptedMime?: string[], initialEnded?: boolean, initialEndedBy?: string | null, delivery?: string }} HarnessSessionData */
 /** @type {HarnessSessionData} */
 const defaultSessionData = {
   key: "abc",
@@ -1693,7 +1693,21 @@ test("a failed diagnostic pass reports its incompleteness rather than an empty r
 
   assert.equal(posts[0].body.complete, false);
   assert.equal(chrome.element("warningsWrap").hidden, false);
+  // A page that keeps changing never completes a pass; it is shown anyway rather than held to
+  // the curtain's time limit.
+  assert.equal(chrome.element("layoutGateOverlay").hidden, true);
+});
+
+test("the page is shown when it is ready, before any layout check has finished", async () => {
+  const { posts, fetchImpl } = diagnosticsHarness([[]]);
+  const chrome = await createChromeHarness({ fetchImpl });
   assert.equal(chrome.element("layoutGateOverlay").hidden, false);
+
+  chrome.sendFrameMessage({ type: "review-surface:readyToShow" });
+  await flushPromises();
+
+  assert.equal(chrome.element("layoutGateOverlay").hidden, true);
+  assert.equal(posts.length, 0, "showing the page sends no diagnostics");
 });
 
 test("warning-only observations are discarded before they reach the server", async () => {
@@ -2430,6 +2444,7 @@ test("a first begin-load that never recovers surfaces a reloadable failure inste
   assert.equal(chrome.element("layoutGateOverlay").hidden, false);
   assert.equal(chrome.element("layoutGateTitle").textContent, "Review Surface could not load this artifact.");
   assert.equal(chrome.element("layoutGateAction").textContent, "Check and reload");
+  assert.equal(chrome.element("layoutGateOverlay").dataset.state, "failure", "a failure shows the card, not the ring");
 
   // This card is raised in the state where the server may be gone, so it must not navigate into
   // a port nothing is listening on any more than the other two cards do.
@@ -2476,6 +2491,7 @@ test("a load that asks for the artifact again gets the whole recovery backoff ag
   assert.equal(chrome.artifactBeginRequests.length, 19);
   assert.match(chrome.frame.src, /artifact_load_token=/);
   assert.match(String(chrome.element("layoutGateTitle").innerHTML), /Checking layout/);
+  assert.equal(chrome.element("layoutGateOverlay").dataset.state, "checking", "a recovered load is back to the ring");
 });
 
 test("a superseded reviewer is not retried in the background", async () => {
@@ -3952,6 +3968,14 @@ test("chrome goes read-only when the server forwards an ended SSE event (#171)",
 
 // #171: a page loaded (or reloaded) after the session already ended has no future `ended` SSE
 // event to wait for - it must start read-only, not wait for a Send to be silently refused.
+test("a push-delivery chrome never shows the not-listening banner, even before its first presence event", async () => {
+  const push = await createChromeHarness({ sessionData: { ...defaultSessionData, delivery: "push" } });
+  assert.equal(push.element("presenceBanner").hidden, true);
+
+  const poll = await createChromeHarness();
+  assert.equal(poll.element("presenceBanner").hidden, false);
+});
+
 test("chrome boots read-only when the session already ended before this page load (#171)", async () => {
   const chrome = await createChromeHarness({
     sessionData: { ...defaultSessionData, initialEnded: true, initialEndedBy: "user" },

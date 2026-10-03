@@ -156,16 +156,6 @@ body.review-surface {
   line-height: 1;
   color: var(--fg);
 }
-.brand-support {
-  font-family: var(--font-sans);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--fg-muted);
-  position: relative;
-  top: 1px;
-}
 .spacer {
   flex: 1;
 }
@@ -1328,6 +1318,49 @@ body.review-surface {
 .ended-action {
   margin-top: var(--space-8);
 }
+/* While a page loads, the gate is only the Hololoop ring, and only if the load runs past 300 ms,
+   so most pages never show anything. The card's words stay for screen readers, and its "Show
+   anyway" appears under the ring once a load has taken 3.5 s. Held and failure states keep the
+   full card. */
+.layout-gate-ring {
+  display: none;
+  width: 44px;
+  height: 44px;
+  margin: 0 auto;
+}
+.layout-gate-overlay[data-state="checking"] {
+  flex-direction: column;
+  background: transparent;
+}
+.layout-gate-overlay[data-state="checking"] .layout-gate-ring {
+  display: block;
+  opacity: 0;
+  animation: layout-gate-appear var(--dur-fast) var(--ease) 300ms forwards;
+}
+.layout-gate-overlay[data-state="checking"] .ended-card {
+  background: transparent;
+  border-color: transparent;
+}
+.layout-gate-overlay[data-state="checking"] .ended-title,
+.layout-gate-overlay[data-state="checking"] .ended-copy {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.layout-gate-overlay[data-state="checking"] .ended-action {
+  visibility: hidden;
+  opacity: 0;
+  animation: layout-gate-appear var(--dur-fast) var(--ease) 3500ms forwards;
+}
+@keyframes layout-gate-appear {
+  to {
+    visibility: visible;
+    opacity: 1;
+  }
+}
 iframe {
   width: 100%;
   height: 100%;
@@ -1345,9 +1378,6 @@ body.layout-gate-active iframe#artifact {
   .bar {
     gap: 10px;
     --bar-pad: var(--space-6);
-  }
-  .brand-support {
-    display: none;
   }
   .warnings-drawer {
     position: fixed;

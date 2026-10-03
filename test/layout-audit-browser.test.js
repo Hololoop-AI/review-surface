@@ -109,7 +109,11 @@ test(
         run("chrome-devtools-axi", ["wait", String(settleMs)], chromeEnv, settleMs + 45_000);
         inbox = readInbox();
       }
-      const poll = run(process.execPath, ["bin/review-surface.js", "poll", file, "--timeout-ms", "600"], reviewSurfaceEnv);
+      const poll = run(
+        process.execPath,
+        ["bin/review-surface.js", "poll", file, "--timeout-ms", "600"],
+        reviewSurfaceEnv,
+      );
 
       assert.equal(inbox.gate, false, `${name}: the artifact is always revealed after a completed pass`);
       assert.equal(Number(inbox.badge), expectedCount, name);
@@ -143,6 +147,10 @@ test(
       await audit("control-broken-clipping", "390x844x1,mobile,touch", 3200, 3);
       await audit("control-broken-reachability", "1440x1000x1", 3200, 3);
       await audit("control-broken-reachability", "390x844x1,mobile,touch", 3200, 3);
+      // A broken control after 1,200 table cells is inside the 2,000-element cap and is found.
+      await audit("control-broken-late", "1440x1000x1", 3200, 1);
+      // Past the cap only controls are checked, so a broken control after 2,500 elements is found.
+      await audit("control-broken-past-cap", "1440x1000x1", 3200, 1);
 
       await audit("calibration-small-overflow", "390x844x1,mobile,touch", 3200, 0);
 
@@ -162,7 +170,11 @@ test(
       assert.equal(Number(detected.badge), 3);
       assert.equal(detected.gate, false);
       assert.match(
-        run(process.execPath, ["bin/review-surface.js", "poll", revalidationFile, "--timeout-ms", "600"], reviewSurfaceEnv),
+        run(
+          process.execPath,
+          ["bin/review-surface.js", "poll", revalidationFile, "--timeout-ms", "600"],
+          reviewSurfaceEnv,
+        ),
         /status:\s*waiting/,
       );
 
