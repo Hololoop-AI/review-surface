@@ -305,6 +305,7 @@ async function createChromeHarness({
         this.url = url;
         this.listeners = new Map();
         this.closed = false;
+        this.readyState = 0;
         eventSources.push(this);
       }
 
@@ -315,6 +316,8 @@ async function createChromeHarness({
       close() {
         this.closed = true;
       }
+
+      static OPEN = 1;
     },
     document: {
       body: element("body"),
@@ -2398,6 +2401,66 @@ test("an unchanged chat is not rebuilt when a shown tab reconnects", async () =>
     }),
   });
   assert.match(String(bubbles().at(-1).innerHTML), /again/, "a changed chat is rebuilt with the new message");
+});
+
+test("a chat that only grew by live replies is not rebuilt when a shown tab reconnects", async () => {
+  const chrome = await createChromeHarness({
+    sessionData: { key: "abc", file: "/tmp/artifact.html", initialChat: [{ role: "agent", text: "hello" }] },
+  });
+  const bubbles = () => chrome.element("chatLog").children.filter((el) => /bubble/.test(el.className || ""));
+  chrome.eventSource().listeners.get("agent-reply")({ data: JSON.stringify({ text: "again" }) });
+  const shown = bubbles();
+
+  chrome.setDocumentHidden(true);
+  chrome.setDocumentHidden(false);
+  chrome.eventSource().listeners.get("chat-sync")({
+    data: JSON.stringify({
+      chat: [
+        { role: "agent", text: "hello", at: "t1" },
+        { role: "agent", text: "again", at: "t2" },
+      ],
+    }),
+  });
+  assert.deepEqual(bubbles(), shown, "the screen already matches the server, so nothing is rebuilt");
+});
+
+test("a message still being sent survives a reconnect whose chat has not recorded it yet", async () => {
+  const chrome = await createChromeHarness({
+    sessionData: { key: "abc", file: "/tmp/artifact.html", initialChat: [{ role: "agent", text: "hello" }] },
+  });
+  const bubbles = () => chrome.element("chatLog").children.filter((el) => /bubble/.test(el.className || ""));
+  chrome.element("chatInput").value = "on its way";
+  chrome.element("send").click();
+  assert.match(String(bubbles().at(-1).innerHTML), /on its way/);
+
+  chrome.eventSource().listeners.get("chat-sync")({
+    data: JSON.stringify({ chat: [{ role: "agent", text: "hello" }] }),
+  });
+  assert.match(String(bubbles().at(-1).innerHTML), /on its way/, "the pending message stays on screen");
+});
+
+test("a tab shown after the server stopped says the server is no longer running", async () => {
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url) => {
+      if (String(url) === "/health") throw new Error("connection refused");
+      return { ok: true, json: async () => ({}) };
+    },
+  });
+  chrome.setDocumentHidden(true);
+  chrome.setDocumentHidden(false);
+  chrome.eventSource().listeners.get("error")({});
+  await flushPromises();
+  assert.equal(chrome.element("outdatedBanner").hidden, false);
+  assert.match(chrome.element("outdatedText").textContent, /no longer running/);
+});
+
+test("a stream error while the server still answers raises no notice", async () => {
+  const chrome = await createChromeHarness({
+    fetchImpl: async () => ({ ok: true, json: async () => ({}) }),
+  });
+  chrome.eventSource().listeners.get("error")({});
+  await flushPromises();
+  assert.equal(chrome.element("outdatedBanner").hidden, true);
 });
 
 test("a stale prior-document diagnostic cannot reveal the new gate or clear its probe", async () => {

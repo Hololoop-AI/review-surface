@@ -1190,6 +1190,7 @@ function sendQueued(endAfter) {
       queued.push(prompt);
       persistQueuedPrompts();
       addChat("user", text || "Image message");
+      if (text) renderedChat.push({ role: "user", text });
       chatInput.value = "";
       chatAttachmentController.reset();
       render();
@@ -3219,7 +3220,7 @@ initializeLayoutGate();
 // ended, reload count) catches it up on what it missed.
 /** @type {EventSource | null} */
 let liveStream = null;
-let lastSyncedChat = JSON.stringify(initialChat);
+let renderedChat = chatEntries(initialChat);
 /** @type {{ boot: string, version: string, count: number } | null} */
 let seenReloadState = readReloadState(sessionData.initialReloadState);
 
@@ -3232,6 +3233,26 @@ function readReloadState(value) {
 
 function reloadStateOf(event) {
   return readReloadState(JSON.parse(event?.data || "{}"));
+}
+
+function chatEntries(chat) {
+  return (Array.isArray(chat) ? chat : [])
+    .map((item) => ({ role: String(item?.role || ""), text: String(item?.text || "") }))
+    .filter((item) => item.text);
+}
+
+function chatShowsAll(chat) {
+  if (chat.length > renderedChat.length) return false;
+  return renderedChat.every((item, index) =>
+    index < chat.length ? item.role === chat[index].role && item.text === chat[index].text : item.role === "user",
+  );
+}
+
+async function noticeServerGone() {
+  if (chromeRestartReloadPromise || (outdatedBanner && !outdatedBanner.hidden)) return;
+  if ((await probeChromeHealth()) !== "not-running") return;
+  if (chromeRestartReloadPromise || (outdatedBanner && !outdatedBanner.hidden)) return;
+  setChromeOutdated(true, "");
 }
 
 function reloadArtifactFrame() {
@@ -3257,7 +3278,7 @@ function openLiveStream() {
     if (!state) return;
     const previous = seenReloadState;
     seenReloadState = state;
-    if (!previous) return;
+    if (!previous || chromeRestartReloadPromise) return;
     if (previous.boot !== state.boot) {
       if (previous.version && state.version && previous.version !== state.version) {
         setChromeOutdated(true, "upgrade");
@@ -3274,22 +3295,32 @@ function openLiveStream() {
   stream.addEventListener("agent-reply", (event) => {
     const text = JSON.parse(event.data).text;
     addChat("agent", text);
+    if (text) renderedChat.push({ role: "agent", text: String(text) });
     noteAgentReply(text);
   });
   // Every reopen resends the whole chat. Rebuilding an unchanged one would scroll the reader to the
   // end and drop a message still being sent, so only a chat that changed is rebuilt.
   stream.addEventListener("chat-sync", (event) => {
     const chat = JSON.parse(event.data).chat || [];
-    const synced = JSON.stringify(chat);
-    if (synced === lastSyncedChat) return;
-    lastSyncedChat = synced;
+    const entries = chatEntries(chat);
+    if (chatShowsAll(entries)) return;
+    renderedChat = entries;
     syncChat(chat);
   });
   stream.addEventListener("agent-presence", (event) => setAgentPresence(JSON.parse(event.data).state));
   stream.addEventListener("layout-warnings", (event) => setLayoutWarnings(JSON.parse(event.data).warnings || []));
   stream.addEventListener("ended", () => markSessionEnded());
   // A reconnecting stream means this chrome may have missed updates while it was away.
-  stream.addEventListener("open", () => refreshLayoutWarnings());
+  let checkedOutage = false;
+  stream.addEventListener("open", () => {
+    checkedOutage = false;
+    refreshLayoutWarnings();
+  });
+  stream.addEventListener("error", () => {
+    if (checkedOutage || liveStream !== stream || stream.readyState === EventSource.OPEN) return;
+    checkedOutage = true;
+    noticeServerGone();
+  });
 }
 
 function closeLiveStream() {
