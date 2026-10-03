@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.1.57](https://github.com/Hololoop-AI/review-surface/compare/review-surface-v0.1.56...review-surface-v0.1.57) (2026-10-03)
+
+
+### Features
+
+* a push-delivery page does not claim its agent is not listening ([6993f10](https://github.com/Hololoop-AI/review-surface/commit/6993f10363dc48c61409110b45032c329252f3cf))
+* **chrome:** a loading page shows the Hololoop ring after 300 ms instead of the checking card ([6d79fe9](https://github.com/Hololoop-AI/review-surface/commit/6d79fe9afbff373bcc74ac12c2ddec8f7ec5ddb1))
+* **chrome:** Cadre wordmark in the bar and the Hololoop ring mark as the favicon ([14a91b3](https://github.com/Hololoop-AI/review-surface/commit/14a91b3948720e2b05aaeab65f6f9bc2d85f53d5))
+* **chrome:** desktop conversation collapse — Chat toggle in the bar hides the panel so the artifact takes full width ([cee8a6c](https://github.com/Hololoop-AI/review-surface/commit/cee8a6c8856841ff1257cb405ccfdb4bc931cdbc))
+* **chrome:** the loading ring breathes like the Hololoop mark ([277d4fe](https://github.com/Hololoop-AI/review-surface/commit/277d4fecfb14bd00a3ecef0949f6ddab97ed43a3))
+* event log, page graph, and always-on server ([647225d](https://github.com/Hololoop-AI/review-surface/commit/647225d3b3d3541d411026789b72cd12cc9a365b))
+* journal every accepted feedback batch; add journal command ([9f42b4d](https://github.com/Hololoop-AI/review-surface/commit/9f42b4d6239f600671498d96830275c055eed53b))
+* **server:** allow one named local origin to frame the review chrome ([25b4cdb](https://github.com/Hololoop-AI/review-surface/commit/25b4cdbf47b5084dbca431fb933c53e65548642e))
+* **server:** Cadre branding, faster page reveal, capped layout check, and loading ring ([7838dbb](https://github.com/Hololoop-AI/review-surface/commit/7838dbb9bf075c0d133361f3afee72063f2bbba0))
+* **server:** GET /open?file=&lt;path&gt; resolves an artifact to its session ([c83a24a](https://github.com/Hololoop-AI/review-surface/commit/c83a24adda99212382115deca9debaa823914fe7))
+* **server:** read-only GET /api/:key/agent-status for external dashboards ([322673f](https://github.com/Hololoop-AI/review-surface/commit/322673f9d48efc4586d44f91d539c398e271d740))
+* the layout check covers the whole page instead of its first 800 elements ([3f2cb20](https://github.com/Hololoop-AI/review-surface/commit/3f2cb204f2f9a2cf6137629a39b617bc1fda17b0))
+
+
+### Bug Fixes
+
+* **chrome:** a reopened tab catches up on what it missed while hidden ([5767690](https://github.com/Hololoop-AI/review-surface/commit/57676901556f2947eb93e3399e00944ddb28a4fd))
+* **chrome:** hidden review tabs release their live connection and catch up when shown ([cc6d895](https://github.com/Hololoop-AI/review-surface/commit/cc6d8953cac53d0f9284ab86d1e18fa61602f53f))
+* the page frame allows fullscreen ([d8a38d6](https://github.com/Hololoop-AI/review-surface/commit/d8a38d680faaed053a57ed58bd1667f336f285b4))
+
+
+### Performance Improvements
+
+* **chrome:** a hidden tab closes its live stream and catches up when shown ([708d93b](https://github.com/Hololoop-AI/review-surface/commit/708d93b7c8e7daf32d44dd797fe8646aaa29cbe4))
+* pages show as soon as they look final, and the layout check and page copy run without repeated layout reads ([bb7ade3](https://github.com/Hololoop-AI/review-surface/commit/bb7ade3848460d85d8ddf90183c9fb332c968b27))
+* the layout check covers the first 2,000 elements and every control after them ([33d4619](https://github.com/Hololoop-AI/review-surface/commit/33d46195ed391f0c486c8a0eabac97c8925a1b12))
+
 ## [0.1.56](https://github.com/kunchenguid/review-surface/compare/review-surface-v0.1.55...review-surface-v0.1.56) (2026-08-22)
 
 
