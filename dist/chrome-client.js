@@ -3211,27 +3211,69 @@ frame.addEventListener("load", () => {
 
 initializeLayoutGate();
 
-const events = new EventSource("/events/" + key);
-events.addEventListener("reload", () => {
+// The live stream is how the server tells this page what it did not ask for: the agent replied,
+// the page was rewritten, the review ended. Sending never uses it; that is plain requests. Each
+// open stream holds one of the browser's six connections to this host for as long as it is open,
+// so six open tabs used to stall every request from every tab. Only a tab someone can see needs
+// it: a hidden tab closes its stream, and on reopening the server's snapshot (chat, presence,
+// ended, reload count) catches it up on what it missed.
+/** @type {EventSource | null} */
+let liveStream = null;
+/** @type {number | null} */
+let seenReloadCount = null;
+
+function reloadCountOf(event) {
+  const count = Number(JSON.parse(event?.data || "{}").count);
+  return Number.isFinite(count) ? count : null;
+}
+
+function reloadArtifactFrame() {
   resetFrame().then((reloaded) => {
     if (reloaded) refreshWhiteboardSource();
   });
-});
-events.addEventListener("chrome-reload", (event) => reloadAfterServerRestart(shutdownEventReason(event)));
-// The replacement server serves a different artifact's review. This page keeps working against
-// it; it is only running the previous version of the chrome, which is the user's to act on.
-events.addEventListener("chrome-outdated", (event) => setChromeOutdated(true, shutdownEventReason(event)));
-events.addEventListener("agent-reply", (event) => {
-  const text = JSON.parse(event.data).text;
-  addChat("agent", text);
-  noteAgentReply(text);
-});
-events.addEventListener("chat-sync", (event) => syncChat(JSON.parse(event.data).chat || []));
-events.addEventListener("agent-presence", (event) => setAgentPresence(JSON.parse(event.data).state));
-events.addEventListener("layout-warnings", (event) => setLayoutWarnings(JSON.parse(event.data).warnings || []));
-events.addEventListener("ended", () => markSessionEnded());
-// A reconnecting stream means this chrome may have missed updates while it was away.
-events.addEventListener("open", () => refreshLayoutWarnings());
+}
+
+function openLiveStream() {
+  if (liveStream) return;
+  const stream = new EventSource("/events/" + key);
+  liveStream = stream;
+  stream.addEventListener("reload", (event) => {
+    seenReloadCount = reloadCountOf(event) ?? seenReloadCount;
+    reloadArtifactFrame();
+  });
+  // Sent on every (re)connect: a count that moved while the stream was closed is a rewrite this
+  // page missed.
+  stream.addEventListener("reload-count", (event) => {
+    const count = reloadCountOf(event);
+    if (count === null) return;
+    const missed = seenReloadCount !== null && count !== seenReloadCount;
+    seenReloadCount = count;
+    if (missed) reloadArtifactFrame();
+  });
+  stream.addEventListener("chrome-reload", (event) => reloadAfterServerRestart(shutdownEventReason(event)));
+  // The replacement server serves a different artifact's review. This page keeps working against
+  // it; it is only running the previous version of the chrome, which is the user's to act on.
+  stream.addEventListener("chrome-outdated", (event) => setChromeOutdated(true, shutdownEventReason(event)));
+  stream.addEventListener("agent-reply", (event) => {
+    const text = JSON.parse(event.data).text;
+    addChat("agent", text);
+    noteAgentReply(text);
+  });
+  stream.addEventListener("chat-sync", (event) => syncChat(JSON.parse(event.data).chat || []));
+  stream.addEventListener("agent-presence", (event) => setAgentPresence(JSON.parse(event.data).state));
+  stream.addEventListener("layout-warnings", (event) => setLayoutWarnings(JSON.parse(event.data).warnings || []));
+  stream.addEventListener("ended", () => markSessionEnded());
+  // A reconnecting stream means this chrome may have missed updates while it was away.
+  stream.addEventListener("open", () => refreshLayoutWarnings());
+}
+
+function closeLiveStream() {
+  liveStream?.close();
+  liveStream = null;
+}
+
+document.addEventListener("visibilitychange", () => (document.hidden ? closeLiveStream() : openLiveStream()));
+if (!document.hidden) openLiveStream();
 
 applySheetState();
 render();
