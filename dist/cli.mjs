@@ -9321,6 +9321,8 @@ async function serve({
   const events = new EventEmitter();
   const reloadCounts = /* @__PURE__ */ new Map();
   events.on("reload", (key) => reloadCounts.set(key, (reloadCounts.get(key) || 0) + 1));
+  const serverBoot = crypto6.randomUUID();
+  const reloadState = (key) => ({ boot: serverBoot, version, count: reloadCounts.get(key) || 0 });
   const eventLog = new EventLog(eventLogPath);
   const linkStore = new LinkStore(linksPath);
   const watchers = /* @__PURE__ */ new Map();
@@ -9944,7 +9946,8 @@ async function serve({
           artifactLoadSequence: chromeLoad.artifact_load_sequence,
           chromeLoadToken: chromeLoad.chrome_load_token,
           attachmentMaxBytes: attachmentConfig.maxBytes,
-          attachmentMaxCount: attachmentConfig.maxPerPrompt
+          attachmentMaxCount: attachmentConfig.maxPerPrompt,
+          reloadState: reloadState(session.key)
         })
       );
     } catch (error) {
@@ -10127,7 +10130,7 @@ data: ${JSON.stringify(event)}
       const sendReload = (key) => {
         if (key === req.params.key) {
           res.write(`event: reload
-data: ${JSON.stringify({ count: reloadCounts.get(key) || 0 })}
+data: ${JSON.stringify(reloadState(key))}
 
 `);
         }
@@ -10192,7 +10195,7 @@ data: ${JSON.stringify({ ended_by: endedBy || null })}
       }
       pushDelivery = session?.delivery === "push";
       res.write(`event: reload-count
-data: ${JSON.stringify({ count: reloadCounts.get(req.params.key) || 0 })}
+data: ${JSON.stringify(reloadState(req.params.key))}
 
 `);
       res.write(`event: chat-sync
@@ -11000,7 +11003,8 @@ function createChromeHtml(session, {
   chromeLoadToken = "",
   attachmentMaxBytes = 0,
   attachmentMaxCount = 0,
-  attachmentAcceptedMime = ACCEPTED_IMAGE_MIME
+  attachmentAcceptedMime = ACCEPTED_IMAGE_MIME,
+  reloadState = null
 } = {}) {
   const acceptedMime = attachmentAcceptedMime.map(String);
   const sessionJson = jsonScript({
@@ -11011,6 +11015,9 @@ function createChromeHtml(session, {
     // to send and gets refused (#171).
     initialEnded: session.status === "ended",
     initialEndedBy: session.ended_by || null,
+    // The rewrite count this page was served at, so a tab opened in the background and shown
+    // later knows whether it missed a rewrite before its first live stream.
+    initialReloadState: reloadState,
     delivery: session.delivery === "push" ? "push" : "poll",
     initialChat: session.chat || [],
     // Bootstrapping the inbox from the server is what makes it survive a browser refresh or a
