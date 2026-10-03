@@ -188,6 +188,7 @@ function parseChromeElements(html) {
     elements.set(id[1], {
       id: id[1],
       hidden: /\shidden(?=[\s>=]|$)/.test(attributes),
+      dataset: { state: attributes.match(/\sdata-state="([^"]*)"/)?.[1] },
       textContent: text ? text[1] : "",
       onclick: null,
     });
@@ -289,6 +290,7 @@ test("the chrome boot failsafe turns the layout gate into a reloadable failure w
   boot.runTimers();
 
   assert.equal(boot.element("layoutGateOverlay").hidden, false);
+  assert.equal(boot.element("layoutGateOverlay").dataset.state, "failure", "the card replaces the ring");
   assert.match(boot.element("layoutGateTitle").textContent, /could not finish loading/);
   assert.match(boot.element("layoutGateCopy").textContent, /did not load/);
   assert.equal(boot.element("layoutGateAction").textContent, "Check and reload");
@@ -691,7 +693,10 @@ test("artifact SDK lets marked feedback controls handle their own clicks", () =>
   assert.match(js, /function isReviewSurfaceAction/);
   assert.match(js, /closest\(["']\[data-review-surface-action\]["']\)/);
   assert.match(js, /isReviewSurfaceAction\(event\.target\)/);
-  assert.match(js, /\[data-review-surface-action\],[^{}]*\[data-review-surface-action\] \*\{cursor:pointer!important\}/);
+  assert.match(
+    js,
+    /\[data-review-surface-action\],[^{}]*\[data-review-surface-action\] \*\{cursor:pointer!important\}/,
+  );
 });
 
 test("artifact SDK lets native form controls handle their own clicks", () => {
@@ -3289,7 +3294,6 @@ test("POST /api/:key/share is retired: artifacts never leave the machine", async
   }
 });
 
-
 test("mutating routes reject a present foreign Origin while allowing same-origin and header-less callers", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "review-surface-serve-"));
   const artifact = path.join(dir, "artifact.html");
@@ -5271,7 +5275,10 @@ test("hasLiveReloadRootOptIn detects the data attribute and meta opt-in", () => 
 
 test("hasLiveReloadRootOptIn ignores commented and text data attribute mentions", () => {
   assert.equal(hasLiveReloadRootOptIn(`<!-- <html data-review-surface-live-reload-root> -->`), false);
-  assert.equal(hasLiveReloadRootOptIn(`<html><body><code>data-review-surface-live-reload-root</code></body></html>`), false);
+  assert.equal(
+    hasLiveReloadRootOptIn(`<html><body><code>data-review-surface-live-reload-root</code></body></html>`),
+    false,
+  );
 });
 
 test("resolveWatchTarget defaults to the artifact file so large sibling trees aren't scanned", async () => {
@@ -5579,6 +5586,24 @@ test("GET /favicon.ico serves the same Hololoop mark for pages that declare no i
     const href = html.match(/<link rel="icon" href="data:image\/svg\+xml;base64,([^"]+)">/);
     assert.ok(href, "default favicon is a base64 SVG data URI");
     assert.equal(await res.text(), Buffer.from(href[1], "base64").toString("utf8"), "one source for both");
+  } finally {
+    await server.close();
+  }
+});
+
+test("a loading page shows the Hololoop ring, also served as a file for other apps", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "review-surface-ring-"));
+  const server = await serve({ port: 0, stateFile: path.join(dir, "state.json"), version: "9.9.9-test" });
+  try {
+    const res = await fetch(`http://127.0.0.1:${server.port}/hololoop-ring.svg`);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type") || "", /^image\/svg\+xml/);
+    assert.match(await res.text(), /^<svg class="hololoop-ring"[\s\S]*<style>[\s\S]*<\/svg>$/);
+    const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
+    assert.match(
+      html,
+      /id="layoutGateOverlay" data-state="checking"><img class="layout-gate-ring" src="\/hololoop-ring\.svg" alt="">/,
+    );
   } finally {
     await server.close();
   }

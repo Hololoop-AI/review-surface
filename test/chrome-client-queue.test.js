@@ -2444,6 +2444,7 @@ test("a first begin-load that never recovers surfaces a reloadable failure inste
   assert.equal(chrome.element("layoutGateOverlay").hidden, false);
   assert.equal(chrome.element("layoutGateTitle").textContent, "Review Surface could not load this artifact.");
   assert.equal(chrome.element("layoutGateAction").textContent, "Check and reload");
+  assert.equal(chrome.element("layoutGateOverlay").dataset.state, "failure", "a failure shows the card, not the ring");
 
   // This card is raised in the state where the server may be gone, so it must not navigate into
   // a port nothing is listening on any more than the other two cards do.
@@ -2490,6 +2491,7 @@ test("a load that asks for the artifact again gets the whole recovery backoff ag
   assert.equal(chrome.artifactBeginRequests.length, 19);
   assert.match(chrome.frame.src, /artifact_load_token=/);
   assert.match(String(chrome.element("layoutGateTitle").innerHTML), /Checking layout/);
+  assert.equal(chrome.element("layoutGateOverlay").dataset.state, "checking", "a recovered load is back to the ring");
 });
 
 test("a superseded reviewer is not retried in the background", async () => {
