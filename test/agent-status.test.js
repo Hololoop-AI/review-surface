@@ -54,9 +54,9 @@ test("agent-status reads presence and pending prompts without consuming anything
     assert.equal(again.pending_prompts, 1);
 
     // delivery consumes the queue and flips presence to working
-    const delivered = await fetch(
-      `${base}/api/poll?file=${encodeURIComponent(artifact)}&timeoutMs=0`,
-    ).then((r) => r.json());
+    const delivered = await fetch(`${base}/api/poll?file=${encodeURIComponent(artifact)}&timeoutMs=0`).then((r) =>
+      r.json(),
+    );
     assert.equal(delivered.status, "feedback");
     const working = await fetch(`${base}/api/${key}/agent-status`).then((r) => r.json());
     assert.equal(working.pending_prompts, 0);
