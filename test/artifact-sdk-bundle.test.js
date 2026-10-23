@@ -516,6 +516,14 @@ test("a declared action draws its button between Cancel and Queue", () => {
   assert.match(html, /review-surface-cancel[^]*data-action-index="0"[^]*>Study<\/button>[^]*review-surface-send/);
 });
 
+test("a malformed declared action draws no button beside the well-formed one", () => {
+  const sdk = bootSdk({ sdkOptions: { annotationActions: [studyAction, { id: "BAD", label: "x" }] } });
+  sdk.click(appendTo(sdk.body, cell("p", "with reg.lock(): reg.save()")));
+  const html = sdk.card().innerHTML;
+  assert.match(html, /data-action-index="0"[^>]*>Study<\/button>/);
+  assert.doesNotMatch(html, /data-action-index="1"/, "the malformed action draws nothing");
+});
+
 test("a 'now' action sends its note alone, prefixed, on the card's target", () => {
   const sdk = bootSdk({ sdkOptions: { annotationActions: [studyAction] } });
   sdk.click(appendTo(sdk.body, cell("p", "with reg.lock(): reg.save()")));

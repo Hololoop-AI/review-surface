@@ -931,8 +931,9 @@ export async function serve({
 
   // The thread list, pushed: a fresh snapshot whenever one of this page's threads moves (a reply, a
   // send, presence, an end, a rewrite) or a new thread is linked to it. Separate from
-  // /events/:key, which a chrome closes while its tab is hidden - this one stays open so a reply
-  // that lands while the reader is in another tab can still raise a desktop notification.
+  // /events/:key, which a chrome closes while its tab is hidden - a chrome keeps this one open
+  // while hidden only while one of its threads is live, so a reply that lands while the reader is
+  // in another tab can still raise a desktop notification.
   app.get("/events/:key/threads", async (req, res, next) => {
     const pageKey = String(req.params.key || "");
     let known = new Set();
@@ -1501,7 +1502,15 @@ export async function serve({
       // Listeners must be registered BEFORE the read below: an end that lands during that await
       // would otherwise fire "ended" while nothing here is listening yet, and this connection
       // would never learn the session ended (#171).
+      // A chrome opens its thread-list stream only once the page has a thread, so the link that
+      // gives it one is announced on the page's own stream.
+      const sendThreadLinked = (records) => {
+        if (records.some((record) => record.type === "thread-of" && record.to === req.params.key)) {
+          res.write(`event: thread-linked\ndata: {}\n\n`);
+        }
+      };
       events.on("reload", sendReload);
+      events.on("links", sendThreadLinked);
       events.on("agent-reply", sendAgentReply);
       events.on("agent-presence", sendPresence);
       events.on("layout-warnings", sendLayoutWarnings);
@@ -1513,6 +1522,7 @@ export async function serve({
         req.off("close", cleanup);
         sseClients.delete(res);
         events.off("reload", sendReload);
+        events.off("links", sendThreadLinked);
         events.off("agent-reply", sendAgentReply);
         events.off("agent-presence", sendPresence);
         events.off("layout-warnings", sendLayoutWarnings);

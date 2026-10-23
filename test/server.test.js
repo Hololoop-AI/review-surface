@@ -5741,14 +5741,3 @@ test("resolveAnnotationActions reads the host's card actions and survives a bad 
   assert.deepEqual(resolveAnnotationActions({ REVIEW_SURFACE_ANNOTATION_ACTIONS: "[{oops" }, log), []);
   assert.match(logged.join("\n"), /not valid JSON/);
 });
-
-test("the served SDK carries only well-formed annotation actions", () => {
-  const js = createSdkJs("abc", 0, "", {
-    annotationActions: [
-      { id: "study", label: "Study", prefix: "study: " },
-      { id: "BAD", label: "x" },
-    ],
-  });
-  assert.match(js, /"annotationActions":\[\{"id":"study","label":"Study"/);
-  assert.doesNotMatch(js, /"BAD"/);
-});

@@ -1214,8 +1214,6 @@ async function sendPromptNow(rawPrompt) {
   if (ended) return;
   const prompt = sanitizeQueuedPrompt(rawPrompt);
   if (!prompt) return;
-  addChat("user", prompt.prompt);
-  renderedChat.push({ role: "user", text: prompt.prompt });
   try {
     const response = await fetch("/api/" + key + "/prompts", {
       method: "POST",
@@ -1236,6 +1234,9 @@ async function sendPromptNow(rawPrompt) {
     showSendHint("That didn't send. Try the button again.", 6000);
     return;
   }
+  addChat("user", prompt.prompt);
+  renderedChat.push({ role: "user", text: prompt.prompt });
+  openThreadsStream();
   if (agentPresence === "listening") setAgentPresence("working");
 }
 
@@ -3349,6 +3350,7 @@ function openLiveStream() {
   stream.addEventListener("agent-presence", (event) => setAgentPresence(JSON.parse(event.data).state));
   stream.addEventListener("layout-warnings", (event) => setLayoutWarnings(JSON.parse(event.data).warnings || []));
   stream.addEventListener("ended", () => markSessionEnded());
+  stream.addEventListener("thread-linked", () => openThreadsStream());
   // A reconnecting stream means this chrome may have missed updates while it was away.
   let checkedOutage = false;
   stream.addEventListener("open", () => {
@@ -3373,8 +3375,9 @@ if (!document.hidden) openLiveStream();
 // Study threads: side conversations about this page, each its own session. The bell lists them
 // and counts the ones with a reply you have not seen; clicking one opens it in the thread window,
 // a central window over this page that keeps running when minimized. The list arrives on its own
-// stream, kept open while the tab is hidden, so a reply that lands while you are elsewhere can
-// raise a desktop notification that opens the thread when clicked.
+// stream, opened only once the page has a thread: every stream is one of the six connections a
+// browser allows per host. While the tab is hidden it stays open only while a thread is live, so a
+// reply that lands while you are elsewhere can raise a desktop notification that opens the thread.
 const threadsWrap = /** @type {HTMLDivElement} */ (document.getElementById("threadsWrap"));
 const threadsButton = /** @type {HTMLButtonElement} */ (document.getElementById("threadsButton"));
 const threadsCount = /** @type {HTMLSpanElement} */ (document.getElementById("threadsCount"));
@@ -3434,6 +3437,12 @@ function threadPresenceLabel(thread) {
   // Its engine is still writing the first answer, and only polls once that is sent.
   if (!thread.agent_replies) return "Starting…";
   return "Asleep · your next message wakes it";
+}
+
+/** @param {any} thread */
+function threadLive(thread) {
+  if (thread.status === "ended") return false;
+  return thread.presence === "working" || thread.presence === "listening" || !thread.agent_replies;
 }
 
 /** @param {boolean} open */
@@ -3557,12 +3566,30 @@ function receiveThreads(next) {
   const active = next.find((thread) => thread.key === activeThread);
   if (active && threadWindowShowing()) markThreadSeen(active);
   renderThreads();
+  if (document.hidden && !next.some(threadLive)) closeThreadsStream();
 }
 
 function openThreadsStream() {
   if (embeddedThread || threadsStream || typeof EventSource === "undefined") return;
   threadsStream = new EventSource("/events/" + key + "/threads");
   threadsStream.addEventListener("threads", (event) => receiveThreads(JSON.parse(event.data).threads || []));
+}
+
+function closeThreadsStream() {
+  threadsStream?.close();
+  threadsStream = null;
+}
+
+async function checkForThreads() {
+  if (embeddedThread || threadsStream) return;
+  try {
+    const response = await fetch("/api/" + key + "/threads");
+    if (!response.ok || threadsStream) return;
+    receiveThreads((await response.json()).threads || []);
+  } catch {
+    return;
+  }
+  if (threads.length > 0 && (!document.hidden || threads.some(threadLive))) openThreadsStream();
 }
 
 threadsButton.onclick = () => {
@@ -3580,12 +3607,17 @@ document.addEventListener("mousedown", (event) => {
 });
 // Coming back to the tab is when the open thread's replies are actually read.
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) return;
+  if (document.hidden) {
+    if (!threads.some(threadLive)) closeThreadsStream();
+    return;
+  }
+  if (threads.length > 0) openThreadsStream();
+  else void checkForThreads();
   const active = threads.find((thread) => thread.key === activeThread);
   if (active && !threadModal.hidden) markThreadSeen(active);
   renderThreads();
 });
-openThreadsStream();
+void checkForThreads();
 
 applySheetState();
 render();

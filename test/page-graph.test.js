@@ -315,6 +315,11 @@ test("a thread belongs to exactly one page and has no threads of its own", async
       store.record(SESSIONS, { type: "thread-of", from: "cccc", to: "eeee" }),
       /cannot have threads of its own/,
     );
+    await assert.rejects(
+      store.record(SESSIONS, { type: "thread-of", from: "aaaa", to: "cccc" }),
+      /cannot have threads of its own/,
+      "a page that already has threads cannot become a thread",
+    );
     const pages = queryPages({ sessions: SESSIONS, records: await store.read(), titles: new Map(), now: Date.now() });
     const byKey = Object.fromEntries(pages.map((p) => [p.key, p.links]));
     assert.deepEqual(byKey.aaaa.threads, ["eeee"]);
@@ -377,6 +382,31 @@ test("a page lists its threads with their unseen-reply facts, live, and only to 
     const crossOrigin = { headers: { origin: "http://evil.test" } };
     assert.equal((await fetch(`${base}/api/${parentKey}/threads`, crossOrigin)).status, 403);
     assert.equal((await fetch(`${base}/events/${parentKey}/threads`, crossOrigin)).status, 403);
+  } finally {
+    controller.abort();
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("linking a thread tells the page's own stream, so its chrome can open the thread list", async () => {
+  const { dir, server, base, post, page } = await served();
+  const controller = new AbortController();
+  try {
+    const parent = await page("review.html");
+    const thread = await page("study.html");
+    const parentKey = (await (await post("/api/sessions", { file: parent })).json()).key;
+    await post("/api/sessions", { file: thread });
+    const stream = await fetch(`${base}/events/${parentKey}`, { signal: controller.signal });
+    const reader = stream.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    await post("/api/links", { type: "thread-of", from: thread, to: parent });
+    while (!/^event: thread-linked$/m.test(buffer)) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error("page stream closed");
+      buffer += decoder.decode(value, { stream: true });
+    }
   } finally {
     controller.abort();
     await server.close();

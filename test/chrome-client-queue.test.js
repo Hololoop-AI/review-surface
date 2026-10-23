@@ -47,6 +47,8 @@ async function createChromeHarness({
   // Opt-in desktop notifications: a fake `Notification` class granted this permission, recording
   // every notification raised in `notifications`.
   notificationPermission = undefined,
+  // What `GET /api/<key>/threads` answers at boot: the page's existing study threads.
+  initialThreads = [],
 } = {}) {
   const source = await readFile(sourceUrl, "utf8");
   // Seed sessionStorage before the client boots, to model a tab whose queue was
@@ -269,6 +271,9 @@ async function createChromeHarness({
         json: async () => ({ chrome_load_token: "harness-chrome-refresh", artifact_revision: artifactRevision }),
       };
     }
+    if (String(url) === `/api/${sessionData.key}/threads`) {
+      return { ok: true, json: async () => ({ threads: initialThreads }) };
+    }
     if (String(url).includes("/artifact-loads/begin")) {
       artifactBeginRequests.push({ url, init });
       if (beginLoadResponses.length > 0) return beginLoadResponses.shift();
@@ -463,6 +468,7 @@ async function createChromeHarness({
       return open[0];
     },
     eventSources: () => sessionStreams(),
+    allEventSources: () => [...eventSources],
     notifications,
     localStore,
     threadsStream() {
@@ -5499,11 +5505,73 @@ test("an annotation action sent now goes alone and leaves the queue as it was", 
   assert.match(chrome.element("chatLog").lastAppendedChild.innerHTML, /study: why the lock/);
 });
 
+test("a send-now that fails leaves no message in the conversation", async () => {
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url) =>
+      String(url).endsWith("/prompts")
+        ? { ok: false, status: 400, json: async () => ({ error: "rejected" }) }
+        : { ok: true, json: async () => ({}) },
+  });
+  await flushPromises();
+  const before = chrome.element("chatLog").children.length;
+
+  chrome.sendFrameMessage({
+    type: "review-surface:sendPrompt",
+    artifact_load_token: chrome.artifactLoadToken(),
+    prompt: { prompt: "study: why the lock", selector: "p", tag: "text", text: "with reg.lock()" },
+  });
+  await flushPromises();
+  await flushPromises();
+
+  assert.equal(chrome.element("chatLog").children.length, before, "nothing looks delivered");
+  assert.doesNotMatch(String(chrome.element("chatLog").lastAppendedChild?.innerHTML || ""), /study: why the lock/);
+});
+
+test("a hidden page with threads holds their stream only while one is live", async () => {
+  const thread = (extra) => ({
+    key: "t1",
+    title: "Study: why the lock",
+    url: "/session/t1",
+    status: "open",
+    state: "new",
+    presence: "waiting",
+    agent_replies: 1,
+    last_agent_reply: { text: "It guards the save." },
+    updated_at: "2026-10-23T06:00:00.000Z",
+    ...extra,
+  });
+  const chrome = await createChromeHarness({ initialThreads: [thread({ presence: "working" })] });
+  await flushPromises();
+  const stream = chrome.threadsStream();
+  const send = (list) => stream.listeners.get("threads")({ data: JSON.stringify({ threads: list }) });
+
+  chrome.setDocumentHidden(true);
+  assert.equal(stream.closed, false, "a thinking thread keeps it open for the notification");
+  send([thread({})]);
+  assert.equal(stream.closed, true, "an asleep thread lets it rest like the page's own stream");
+
+  chrome.setDocumentHidden(false);
+  assert.equal(chrome.threadsStream().closed, false, "showing the tab reopens it");
+  chrome.setDocumentHidden(true);
+  assert.equal(
+    chrome.allEventSources().filter((source) => source.url.endsWith("/threads") && !source.closed).length,
+    0,
+    "hidden with no live thread, it closes on hide",
+  );
+});
+
 // Study threads (2026-10-23). The driver: "some notification icon like most apps have that give
 // the option to click and see what is new. Then you click the notification for the chat and the
 // modal opens" - a thread runs in the background, and the bell tells you when it answered.
 test("the bell counts unseen thread replies, pops up a new thread, and a notification opens it", async () => {
   const chrome = await createChromeHarness({ notificationPermission: "granted" });
+  await flushPromises();
+  assert.equal(
+    chrome.allEventSources().filter((source) => source.url.endsWith("/threads")).length,
+    0,
+    "a page with no threads holds no threads stream",
+  );
+  chrome.eventSource().listeners.get("thread-linked")({ data: "{}" });
   const threads = chrome.threadsStream();
   assert.equal(threads.url, "/events/abc/threads");
   const send = (list) => threads.listeners.get("threads")({ data: JSON.stringify({ threads: list }) });

@@ -152,7 +152,9 @@ export function checkLink(graph, type, from, to) {
     const page = graph.threadOf.get(from);
     if (page === to) return "unchanged";
     if (page) throw new LinkError("That page is already a thread of another page", "REFUSED");
-    if (graph.threadOf.has(to)) throw new LinkError("A thread cannot have threads of its own", "REFUSED");
+    if (graph.threadOf.has(to) || [...graph.threadOf.values()].includes(from)) {
+      throw new LinkError("A thread cannot have threads of its own", "REFUSED");
+    }
     return "new";
   }
   return graph.derived.some(([a, b]) => a === from && b === to) ? "unchanged" : "new";

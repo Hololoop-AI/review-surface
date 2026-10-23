@@ -7753,7 +7753,9 @@ function checkLink(graph, type, from, to) {
     const page = graph.threadOf.get(from);
     if (page === to) return "unchanged";
     if (page) throw new LinkError("That page is already a thread of another page", "REFUSED");
-    if (graph.threadOf.has(to)) throw new LinkError("A thread cannot have threads of its own", "REFUSED");
+    if (graph.threadOf.has(to) || [...graph.threadOf.values()].includes(from)) {
+      throw new LinkError("A thread cannot have threads of its own", "REFUSED");
+    }
     return "new";
   }
   return graph.derived.some(([a, b]) => a === from && b === to) ? "unchanged" : "new";
@@ -10386,7 +10388,16 @@ data: ${JSON.stringify({ ended_by: endedBy || null })}
 `);
         }
       };
+      const sendThreadLinked = (records) => {
+        if (records.some((record) => record.type === "thread-of" && record.to === req.params.key)) {
+          res.write(`event: thread-linked
+data: {}
+
+`);
+        }
+      };
       events.on("reload", sendReload);
+      events.on("links", sendThreadLinked);
       events.on("agent-reply", sendAgentReply);
       events.on("agent-presence", sendPresence);
       events.on("layout-warnings", sendLayoutWarnings);
@@ -10398,6 +10409,7 @@ data: ${JSON.stringify({ ended_by: endedBy || null })}
         req.off("close", cleanup);
         sseClients.delete(res);
         events.off("reload", sendReload);
+        events.off("links", sendThreadLinked);
         events.off("agent-reply", sendAgentReply);
         events.off("agent-presence", sendPresence);
         events.off("layout-warnings", sendLayoutWarnings);
