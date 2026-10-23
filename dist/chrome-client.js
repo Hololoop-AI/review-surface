@@ -19,6 +19,8 @@ const retiredDraftStorageKey = "review-surface:retired-drafts:" + key;
 const retiredDraftNodes = [];
 /** @type {Set<HTMLElement>} */
 const unsentBubbles = new Set();
+/** @type {Map<HTMLElement, { unsent: any }>} */
+const unsentEntries = new Map();
 const internalQueueKeyField = "_reviewSurfaceQueueKey";
 const initialChat = Array.isArray(sessionData.initialChat) ? sessionData.initialChat : [];
 const MODE_TOGGLE_HOTKEY_KEY = String(sessionData.modeToggleHotkeyKey || "").toLowerCase();
@@ -651,7 +653,11 @@ function discardUnrestorableDraft(selector) {
 function loadRetiredDrafts() {
   const stored = loadJsonState(retiredDraftStorageKey, []);
   if (!Array.isArray(stored)) return [];
-  return stored.filter((entry) => typeof entry === "string" && entry.trim());
+  return stored.filter(
+    (entry) =>
+      (typeof entry === "string" && entry.trim()) ||
+      (entry && typeof entry === "object" && typeof entry.unsent?.prompt === "string"),
+  );
 }
 
 // No entry already handed back is ever dropped to make room for a new one. When browser storage
@@ -1219,7 +1225,10 @@ async function sendPromptNow(rawPrompt) {
 }
 
 async function deliverPromptNow(prompt, unsentBubble) {
-  if (ended) return;
+  if (ended) {
+    showSendHint("Session ended. Return to your agent to continue.", 6000);
+    return false;
+  }
   try {
     const response = await fetch("/api/" + key + "/prompts", {
       method: "POST",
@@ -1231,7 +1240,8 @@ async function deliverPromptNow(prompt, unsentBubble) {
         const data = await response.json().catch(() => null);
         if (data?.status === "ended") {
           markSessionEnded();
-          return;
+          showSendHint("Session ended. Return to your agent to continue.", 6000);
+          return false;
         }
       }
       throw new Error("failed to send");
@@ -1239,24 +1249,39 @@ async function deliverPromptNow(prompt, unsentBubble) {
   } catch {
     markPromptUnsent(prompt, unsentBubble);
     showSendHint("That didn't send. It is kept in the conversation with a Resend button.", 6000);
-    return;
+    return false;
   }
   if (unsentBubble) {
     unsentBubble.classList.remove("unsent");
     unsentBubble.querySelector(".unsent-mark")?.remove();
     unsentBubbles.delete(unsentBubble);
+    const entry = unsentEntries.get(unsentBubble);
+    unsentEntries.delete(unsentBubble);
+    if (entry) {
+      retiredDrafts = retiredDrafts.filter((candidate) => candidate !== entry);
+      saveJsonState(retiredDraftStorageKey, retiredDrafts);
+    }
   } else {
     addChat("user", prompt.prompt);
   }
   renderedChat.push({ role: "user", text: prompt.prompt });
   if (agentPresence === "listening") setAgentPresence("working");
+  return true;
 }
 
-function markPromptUnsent(prompt, existing) {
+function markPromptUnsent(prompt, existing, storedEntry = null) {
   const bubble = existing || addChat("user", prompt.prompt);
   if (!bubble) return;
   bubble.classList.add("unsent");
   unsentBubbles.add(bubble);
+  if (!unsentEntries.has(bubble)) {
+    const entry = storedEntry || { unsent: stripInternalPromptFields(prompt) };
+    if (!storedEntry) {
+      retiredDrafts = [...retiredDrafts, entry];
+      saveJsonState(retiredDraftStorageKey, retiredDrafts);
+    }
+    unsentEntries.set(bubble, entry);
+  }
   let mark = bubble.querySelector(".unsent-mark");
   if (!mark) {
     mark = document.createElement("div");
@@ -1275,7 +1300,7 @@ function markPromptUnsent(prompt, existing) {
   if (resend) {
     resend.disabled = false;
     resend.onclick = () => {
-      resend.disabled = true;
+      if (!ended) resend.disabled = true;
       void deliverPromptNow(prompt, bubble);
     };
   }
@@ -3666,7 +3691,14 @@ setChromeOutdated(false);
 setWarningsDrawerOpen(false);
 renderWarnings();
 initialChat.forEach((item) => addChat(item.role, item.text));
-retiredDrafts.forEach((text) => renderRetiredDraft(text));
+retiredDrafts.forEach((entry) => {
+  if (typeof entry === "string") {
+    renderRetiredDraft(entry);
+    return;
+  }
+  const prompt = sanitizeQueuedPrompt(entry.unsent);
+  if (prompt) markPromptUnsent(prompt, null, entry);
+});
 setAgentPresence(sessionData.delivery === "push" ? "push" : "waiting");
 // The session already ended before this page (re)loaded, so there is no future SSE `ended` event
 // to wait for - start read-only instead of looking live until a Send gets silently refused.

@@ -5553,6 +5553,75 @@ test("a send-now that fails stays in the conversation as not sent, and Resend de
   );
 });
 
+test("a failed send-now survives a reload as not sent, and a resend clears it", async () => {
+  const storage = new Map();
+  const failing = async (url) =>
+    String(url).endsWith("/prompts")
+      ? { ok: false, status: 503, json: async () => ({}) }
+      : { ok: true, json: async () => ({}) };
+  const first = await createChromeHarness({ storage, fetchImpl: failing });
+  await flushPromises();
+  first.sendFrameMessage({
+    type: "review-surface:sendPrompt",
+    artifact_load_token: first.artifactLoadToken(),
+    prompt: { prompt: "study: why the lock", selector: "p", tag: "text", text: "with reg.lock()" },
+  });
+  await flushPromises();
+  await flushPromises();
+
+  const posts = [];
+  const reloaded = await createChromeHarness({
+    storage,
+    fetchImpl: async (url, init) => {
+      if (String(url).endsWith("/prompts")) posts.push(JSON.parse(init.body));
+      return { ok: true, json: async () => ({}) };
+    },
+  });
+  await flushPromises();
+  const bubble = reloaded
+    .element("chatLog")
+    .children.find((child) => /study: why the lock/.test(child.innerHTML || ""));
+  assert.ok(bubble, "the reload brings the unsent text back");
+  bubble.querySelector(".unsent-mark").querySelector(".unsent-resend").onclick();
+  await flushPromises();
+  await flushPromises();
+
+  assert.deepEqual(
+    posts.map((body) => body.prompts[0].prompt),
+    ["study: why the lock"],
+  );
+  assert.deepEqual(JSON.parse(storage.get("review-surface:retired-drafts:abc")), [], "a delivered resend is forgotten");
+});
+
+test("Resend after the session ended says so instead of going dead", async () => {
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url) =>
+      String(url).endsWith("/prompts")
+        ? { ok: false, status: 503, json: async () => ({}) }
+        : { ok: true, json: async () => ({}) },
+  });
+  await flushPromises();
+  chrome.sendFrameMessage({
+    type: "review-surface:sendPrompt",
+    artifact_load_token: chrome.artifactLoadToken(),
+    prompt: { prompt: "study: why the lock", selector: "p", tag: "text", text: "with reg.lock()" },
+  });
+  await flushPromises();
+  await flushPromises();
+  const resend = chrome
+    .element("chatLog")
+    .lastAppendedChild.querySelector(".unsent-mark")
+    .querySelector(".unsent-resend");
+
+  chrome.eventSource().listeners.get("ended")({ data: "{}" });
+  resend.onclick();
+  await flushPromises();
+
+  assert.equal(resend.disabled, false);
+  assert.equal(chrome.element("sendHint").hidden, false);
+  assert.match(chrome.element("sendHint").textContent, /Session ended/);
+});
+
 test("a hidden page with threads holds their stream only while one is live", async () => {
   const thread = (extra) => ({
     key: "t1",
