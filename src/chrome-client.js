@@ -17,6 +17,8 @@ const reviewStateStorageKey = "review-surface:review-state:" + key;
 const retiredDraftStorageKey = "review-surface:retired-drafts:" + key;
 /** @type {any[]} */
 const retiredDraftNodes = [];
+/** @type {Set<HTMLElement>} */
+const unsentBubbles = new Set();
 const internalQueueKeyField = "_reviewSurfaceQueueKey";
 const initialChat = Array.isArray(sessionData.initialChat) ? sessionData.initialChat : [];
 const MODE_TOGGLE_HOTKEY_KEY = String(sessionData.modeToggleHotkeyKey || "").toLowerCase();
@@ -528,7 +530,7 @@ function addChat(role, text, shouldScroll = true) {
 }
 
 function syncChat(chat) {
-  for (const el of [...chatLog.querySelectorAll(".bubble.user,.bubble.agent:not(.agent-working)")]) {
+  for (const el of [...chatLog.querySelectorAll(".bubble.user:not(.unsent),.bubble.agent:not(.agent-working)")]) {
     el.remove();
   }
 
@@ -538,6 +540,7 @@ function syncChat(chat) {
   // Handed-back drafts were written at the end of the conversation, and a rebuild re-appends the
   // whole transcript - so without this they end up above it, where the scroll below would leave
   // them off-screen. They are the one thing here the user cannot recover anywhere else.
+  for (const bubble of unsentBubbles) chatLog.appendChild(bubble);
   for (const note of retiredDraftNodes) chatLog.appendChild(note);
   const anchor = retiredDraftNodes[retiredDraftNodes.length - 1] || workingBubble || lastChatBubble;
   if (anchor) scrollElementIntoView(anchor);
@@ -1211,9 +1214,12 @@ function sendQueued(endAfter) {
 // reviewer's other drafted annotations still go when they press Send. No DOM snapshot:
 // that belongs to the full review, and this is one aside.
 async function sendPromptNow(rawPrompt) {
-  if (ended) return;
   const prompt = sanitizeQueuedPrompt(rawPrompt);
-  if (!prompt) return;
+  if (prompt) await deliverPromptNow(prompt, null);
+}
+
+async function deliverPromptNow(prompt, unsentBubble) {
+  if (ended) return;
   try {
     const response = await fetch("/api/" + key + "/prompts", {
       method: "POST",
@@ -1231,13 +1237,48 @@ async function sendPromptNow(rawPrompt) {
       throw new Error("failed to send");
     }
   } catch {
-    showSendHint("That didn't send. Try the button again.", 6000);
+    markPromptUnsent(prompt, unsentBubble);
+    showSendHint("That didn't send. It is kept in the conversation with a Resend button.", 6000);
     return;
   }
-  addChat("user", prompt.prompt);
+  if (unsentBubble) {
+    unsentBubble.classList.remove("unsent");
+    unsentBubble.querySelector(".unsent-mark")?.remove();
+    unsentBubbles.delete(unsentBubble);
+  } else {
+    addChat("user", prompt.prompt);
+  }
   renderedChat.push({ role: "user", text: prompt.prompt });
-  openThreadsStream();
   if (agentPresence === "listening") setAgentPresence("working");
+}
+
+function markPromptUnsent(prompt, existing) {
+  const bubble = existing || addChat("user", prompt.prompt);
+  if (!bubble) return;
+  bubble.classList.add("unsent");
+  unsentBubbles.add(bubble);
+  let mark = bubble.querySelector(".unsent-mark");
+  if (!mark) {
+    mark = document.createElement("div");
+    mark.className = "unsent-mark";
+    const label = document.createElement("span");
+    label.textContent = "Not sent";
+    const resend = document.createElement("button");
+    resend.type = "button";
+    resend.className = "unsent-resend";
+    resend.textContent = "Resend";
+    mark.appendChild(label);
+    mark.appendChild(resend);
+    bubble.appendChild(mark);
+  }
+  const resend = /** @type {HTMLButtonElement | null} */ (mark.querySelector(".unsent-resend"));
+  if (resend) {
+    resend.disabled = false;
+    resend.onclick = () => {
+      resend.disabled = true;
+      void deliverPromptNow(prompt, bubble);
+    };
+  }
 }
 
 async function submitQueued() {
@@ -3566,7 +3607,7 @@ function receiveThreads(next) {
   const active = next.find((thread) => thread.key === activeThread);
   if (active && threadWindowShowing()) markThreadSeen(active);
   renderThreads();
-  if (document.hidden && !next.some(threadLive)) closeThreadsStream();
+  if (next.length === 0 || (document.hidden && !next.some(threadLive))) closeThreadsStream();
 }
 
 function openThreadsStream() {

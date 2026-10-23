@@ -5505,15 +5505,19 @@ test("an annotation action sent now goes alone and leaves the queue as it was", 
   assert.match(chrome.element("chatLog").lastAppendedChild.innerHTML, /study: why the lock/);
 });
 
-test("a send-now that fails leaves no message in the conversation", async () => {
+test("a send-now that fails stays in the conversation as not sent, and Resend delivers it", async () => {
+  let fail = true;
+  const promptBodies = [];
   const chrome = await createChromeHarness({
-    fetchImpl: async (url) =>
-      String(url).endsWith("/prompts")
+    fetchImpl: async (url, init) => {
+      if (!String(url).endsWith("/prompts")) return { ok: true, json: async () => ({}) };
+      promptBodies.push(JSON.parse(init.body));
+      return fail
         ? { ok: false, status: 400, json: async () => ({ error: "rejected" }) }
-        : { ok: true, json: async () => ({}) },
+        : { ok: true, json: async () => ({}) };
+    },
   });
   await flushPromises();
-  const before = chrome.element("chatLog").children.length;
 
   chrome.sendFrameMessage({
     type: "review-surface:sendPrompt",
@@ -5523,8 +5527,30 @@ test("a send-now that fails leaves no message in the conversation", async () => 
   await flushPromises();
   await flushPromises();
 
-  assert.equal(chrome.element("chatLog").children.length, before, "nothing looks delivered");
-  assert.doesNotMatch(String(chrome.element("chatLog").lastAppendedChild?.innerHTML || ""), /study: why the lock/);
+  const bubble = chrome.element("chatLog").lastAppendedChild;
+  assert.match(bubble.innerHTML, /study: why the lock/, "the reviewer's text survives the failure");
+  assert.equal(bubble.classList.contains("unsent"), true);
+  const mark = bubble.querySelector(".unsent-mark");
+  assert.ok(mark, "it is marked not sent");
+  const resend = mark.querySelector(".unsent-resend");
+
+  fail = false;
+  resend.onclick();
+  await flushPromises();
+  await flushPromises();
+
+  assert.equal(promptBodies.length, 2);
+  assert.deepEqual(
+    promptBodies[1].prompts.map((prompt) => prompt.prompt),
+    ["study: why the lock"],
+  );
+  assert.equal(bubble.classList.contains("unsent"), false, "the mark is gone once it sends");
+  assert.equal(bubble.querySelector(".unsent-mark"), null);
+  assert.equal(
+    chrome.element("chatLog").children.filter((child) => /study: why the lock/.test(child.innerHTML || "")).length,
+    1,
+    "the same bubble, not a second copy",
+  );
 });
 
 test("a hidden page with threads holds their stream only while one is live", async () => {
@@ -5590,9 +5616,13 @@ test("the bell counts unseen thread replies, pops up a new thread, and a notific
 
   send([]);
   assert.equal(chrome.element("threadsWrap").hidden, true, "no threads, no bell");
+  assert.equal(threads.closed, true, "an empty list lets the stream go even while visible");
+  chrome.eventSource().listeners.get("thread-linked")({ data: "{}" });
+  const linked = chrome.threadsStream();
+  const sendLinked = (list) => linked.listeners.get("threads")({ data: JSON.stringify({ threads: list }) });
 
   // started from this page while it is open: it pops up in the thread window
-  send([thread({})]);
+  sendLinked([thread({})]);
   assert.equal(chrome.element("threadsWrap").hidden, false);
   assert.equal(chrome.element("threadModal").hidden, false);
   const [threadFrame] = chrome.element("threadFrames").children;
@@ -5604,7 +5634,7 @@ test("the bell counts unseen thread replies, pops up a new thread, and a notific
   chrome.element("threadMinimize").onclick();
   assert.equal(chrome.element("threadModal").hidden, true);
   chrome.setDocumentHidden(true);
-  send([thread({ agent_replies: 1, presence: "listening", last_agent_reply: { text: "It guards the save." } })]);
+  sendLinked([thread({ agent_replies: 1, presence: "listening", last_agent_reply: { text: "It guards the save." } })]);
   assert.equal(chrome.element("threadsCount").hidden, false);
   assert.equal(chrome.element("threadsCount").textContent, "1");
   assert.equal(chrome.notifications.length, 1);

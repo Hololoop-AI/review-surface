@@ -962,6 +962,31 @@ body.review-surface {
   margin-top: 6px;
   color: var(--danger);
 }
+.bubble.user.unsent {
+  border-style: dashed;
+  border-color: var(--danger);
+}
+.bubble .unsent-mark {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  color: var(--danger);
+  font-size: 12px;
+}
+.bubble .unsent-resend {
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  padding: 1px 8px;
+  cursor: pointer;
+}
+.bubble .unsent-resend:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 .bubble.agent-working {
   display: flex;
   align-items: center;
