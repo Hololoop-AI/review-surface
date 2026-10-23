@@ -29,6 +29,7 @@ import {
   resolveArtifactAsset,
   resolveDesignAssetPath,
   parseFrameAncestorOrigin,
+  resolveAnnotationActions,
   resolveIdleTimeoutMs,
   resolveWatchTarget,
   serve,
@@ -5724,4 +5725,30 @@ test("the artifact frame lets a page's video go fullscreen", () => {
   // allow="fullscreen" document.fullscreenEnabled is false inside the artifact.
   const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
   assert.match(html, /<iframe id="artifact"[^>]* allow="fullscreen"/);
+});
+
+test("resolveAnnotationActions reads the host's card actions and survives a bad setting", () => {
+  const logged = [];
+  const log = (line) => logged.push(line);
+  assert.deepEqual(resolveAnnotationActions({}, log), []);
+  assert.deepEqual(
+    resolveAnnotationActions(
+      { REVIEW_SURFACE_ANNOTATION_ACTIONS: '[{"id":"study","label":"Study","prefix":"study: ","deliver":"now"}]' },
+      log,
+    ),
+    [{ id: "study", label: "Study", title: "", prefix: "study: ", deliver: "now", fallback: "" }],
+  );
+  assert.deepEqual(resolveAnnotationActions({ REVIEW_SURFACE_ANNOTATION_ACTIONS: "[{oops" }, log), []);
+  assert.match(logged.join("\n"), /not valid JSON/);
+});
+
+test("the served SDK carries only well-formed annotation actions", () => {
+  const js = createSdkJs("abc", 0, "", {
+    annotationActions: [
+      { id: "study", label: "Study", prefix: "study: " },
+      { id: "BAD", label: "x" },
+    ],
+  });
+  assert.match(js, /"annotationActions":\[\{"id":"study","label":"Study"/);
+  assert.doesNotMatch(js, /"BAD"/);
 });

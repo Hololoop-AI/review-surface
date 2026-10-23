@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  annotationActionPrompt,
+  normalizeAnnotationActions,
   classifyMaterialRectEscape,
   classifySevereTextOverflow,
   deriveReviewSurfaceQueueKey,
@@ -323,4 +325,29 @@ test("isModeToggleHotkeyEvent rejects extra shift or alt modifiers", () => {
 test("isModeToggleHotkeyEvent ignores other keys even with a modifier held", () => {
   assert.equal(isModeToggleHotkeyEvent({ key: "e", metaKey: true }), false);
   assert.equal(isModeToggleHotkeyEvent({ key: "Enter", metaKey: true }), false);
+});
+
+test("normalizeAnnotationActions keeps well-formed actions and drops the rest", () => {
+  const actions = normalizeAnnotationActions([
+    { id: "study", label: "Study", prefix: "study: ", deliver: "now", fallback: " this passage " },
+    { id: "study", label: "Again" },
+    { id: "Bad Id", label: "x" },
+    { id: "nolabel" },
+    { id: "long", label: "a label far too long for a small card button" },
+    "not an object",
+    { id: "flag", label: "Flag", deliver: "later" },
+  ]);
+  assert.deepEqual(actions, [
+    { id: "study", label: "Study", title: "", prefix: "study: ", deliver: "now", fallback: "this passage" },
+    { id: "flag", label: "Flag", title: "", prefix: "", deliver: "queue", fallback: "" },
+  ]);
+  assert.deepEqual(normalizeAnnotationActions("nope"), []);
+  const many = Array.from({ length: 9 }, (_, index) => ({ id: "a" + index, label: "A" + index }));
+  assert.equal(normalizeAnnotationActions(many).length, 4, "a small card holds a few buttons at most");
+});
+
+test("annotationActionPrompt prefixes the note, falls back, or sends nothing", () => {
+  assert.equal(annotationActionPrompt({ prefix: "study: " }, "  why WAL? "), "study: why WAL?");
+  assert.equal(annotationActionPrompt({ prefix: "study: ", fallback: "this passage" }, ""), "study: this passage");
+  assert.equal(annotationActionPrompt({ prefix: "study: " }, "   "), "");
 });

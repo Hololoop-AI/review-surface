@@ -157,7 +157,15 @@ test("the page query filters by parent, depth, state, text, and replaced-or-not"
   assert.deepEqual(keys({ text: "DEEP" }), ["deep"]);
   assert.deepEqual(keys({ depth: 0 }), ["root"]);
   const [r2] = queryPages(input, { text: "round-2" });
-  assert.deepEqual(r2.links, { parent: "proj", children: [], replaced_by: null, replaces: ["r1"], derived_from: [] });
+  assert.deepEqual(r2.links, {
+    parent: "proj",
+    children: [],
+    replaced_by: null,
+    replaces: ["r1"],
+    derived_from: [],
+    thread_of: null,
+    threads: [],
+  });
 
   assert.throws(() => parsePageQuery({ state: "decided" }), /Unknown state decided/);
   assert.throws(() => parsePageQuery({ depth: "-1" }), /whole number/);
@@ -284,6 +292,110 @@ test("the link route maps refusals to 400/404/409 and the read routes are origin
       hits.map((hit) => hit.kind),
       ["page"],
     );
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+// Study threads (2026-10-23): a side conversation about a page is its own session, linked
+// `thread-of` that page. The page's chrome lists its threads behind a bell, counts replies it has
+// not seen, and opens one in a thread window over the page.
+test("a thread belongs to exactly one page and has no threads of its own", async () => {
+  const { dir, store } = await linkStore();
+  try {
+    const first = await store.record(SESSIONS, { type: "thread-of", from: "eeee", to: "aaaa" });
+    assert.equal(first.status, "recorded");
+    assert.equal((await store.record(SESSIONS, { type: "thread-of", from: "eeee", to: "aaaa" })).status, "unchanged");
+    await assert.rejects(
+      store.record(SESSIONS, { type: "thread-of", from: "eeee", to: "bbbb" }),
+      /already a thread of another page/,
+    );
+    await assert.rejects(
+      store.record(SESSIONS, { type: "thread-of", from: "cccc", to: "eeee" }),
+      /cannot have threads of its own/,
+    );
+    const pages = queryPages({ sessions: SESSIONS, records: await store.read(), titles: new Map(), now: Date.now() });
+    const byKey = Object.fromEntries(pages.map((p) => [p.key, p.links]));
+    assert.deepEqual(byKey.aaaa.threads, ["eeee"]);
+    assert.equal(byKey.eeee.thread_of, "aaaa");
+    assert.equal(byKey.eeee.parent, null, "a thread is not filed under the page by itself");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+/** Read server-sent `threads` snapshots off a stream until `until` accepts one. */
+async function nextThreads(reader, until) {
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) throw new Error("threads stream closed");
+    buffer += decoder.decode(value, { stream: true });
+    let end;
+    while ((end = buffer.indexOf("\n\n")) >= 0) {
+      const block = buffer.slice(0, end);
+      buffer = buffer.slice(end + 2);
+      const data = block.split("\n").find((line) => line.startsWith("data: "));
+      if (block.startsWith("event: threads") && data) {
+        const { threads } = JSON.parse(data.slice(6));
+        if (until(threads)) return threads;
+      }
+    }
+  }
+}
+
+test("a page lists its threads with their unseen-reply facts, live, and only to its own origin", async () => {
+  const { dir, server, base, post, page } = await served();
+  const controller = new AbortController();
+  try {
+    const parent = await page("review.html");
+    const thread = await page("study.html");
+    const parentKey = (await (await post("/api/sessions", { file: parent })).json()).key;
+    const threadKey = (await (await post("/api/sessions", { file: thread })).json()).key;
+    assert.deepEqual(await (await fetch(`${base}/api/${parentKey}/threads`)).json(), { threads: [] });
+
+    const stream = await fetch(`${base}/events/${parentKey}/threads`, { signal: controller.signal });
+    const reader = stream.body.getReader();
+    assert.deepEqual(await nextThreads(reader, () => true), [], "a snapshot on connect");
+
+    // a thread linked while the page is open arrives on the stream - the chrome pops it up
+    await post("/api/links", { type: "thread-of", from: thread, to: parent });
+    const [listed] = await nextThreads(reader, (threads) => threads.length === 1);
+    assert.equal(listed.key, threadKey);
+    assert.equal(listed.title, "study.html");
+    assert.equal(listed.url, `/session/${threadKey}`);
+    assert.equal(listed.agent_replies, 0);
+
+    // the thread's agent answers: the count the bell compares against moves, with the reply's start
+    await post(`/api/${threadKey}/agent-reply`, { text: "The lock guards the registry write." });
+    const [answered] = await nextThreads(reader, (threads) => threads[0]?.agent_replies === 1);
+    assert.equal(answered.last_agent_reply.text, "The lock guards the registry write.");
+    assert.equal(answered.state, "needs-you");
+
+    const crossOrigin = { headers: { origin: "http://evil.test" } };
+    assert.equal((await fetch(`${base}/api/${parentKey}/threads`, crossOrigin)).status, 403);
+    assert.equal((await fetch(`${base}/events/${parentKey}/threads`, crossOrigin)).status, 403);
+  } finally {
+    controller.abort();
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("only a thread-window load of a page may be framed, and only by this server", async () => {
+  const { dir, server, base, post, page } = await served();
+  try {
+    const key = (await (await post("/api/sessions", { file: await page("study.html") })).json()).key;
+    const plain = await fetch(`${base}/session/${key}`);
+    assert.equal(plain.headers.get("x-frame-options"), "DENY");
+    assert.equal(plain.headers.get("content-security-policy"), "frame-ancestors 'none'");
+    const embedded = await fetch(`${base}/session/${key}?embed=thread`);
+    assert.equal(embedded.headers.get("x-frame-options"), "SAMEORIGIN");
+    assert.equal(embedded.headers.get("content-security-policy"), "frame-ancestors 'self'");
+    assert.match(await embedded.text(), /class="review-surface[^"]* embedded-thread"/);
+    assert.doesNotMatch(await plain.text(), /embedded-thread"/);
   } finally {
     await server.close();
     await rm(dir, { recursive: true, force: true });

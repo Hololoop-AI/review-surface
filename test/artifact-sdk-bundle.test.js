@@ -104,7 +104,7 @@ function cell(tag, text) {
   return element;
 }
 
-function bootSdk({ querySelectorAll = () => [] } = {}) {
+function bootSdk({ querySelectorAll = () => [], sdkOptions = {} } = {}) {
   const posted = [];
   const documentListeners = [];
   // Deferred work the SDK schedules, run only when a test asks for it: the draft-anchor settle
@@ -177,7 +177,7 @@ function bootSdk({ querySelectorAll = () => [] } = {}) {
   };
   sandbox.globalThis = sandbox;
 
-  vm.runInNewContext(createSdkJs("abc", 3, "load-token"), sandbox);
+  vm.runInNewContext(createSdkJs("abc", 3, "load-token", sdkOptions), sandbox);
 
   return {
     posted,
@@ -498,4 +498,88 @@ test("the ready-to-show wait stops re-checking diagrams once its cap gives up on
   sdk.runTimers();
   await flush();
   assert.equal(diagramChecks(), 0, "nothing keeps polling for the diagram after the cap");
+});
+
+// Annotation actions: a host declares buttons as data, a page adds them as functions, and both
+// run on the card the reviewer opened - its note, its target, its images.
+
+const studyAction = { id: "study", label: "Study", prefix: "study: ", deliver: "now", fallback: "this passage" };
+
+function actionButton(card, index) {
+  return card.querySelector('.review-surface-action[data-action-index="' + index + '"]');
+}
+
+test("a declared action draws its button between Cancel and Queue", () => {
+  const sdk = bootSdk({ sdkOptions: { annotationActions: [studyAction] } });
+  sdk.click(appendTo(sdk.body, cell("p", "with reg.lock(): reg.save()")));
+  const html = sdk.card().innerHTML;
+  assert.match(html, /review-surface-cancel[^]*data-action-index="0"[^]*>Study<\/button>[^]*review-surface-send/);
+});
+
+test("a 'now' action sends its note alone, prefixed, on the card's target", () => {
+  const sdk = bootSdk({ sdkOptions: { annotationActions: [studyAction] } });
+  sdk.click(appendTo(sdk.body, cell("p", "with reg.lock(): reg.save()")));
+  const card = sdk.card();
+  card.querySelector("textarea").value = "why is the lock taken here?";
+  actionButton(card, 0).onclick();
+
+  const message = sdk.posted.at(-1);
+  assert.equal(message.type, "review-surface:sendPrompt", "sent now, not queued");
+  assert.equal(message.prompt.prompt, "study: why is the lock taken here?");
+  assert.equal(message.prompt.text, "with reg.lock(): reg.save()", "it carries what was annotated");
+});
+
+test("an empty note uses the action's fallback, and with none the card stays open", () => {
+  const sdk = bootSdk({
+    sdkOptions: { annotationActions: [studyAction, { id: "flag", label: "Flag", prefix: "flag: " }] },
+  });
+  sdk.click(appendTo(sdk.body, cell("p", "a passage")));
+  actionButton(sdk.card(), 0).onclick();
+  assert.equal(sdk.posted.at(-1).prompt.prompt, "study: this passage");
+
+  sdk.click(appendTo(sdk.body, cell("p", "another passage")));
+  const before = sdk.posted.length;
+  actionButton(sdk.card(), 1).onclick();
+  assert.equal(sdk.posted.length, before, "nothing sent without a note");
+  assert.equal(sdk.card().querySelector(".review-surface-hint").textContent, "Write a note first.");
+});
+
+test("a page adds its own action as a function and it gets the card's context", () => {
+  const sdk = bootSdk();
+  const seen = [];
+  const remove = sdk.api.addAnnotationAction({
+    id: "ask",
+    label: "Ask",
+    run: (context) => {
+      seen.push({ note: context.note, text: context.target.text });
+      context.queue("ask: " + context.note);
+    },
+  });
+  sdk.click(appendTo(sdk.body, cell("p", "the passage")));
+  sdk.card().querySelector("textarea").value = "what does this do?";
+  actionButton(sdk.card(), 0).onclick();
+
+  assert.deepEqual(seen, [{ note: "what does this do?", text: "the passage" }]);
+  const message = sdk.posted.at(-1);
+  assert.equal(message.type, "review-surface:queuePrompt");
+  assert.equal(message.prompt.prompt, "ask: what does this do?");
+
+  remove();
+  sdk.click(appendTo(sdk.body, cell("p", "later")));
+  assert.doesNotMatch(sdk.card().innerHTML, /review-surface-action/, "a removed action draws no button");
+  assert.throws(() => sdk.api.addAnnotationAction({ id: "x", label: "X" }), /run function/);
+});
+
+test("an action that throws keeps the card open and says why", () => {
+  const sdk = bootSdk();
+  sdk.api.addAnnotationAction({
+    id: "broken",
+    label: "Broken",
+    run: () => {
+      throw new Error("no host to ask");
+    },
+  });
+  sdk.click(appendTo(sdk.body, cell("p", "x")));
+  actionButton(sdk.card(), 0).onclick();
+  assert.equal(sdk.card().querySelector(".review-surface-hint").textContent, "no host to ask");
 });
