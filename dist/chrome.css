@@ -962,6 +962,31 @@ body.review-surface {
   margin-top: 6px;
   color: var(--danger);
 }
+.bubble.user.unsent {
+  border-style: dashed;
+  border-color: var(--danger);
+}
+.bubble .unsent-mark {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  color: var(--danger);
+  font-size: 12px;
+}
+.bubble .unsent-resend {
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  padding: 1px 8px;
+  cursor: pointer;
+}
+.bubble .unsent-resend:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 .bubble.agent-working {
   display: flex;
   align-items: center;
@@ -1706,5 +1731,203 @@ body.layout-gate-active iframe#artifact {
   }
   body.panel-collapsed .panel {
     display: none;
+  }
+}
+/* Study threads: the bell lists side conversations about this page; one opens in the thread
+   window, a central window that minimizes back to the bell and keeps running. */
+.threads-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+.threads-wrap[hidden] {
+  display: none;
+}
+.threads-button {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--fg-dim);
+  border-radius: 9px;
+  cursor: pointer;
+  padding: 0;
+}
+.threads-button:hover,
+.threads-button[aria-expanded="true"] {
+  border-color: var(--border-strong);
+  background: var(--steel-700);
+  color: var(--fg);
+}
+.threads-button.has-unread {
+  color: var(--accent);
+  border-color: rgba(244, 201, 93, 0.45);
+}
+.threads-count {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 11px;
+  font-weight: var(--w-bold);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.threads-count[hidden] {
+  display: none;
+}
+.threads-menu {
+  right: 0;
+  top: 42px;
+  width: min(360px, calc(100vw - 24px));
+  max-height: min(70vh, 520px);
+  overflow: auto;
+}
+.threads-menu .menu-label {
+  padding: 7px 10px 0;
+}
+.thread-item {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2px;
+  align-items: start;
+  position: relative;
+  padding-left: 22px;
+}
+.thread-item.unread::before {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 15px;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+.thread-item-title {
+  font-weight: var(--w-semi);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.thread-item-meta {
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+}
+.thread-item-snippet {
+  font-size: var(--text-xs);
+  line-height: var(--lh-xs);
+  color: var(--fg-dim);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.thread-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 75;
+  display: grid;
+  place-items: center;
+  padding: var(--space-16);
+}
+.thread-modal[hidden] {
+  display: none;
+}
+.thread-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 17, 21, 0.6);
+}
+.thread-window {
+  position: relative;
+  width: min(1180px, 100%);
+  height: min(860px, 100%);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xl);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-floating);
+  overflow: hidden;
+}
+.thread-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: 8px 10px 8px 16px;
+  border-bottom: var(--hairline-subtle);
+  background: var(--bg-bar);
+}
+.thread-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: var(--w-semi);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.thread-presence {
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+  white-space: nowrap;
+}
+.thread-action {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  padding: 0;
+}
+.thread-action:hover {
+  border-color: var(--border-strong);
+  background: var(--steel-700);
+  color: var(--fg);
+}
+.thread-frames {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+.thread-frame {
+  flex: 1;
+  width: 100%;
+  border: 0;
+}
+.thread-frame[hidden] {
+  display: none;
+}
+/* Inside a thread window the page that owns the window carries the bell and the brand. */
+body.embedded-thread .brand,
+body.embedded-thread .threads-wrap {
+  display: none;
+}
+@media (max-width: 860px) {
+  .thread-modal {
+    padding: 0;
+  }
+  .thread-window {
+    width: 100%;
+    height: 100%;
+    border-radius: 0;
+    border: 0;
   }
 }

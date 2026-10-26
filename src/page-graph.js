@@ -15,7 +15,7 @@ import { AsyncMutex } from "./async-mutex.js";
 // A page's state is DERIVED from what the session store recorded (ended, queued feedback, who
 // spoke last, when anything last moved), never from its title or file name. A title is display
 // and search text only: a page titled "DECIDED" whose agent still owes a reply is agent-working.
-export const LINK_TYPES = Object.freeze(["child-of", "supersedes", "derived-from"]);
+export const LINK_TYPES = Object.freeze(["child-of", "supersedes", "derived-from", "thread-of"]);
 export const PAGE_STATES = Object.freeze(["needs-you", "agent-working", "new", "quiet", "ended"]);
 export const SEARCH_KINDS = Object.freeze(["page", "feedback", "reply", "event"]);
 export const REPLACED_FILTERS = Object.freeze(["no", "yes", "any"]);
@@ -61,12 +61,24 @@ export function buildGraph(records) {
   const parent = new Map();
   const replacedBy = new Map();
   const derived = [];
+  // thread page -> the page it is a side conversation about
+  const threadOf = new Map();
   for (const record of records) {
     if (record.type === "child-of") parent.set(record.from, record.to);
     else if (record.type === "supersedes") replacedBy.set(record.to, record.from);
+    else if (record.type === "thread-of") threadOf.set(record.from, record.to);
     else derived.push([record.from, record.to]);
   }
-  return { parent, replacedBy, derived };
+  return { parent, replacedBy, derived, threadOf };
+}
+
+/**
+ * The side conversations about one page, oldest first: what its chrome lists behind the bell.
+ * @param {any[]} records
+ * @param {string} key
+ */
+export function threadsOf(records, key) {
+  return [...buildGraph(records).threadOf].filter(([, page]) => page === key).map(([thread]) => thread);
 }
 
 export function ancestors(parent, key) {
@@ -131,6 +143,17 @@ export function checkLink(graph, type, from, to) {
     }
     if (graph.replacedBy.has(to)) {
       throw new LinkError("That page is already replaced by another page", "REFUSED");
+    }
+    return "new";
+  }
+  if (type === "thread-of") {
+    // A thread is a conversation about one page; listing it behind a second page's bell would
+    // show the same conversation twice with no way to tell which page it was about.
+    const page = graph.threadOf.get(from);
+    if (page === to) return "unchanged";
+    if (page) throw new LinkError("That page is already a thread of another page", "REFUSED");
+    if (graph.threadOf.has(to) || [...graph.threadOf.values()].includes(from)) {
+      throw new LinkError("A thread cannot have threads of its own", "REFUSED");
     }
     return "new";
   }
@@ -301,6 +324,8 @@ export function queryPages({ sessions, records, titles, now }, options = {}) {
         replaced_by: graph.replacedBy.get(session.key) || null,
         replaces: [...graph.replacedBy].filter(([, next]) => next === session.key).map(([old]) => old),
         derived_from: graph.derived.filter(([from]) => from === session.key).map(([, to]) => to),
+        thread_of: graph.threadOf.get(session.key) || null,
+        threads: [...graph.threadOf].filter(([, page]) => page === session.key).map(([thread]) => thread),
       },
     });
   }

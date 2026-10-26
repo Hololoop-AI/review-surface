@@ -44,6 +44,11 @@ async function createChromeHarness({
   mobile = false,
   // Opt-in `navigator.userActivation`, the browser's record of whether a real click just happened.
   userActivation = undefined,
+  // Opt-in desktop notifications: a fake `Notification` class granted this permission, recording
+  // every notification raised in `notifications`.
+  notificationPermission = undefined,
+  // What `GET /api/<key>/threads` answers at boot: the page's existing study threads.
+  initialThreads = [],
 } = {}) {
   const source = await readFile(sourceUrl, "utf8");
   // Seed sessionStorage before the client boots, to model a tab whose queue was
@@ -53,6 +58,8 @@ async function createChromeHarness({
   const postedToWhiteboard = [];
   const inlineWhiteboards = [];
   const eventSources = [];
+  const localStore = new Map();
+  const sessionStreams = () => eventSources.filter((source) => !String(source.url).endsWith("/threads"));
   const windowListeners = new Map();
   const documentListeners = new Map();
   let documentHidden = false;
@@ -245,6 +252,9 @@ async function createChromeHarness({
   element("shareDialog").hidden = true;
   element("moreMenu").hidden = true;
   element("warningsDrawer").hidden = true;
+  // Shipped hidden by the markup, like the menus above.
+  element("threadsMenu").hidden = true;
+  element("threadModal").hidden = true;
   const whiteboardFrame = element("whiteboardFrame");
   whiteboardFrame.contentWindow = {
     postMessage(message) {
@@ -260,6 +270,9 @@ async function createChromeHarness({
         ok: true,
         json: async () => ({ chrome_load_token: "harness-chrome-refresh", artifact_revision: artifactRevision }),
       };
+    }
+    if (String(url) === `/api/${sessionData.key}/threads`) {
+      return { ok: true, json: async () => ({ threads: initialThreads }) };
     }
     if (String(url).includes("/artifact-loads/begin")) {
       artifactBeginRequests.push({ url, init });
@@ -360,12 +373,35 @@ async function createChromeHarness({
     window: {
       clearTimeout: fakeClearTimeout,
       setTimeout: fakeSetTimeout,
+      requestAnimationFrame: (callback) => callback(),
+      focus() {},
+      localStorage: {
+        getItem: (name) => (localStore.has(name) ? localStore.get(name) : null),
+        setItem: (name, value) => localStore.set(name, String(value)),
+      },
       addEventListener(type, handler) {
         if (!windowListeners.has(type)) windowListeners.set(type, []);
         windowListeners.get(type).push(handler);
       },
     },
   };
+  const notifications = [];
+  if (notificationPermission) {
+    context.window.Notification = class FakeNotification {
+      static permission = notificationPermission;
+      constructor(title, options) {
+        this.title = title;
+        this.options = options;
+        this.closed = false;
+        notifications.push(this);
+      }
+
+      close() {
+        this.closed = true;
+      }
+    };
+    /** @type {any} */ (context).Notification = context.window.Notification;
+  }
   const mediaQueries = [];
   if (mobile) {
     context.window.matchMedia = (query) => {
@@ -424,12 +460,22 @@ async function createChromeHarness({
       source.parent = source;
       return { source, posted };
     },
+    // The page's own live stream. The thread list's stream (`/events/<key>/threads`) is separate
+    // and stays open while the tab is hidden, so it is counted apart.
     eventSource() {
-      const open = eventSources.filter((source) => !source.closed);
+      const open = sessionStreams().filter((source) => !source.closed);
       assert.equal(open.length, 1, "exactly one live stream is open");
       return open[0];
     },
-    eventSources: () => eventSources,
+    eventSources: () => sessionStreams(),
+    allEventSources: () => [...eventSources],
+    notifications,
+    localStore,
+    threadsStream() {
+      const open = eventSources.filter((source) => !source.closed && source.url.endsWith("/threads"));
+      assert.equal(open.length, 1, "exactly one threads stream is open");
+      return open[0];
+    },
     setDocumentHidden(hidden) {
       documentHidden = hidden;
       for (const { handler } of documentListeners.get("visibilitychange") || []) handler({});
@@ -5423,4 +5469,255 @@ test("a page link that cannot be opened says so in the conversation", async () =
   assert.deepEqual(chrome.assigned, []);
   const note = chrome.element("chatLog").lastAppendedChild;
   assert.match(note.innerHTML, /\/work\/gone\.html, but that file does not exist\./);
+});
+
+test("an annotation action sent now goes alone and leaves the queue as it was", async () => {
+  const promptBodies = [];
+  const chrome = await createChromeHarness({
+    storedQueue: [{ uid: "", prompt: "Fix the header", selector: "h1", tag: "element", text: "Header" }],
+    fetchImpl: (url, init) => {
+      if (String(url).endsWith("/prompts")) {
+        promptBodies.push(JSON.parse(init.body));
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      return new Promise(() => {});
+    },
+  });
+
+  chrome.sendFrameMessage({
+    type: "review-surface:sendPrompt",
+    prompt: { prompt: "study: why the lock", selector: "p", tag: "text", text: "with reg.lock()" },
+  });
+  await flushPromises();
+  await flushPromises();
+
+  assert.equal(promptBodies.length, 1);
+  assert.deepEqual(
+    promptBodies[0].prompts.map((prompt) => [prompt.prompt, prompt.text]),
+    [["study: why the lock", "with reg.lock()"]],
+  );
+  assert.equal(promptBodies[0].domSnapshot, undefined, "no full-review snapshot for one aside");
+  assert.deepEqual(
+    chrome.queued().map((prompt) => prompt.prompt),
+    ["Fix the header"],
+    "the drafted annotation still waits for Send",
+  );
+  assert.match(chrome.element("chatLog").lastAppendedChild.innerHTML, /study: why the lock/);
+});
+
+test("a send-now that fails stays in the conversation as not sent, and Resend delivers it", async () => {
+  let fail = true;
+  const promptBodies = [];
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url, init) => {
+      if (!String(url).endsWith("/prompts")) return { ok: true, json: async () => ({}) };
+      promptBodies.push(JSON.parse(init.body));
+      return fail
+        ? { ok: false, status: 400, json: async () => ({ error: "rejected" }) }
+        : { ok: true, json: async () => ({}) };
+    },
+  });
+  await flushPromises();
+
+  chrome.sendFrameMessage({
+    type: "review-surface:sendPrompt",
+    artifact_load_token: chrome.artifactLoadToken(),
+    prompt: { prompt: "study: why the lock", selector: "p", tag: "text", text: "with reg.lock()" },
+  });
+  await flushPromises();
+  await flushPromises();
+
+  const bubble = chrome.element("chatLog").lastAppendedChild;
+  assert.match(bubble.innerHTML, /study: why the lock/, "the reviewer's text survives the failure");
+  assert.equal(bubble.classList.contains("unsent"), true);
+  const mark = bubble.querySelector(".unsent-mark");
+  assert.ok(mark, "it is marked not sent");
+  const resend = mark.querySelector(".unsent-resend");
+
+  fail = false;
+  resend.onclick();
+  await flushPromises();
+  await flushPromises();
+
+  assert.equal(promptBodies.length, 2);
+  assert.deepEqual(
+    promptBodies[1].prompts.map((prompt) => prompt.prompt),
+    ["study: why the lock"],
+  );
+  assert.equal(bubble.classList.contains("unsent"), false, "the mark is gone once it sends");
+  assert.equal(bubble.querySelector(".unsent-mark"), null);
+  assert.equal(
+    chrome.element("chatLog").children.filter((child) => /study: why the lock/.test(child.innerHTML || "")).length,
+    1,
+    "the same bubble, not a second copy",
+  );
+});
+
+test("a failed send-now survives a reload as not sent, and a resend clears it", async () => {
+  const storage = new Map();
+  const failing = async (url) =>
+    String(url).endsWith("/prompts")
+      ? { ok: false, status: 503, json: async () => ({}) }
+      : { ok: true, json: async () => ({}) };
+  const first = await createChromeHarness({ storage, fetchImpl: failing });
+  await flushPromises();
+  first.sendFrameMessage({
+    type: "review-surface:sendPrompt",
+    artifact_load_token: first.artifactLoadToken(),
+    prompt: { prompt: "study: why the lock", selector: "p", tag: "text", text: "with reg.lock()" },
+  });
+  await flushPromises();
+  await flushPromises();
+
+  const posts = [];
+  const reloaded = await createChromeHarness({
+    storage,
+    fetchImpl: async (url, init) => {
+      if (String(url).endsWith("/prompts")) posts.push(JSON.parse(init.body));
+      return { ok: true, json: async () => ({}) };
+    },
+  });
+  await flushPromises();
+  const bubble = reloaded
+    .element("chatLog")
+    .children.find((child) => /study: why the lock/.test(child.innerHTML || ""));
+  assert.ok(bubble, "the reload brings the unsent text back");
+  bubble.querySelector(".unsent-mark").querySelector(".unsent-resend").onclick();
+  await flushPromises();
+  await flushPromises();
+
+  assert.deepEqual(
+    posts.map((body) => body.prompts[0].prompt),
+    ["study: why the lock"],
+  );
+  assert.deepEqual(JSON.parse(storage.get("review-surface:retired-drafts:abc")), [], "a delivered resend is forgotten");
+});
+
+test("Resend after the session ended says so instead of going dead", async () => {
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url) =>
+      String(url).endsWith("/prompts")
+        ? { ok: false, status: 503, json: async () => ({}) }
+        : { ok: true, json: async () => ({}) },
+  });
+  await flushPromises();
+  chrome.sendFrameMessage({
+    type: "review-surface:sendPrompt",
+    artifact_load_token: chrome.artifactLoadToken(),
+    prompt: { prompt: "study: why the lock", selector: "p", tag: "text", text: "with reg.lock()" },
+  });
+  await flushPromises();
+  await flushPromises();
+  const resend = chrome
+    .element("chatLog")
+    .lastAppendedChild.querySelector(".unsent-mark")
+    .querySelector(".unsent-resend");
+
+  chrome.eventSource().listeners.get("ended")({ data: "{}" });
+  resend.onclick();
+  await flushPromises();
+
+  assert.equal(resend.disabled, false);
+  assert.equal(chrome.element("sendHint").hidden, false);
+  assert.match(chrome.element("sendHint").textContent, /Session ended/);
+});
+
+test("a hidden page with threads holds their stream only while one is live", async () => {
+  const thread = (extra) => ({
+    key: "t1",
+    title: "Study: why the lock",
+    url: "/session/t1",
+    status: "open",
+    state: "new",
+    presence: "waiting",
+    agent_replies: 1,
+    last_agent_reply: { text: "It guards the save." },
+    updated_at: "2026-10-23T06:00:00.000Z",
+    ...extra,
+  });
+  const chrome = await createChromeHarness({ initialThreads: [thread({ presence: "working" })] });
+  await flushPromises();
+  const stream = chrome.threadsStream();
+  const send = (list) => stream.listeners.get("threads")({ data: JSON.stringify({ threads: list }) });
+
+  chrome.setDocumentHidden(true);
+  assert.equal(stream.closed, false, "a thinking thread keeps it open for the notification");
+  send([thread({})]);
+  assert.equal(stream.closed, true, "an asleep thread lets it rest like the page's own stream");
+
+  chrome.setDocumentHidden(false);
+  assert.equal(chrome.threadsStream().closed, false, "showing the tab reopens it");
+  chrome.setDocumentHidden(true);
+  assert.equal(
+    chrome.allEventSources().filter((source) => source.url.endsWith("/threads") && !source.closed).length,
+    0,
+    "hidden with no live thread, it closes on hide",
+  );
+});
+
+// Study threads (2026-10-23). The driver: "some notification icon like most apps have that give
+// the option to click and see what is new. Then you click the notification for the chat and the
+// modal opens" - a thread runs in the background, and the bell tells you when it answered.
+test("the bell counts unseen thread replies, pops up a new thread, and a notification opens it", async () => {
+  const chrome = await createChromeHarness({ notificationPermission: "granted" });
+  await flushPromises();
+  assert.equal(
+    chrome.allEventSources().filter((source) => source.url.endsWith("/threads")).length,
+    0,
+    "a page with no threads holds no threads stream",
+  );
+  chrome.eventSource().listeners.get("thread-linked")({ data: "{}" });
+  const threads = chrome.threadsStream();
+  assert.equal(threads.url, "/events/abc/threads");
+  const send = (list) => threads.listeners.get("threads")({ data: JSON.stringify({ threads: list }) });
+  const thread = (extra) => ({
+    key: "t1",
+    title: "Study: why the lock",
+    url: "/session/t1",
+    status: "open",
+    state: "new",
+    presence: "waiting",
+    agent_replies: 0,
+    last_agent_reply: null,
+    updated_at: "2026-10-23T06:00:00.000Z",
+    ...extra,
+  });
+
+  send([]);
+  assert.equal(chrome.element("threadsWrap").hidden, true, "no threads, no bell");
+  assert.equal(threads.closed, true, "an empty list lets the stream go even while visible");
+  chrome.eventSource().listeners.get("thread-linked")({ data: "{}" });
+  const linked = chrome.threadsStream();
+  const sendLinked = (list) => linked.listeners.get("threads")({ data: JSON.stringify({ threads: list }) });
+
+  // started from this page while it is open: it pops up in the thread window
+  sendLinked([thread({})]);
+  assert.equal(chrome.element("threadsWrap").hidden, false);
+  assert.equal(chrome.element("threadModal").hidden, false);
+  const [threadFrame] = chrome.element("threadFrames").children;
+  assert.equal(threadFrame.src, "/session/t1?embed=thread");
+  assert.equal(chrome.element("threadModalTitle").textContent, "Study: why the lock");
+  assert.equal(chrome.element("threadModalPresence").textContent, "Starting…");
+
+  // minimized, it keeps running; a reply lands while the reader is in another tab
+  chrome.element("threadMinimize").onclick();
+  assert.equal(chrome.element("threadModal").hidden, true);
+  chrome.setDocumentHidden(true);
+  sendLinked([thread({ agent_replies: 1, presence: "listening", last_agent_reply: { text: "It guards the save." } })]);
+  assert.equal(chrome.element("threadsCount").hidden, false);
+  assert.equal(chrome.element("threadsCount").textContent, "1");
+  assert.equal(chrome.notifications.length, 1);
+  assert.equal(chrome.notifications[0].title, "Study: why the lock");
+  assert.equal(chrome.notifications[0].options.body, "It guards the save.");
+  assert.equal(chrome.eventSources().filter((source) => !source.closed).length, 0, "the page stream rests");
+  assert.equal(chrome.threadsStream().closed, false, "the threads stream stays open while hidden");
+
+  // clicking the notification brings the thread back and clears the badge
+  chrome.setDocumentHidden(false);
+  chrome.notifications[0].onclick();
+  assert.equal(chrome.element("threadModal").hidden, false);
+  assert.equal(chrome.element("threadsCount").hidden, true);
+  assert.equal(chrome.notifications[0].closed, true);
+  assert.equal(chrome.localStore.get("review-surface:thread-seen:t1"), "1", "seen survives a reload");
+  assert.equal(chrome.element("threadFrames").children.length, 1, "the same frame, not a new one");
 });

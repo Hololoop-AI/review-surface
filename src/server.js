@@ -28,6 +28,9 @@ import {
   partitionDroppedFiles,
   planClipboardPaste,
   MODE_TOGGLE_HOTKEY_KEY,
+  ANNOTATION_ACTION_LIMIT,
+  normalizeAnnotationActions,
+  annotationActionPrompt,
 } from "./artifact-sdk.js";
 import {
   activeLayoutWarningCount,
@@ -57,10 +60,13 @@ import {
   linksFile,
   loadPageGraphInputs,
   loadSearchSources,
+  derivePageState,
   parsePageQuery,
   queryPages,
+  readPageTitle,
   SEARCH_KINDS,
   searchEverything,
+  threadsOf,
 } from "./page-graph.js";
 import { publishToHtmlApp } from "./html-app.js";
 import { HOLOLOOP_RING_SVG } from "./hololoop-ring.js";
@@ -263,6 +269,24 @@ export function isValidWhiteboardChannelToken(token, secret, sessionKey, now = D
 // `review-surface stop` still replace or stop it. REVIEW_SURFACE_IDLE_TIMEOUT_MS=<ms> opts back
 // into self-shutdown after that long with no browser chrome (SSE) or agent poll connected, and
 // immediately when the last page ends with nothing connected; anything else means always on.
+/**
+ * The host's annotation-card actions, from REVIEW_SURFACE_ANNOTATION_ACTIONS: a JSON array
+ * of `{ id, label, prefix?, deliver?, fallback?, title? }` (see normalizeAnnotationActions).
+ * Malformed JSON is reported and ignored - a bad setting must never stop pages opening.
+ * @param {Record<string, string | undefined>} [env]
+ * @param {(message: string) => void} [log]
+ */
+export function resolveAnnotationActions(env = process.env, log = undefined) {
+  const raw = String(env.REVIEW_SURFACE_ANNOTATION_ACTIONS || "").trim();
+  if (!raw) return [];
+  try {
+    return normalizeAnnotationActions(JSON.parse(raw));
+  } catch {
+    log?.("REVIEW_SURFACE_ANNOTATION_ACTIONS is not valid JSON; no annotation actions added");
+    return [];
+  }
+}
+
 export function resolveIdleTimeoutMs(env = process.env) {
   const value = Number(env.REVIEW_SURFACE_IDLE_TIMEOUT_MS?.trim() || NaN);
   return Number.isFinite(value) && value > 0 ? value : null;
@@ -325,6 +349,7 @@ export async function serve({
     const sessions = await store.listSessions();
     const result = await linkStore.record(sessions, link);
     const fileOf = (key) => sessions.find((session) => session.key === key)?.file;
+    if (result.records.length > 0) events.emit("links", result.records);
     for (const record of result.records) {
       void eventLog.append("link.recorded", record.from, {
         file: fileOf(record.from),
@@ -509,7 +534,8 @@ export async function serve({
         req.path === "/api/events" ||
         req.path === "/api/pages" ||
         req.path === "/api/search" ||
-        /^\/api\/[^/]+\/export$/.test(req.path));
+        /^\/api\/[^/]+\/(export|threads)$/.test(req.path) ||
+        /^\/events\/[^/]+\/threads$/.test(req.path));
     if (!guardedGet && (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS")) {
       next();
       return;
@@ -522,6 +548,7 @@ export async function serve({
   });
 
   const attachmentConfig = resolveAttachmentConfig();
+  const annotationActions = resolveAnnotationActions(process.env, (line) => writeLog(`[review-surface] ${line}`));
   // Attachment bytes are content-addressed on disk alongside the whiteboard sidecars.
   const attachmentStateRoot = path.dirname(stateFile);
   // The store owns the ONE shared lock covering BOTH state consistency AND the
@@ -864,6 +891,98 @@ export async function serve({
     }
   });
 
+  // A page's threads: side conversations about it, each its own session (`thread-of` links). The
+  // chrome lists them behind the bell and opens one in the thread window, so the summary carries
+  // just enough to show what is new: the agent's reply count, its last reply, and its presence.
+  async function threadSummaries(pageKey) {
+    const keys = threadsOf(await linkStore.read(), pageKey);
+    if (keys.length === 0) return [];
+    const sessions = await store.listSessions();
+    const now = Date.now();
+    const out = [];
+    for (const threadKey of keys) {
+      const session = sessions.find((candidate) => candidate.key === threadKey);
+      if (!session) continue;
+      const chat = session.chat || [];
+      const agentReplies = chat.filter((message) => message.role === "agent");
+      const last = agentReplies[agentReplies.length - 1];
+      out.push({
+        key: threadKey,
+        title: (await readPageTitle(session.file)).title,
+        url: `/session/${threadKey}`,
+        status: session.status,
+        state: derivePageState(session, now),
+        presence: computePresence(threadKey, activePolls, deliveredFeedback),
+        agent_replies: agentReplies.length,
+        last_agent_reply: last ? { at: last.at || null, text: String(last.text || "").slice(0, 240) } : null,
+        updated_at: session.updated_at || null,
+      });
+    }
+    return out;
+  }
+
+  app.get("/api/:key/threads", async (req, res, next) => {
+    try {
+      res.json({ threads: await threadSummaries(req.params.key) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // The thread list, pushed: a fresh snapshot whenever one of this page's threads moves (a reply, a
+  // send, presence, an end, a rewrite) or a new thread is linked to it. Separate from
+  // /events/:key, which a chrome closes while its tab is hidden - a chrome keeps this one open
+  // while hidden only while one of its threads is live, so a reply that lands while the reader is
+  // in another tab can still raise a desktop notification.
+  app.get("/events/:key/threads", async (req, res, next) => {
+    const pageKey = String(req.params.key || "");
+    let known = new Set();
+    let timer = null;
+    let closed = false;
+    const send = async () => {
+      timer = null;
+      if (closed) return;
+      try {
+        const threads = await threadSummaries(pageKey);
+        known = new Set(threads.map((thread) => thread.key));
+        if (!closed) res.write(`event: threads\ndata: ${JSON.stringify({ threads })}\n\n`);
+      } catch (error) {
+        logEvent?.(`threads stream failed key=${pageKey}: ${error}`);
+      }
+    };
+    const schedule = () => {
+      if (!closed && !timer) timer = setTimeout(send, 150);
+    };
+    const onSession = (changed) => {
+      if (known.has(changed)) schedule();
+    };
+    const onLinks = (records) => {
+      if (records.some((record) => record.type === "thread-of" && record.to === pageKey)) schedule();
+    };
+    const sessionEvents = ["agent-reply", "agent-presence", "ended", "chat-sync", "feedback", "reload"];
+    const cleanup = () => {
+      closed = true;
+      if (timer) clearTimeout(timer);
+      for (const name of sessionEvents) events.off(name, onSession);
+      events.off("links", onLinks);
+    };
+    try {
+      res.writeHead(200, {
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache",
+        connection: "keep-alive",
+      });
+      res.write(": review-surface threads\n\n");
+      for (const name of sessionEvents) events.on(name, onSession);
+      events.on("links", onLinks);
+      req.once("close", cleanup);
+      await send();
+    } catch (error) {
+      cleanup();
+      next(error);
+    }
+  });
+
   // Prepare the user's selected warnings. The prompt commits the repair request through
   // /api/:key/prompts with the rest of the ordinary feedback queue.
   app.post("/api/:key/layout-warnings/queue", async (req, res, next) => {
@@ -1119,8 +1238,16 @@ export async function serve({
       // browsers (ALLOW-FROM is dead), and a DENY beside a permissive
       // frame-ancestors would be contradictory - CSP wins where both exist,
       // but only browsers that implement CSP would agree.
+      //
+      // A thread page shown in its parent page's thread window (`?embed=thread`) is framed by this
+      // same server's chrome, so that load alone also admits 'self'. Artifacts cannot use it: they
+      // run sandboxed with an opaque origin, which 'self' never matches.
+      const embedded = req.query?.embed === "thread";
       if (frameAncestorOrigin) {
         res.setHeader("content-security-policy", `frame-ancestors 'self' ${frameAncestorOrigin}`);
+      } else if (embedded) {
+        res.setHeader("x-frame-options", "SAMEORIGIN");
+        res.setHeader("content-security-policy", "frame-ancestors 'self'");
       } else {
         res.setHeader("x-frame-options", "DENY");
         res.setHeader("content-security-policy", "frame-ancestors 'none'");
@@ -1137,6 +1264,7 @@ export async function serve({
           attachmentMaxBytes: attachmentConfig.maxBytes,
           attachmentMaxCount: attachmentConfig.maxPerPrompt,
           reloadState: reloadState(session.key),
+          embedded,
         }),
       );
     } catch (error) {
@@ -1374,7 +1502,15 @@ export async function serve({
       // Listeners must be registered BEFORE the read below: an end that lands during that await
       // would otherwise fire "ended" while nothing here is listening yet, and this connection
       // would never learn the session ended (#171).
+      // A chrome opens its thread-list stream only once the page has a thread, so the link that
+      // gives it one is announced on the page's own stream.
+      const sendThreadLinked = (records) => {
+        if (records.some((record) => record.type === "thread-of" && record.to === req.params.key)) {
+          res.write(`event: thread-linked\ndata: {}\n\n`);
+        }
+      };
       events.on("reload", sendReload);
+      events.on("links", sendThreadLinked);
       events.on("agent-reply", sendAgentReply);
       events.on("agent-presence", sendPresence);
       events.on("layout-warnings", sendLayoutWarnings);
@@ -1386,6 +1522,7 @@ export async function serve({
         req.off("close", cleanup);
         sseClients.delete(res);
         events.off("reload", sendReload);
+        events.off("links", sendThreadLinked);
         events.off("agent-reply", sendAgentReply);
         events.off("agent-presence", sendPresence);
         events.off("layout-warnings", sendLayoutWarnings);
@@ -1474,6 +1611,7 @@ export async function serve({
         createSdkJs(String(req.query.key || ""), verified.artifact_revision, verified.artifact_load_token, {
           maxAttachmentCount: attachmentConfig.maxPerPrompt,
           maxAttachmentBytes: attachmentConfig.maxBytes,
+          annotationActions,
         }),
       );
     } catch (error) {
@@ -2280,6 +2418,15 @@ function chromeIcon(paths, size = 16, strokeWidth = 1.7) {
 }
 
 const chromeIcons = {
+  bell: chromeIcon(
+    '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+    16,
+  ),
+  minimize: chromeIcon('<line x1="5" y1="12" x2="19" y2="12"/>', 14),
+  external: chromeIcon(
+    '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+    14,
+  ),
   more: chromeIcon(
     '<circle cx="12" cy="5" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="19" r="1.4"/>',
   ),
@@ -2486,6 +2633,7 @@ export function createChromeHtml(
     attachmentMaxCount = 0,
     attachmentAcceptedMime = ACCEPTED_IMAGE_MIME,
     reloadState = null,
+    embedded = false,
   } = {},
 ) {
   const acceptedMime = attachmentAcceptedMime.map(String);
@@ -2514,9 +2662,12 @@ export function createChromeHtml(
     attachmentMaxBytes,
     attachmentMaxCount,
     attachmentAcceptedMime: acceptedMime,
+    // Shown inside another page's thread window: that page owns the bell and the notifications.
+    embedded,
   });
   const { head: pathHead, tail: pathTail } = displayPathParts(session.file);
-  const bodyClass = layoutGateEnabled ? "review-surface layout-gate-active" : "review-surface";
+  const bodyClass =
+    (layoutGateEnabled ? "review-surface layout-gate-active" : "review-surface") + (embedded ? " embedded-thread" : "");
   const layoutGateHidden = layoutGateEnabled ? "" : " hidden";
   const modeHotkeyUpper = MODE_TOGGLE_HOTKEY_KEY.toUpperCase();
   const modeToggleHint = `Toggle annotate/explore mode (⌘${modeHotkeyUpper} / Ctrl+${modeHotkeyUpper})`;
@@ -2530,8 +2681,9 @@ ${faviconTag}
 <link rel="stylesheet" href="/chrome.css">
 </head>
 <body class="${bodyClass}">
-<div class="bar"><div class="brand"><span class="brand-mark">Cadre</span></div><div class="spacer" aria-hidden="true"></div><div class="warnings-wrap" id="warningsWrap" hidden><button class="warnings-button" id="warningsButton" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="warningsDrawer">${chromeIcons.warning}<span class="warnings-count" id="warningsCount">0</span></button><div class="menu warnings-drawer" id="warningsDrawer" role="dialog" aria-labelledby="warningsTitle" aria-describedby="warningsSummary" hidden><div class="warnings-head"><h2 class="warnings-title" id="warningsTitle">Layout issues</h2><p class="warnings-summary" id="warningsSummary"></p></div><div class="warnings-toolbar"><label class="warnings-selectall"><input type="checkbox" id="warningsSelectAll"><span>Select all</span></label><span class="warnings-selected" id="warningsSelected" role="status" aria-live="polite"></span></div><div class="warnings-list" id="warningsList"></div><div class="warnings-foot"><p class="warnings-note">Queueing sends a repair request with your next feedback. An issue is marked resolved only after a newer artifact load and a complete check at the same viewport no longer finds it.</p><button class="button" id="warningsQueueButton" type="button" disabled>Queue selected fixes</button></div></div></div><button class="annotate-switch" id="panelCollapse" type="button" aria-pressed="true" title="Show or hide the conversation panel"><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span><span>Chat</span></button><button class="annotate-switch" id="annotation" type="button" aria-pressed="true" title="${escapeHtml(modeToggleHint)}"><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span><span>Annotate</span></button><div class="more-wrap" id="moreWrap"><button class="more-button" id="moreButton" type="button" title="More" aria-haspopup="menu" aria-expanded="false">${chromeIcons.more}</button><div class="menu more-menu" id="moreMenu" hidden><div class="menu-head"><div class="menu-label">Editing</div><button class="menu-file" id="copyPath" type="button" title="Copy path · ${escapeHtml(session.file)}">${chromeIcons.file}<span class="menu-file-text"><span class="path-head">${escapeHtml(pathHead)}</span><span class="path-tail">${escapeHtml(pathTail)}</span></span><span class="copy-hint" id="copyHint"><span class="icon-copy">${chromeIcons.copy}</span><span class="icon-check">${chromeIcons.check}</span><span id="copyHintText">Copy</span></span></button></div><div class="menu-rule"></div><button class="menu-item" id="reloadArtifact" type="button">${chromeIcons.refresh}<span>Reload artifact</span></button><button class="menu-item" id="copySnapshot" type="button">${chromeIcons.camera}<span>Copy DOM snapshot</span></button><button class="menu-item" id="exportArtifact" type="button">${chromeIcons.download}<span>Export standalone HTML</span></button><button class="menu-item" id="shareArtifact" type="button">${chromeIcons.globe}<span>Publish link</span></button><div class="menu-rule"></div><button class="menu-item danger" id="end" type="button">${chromeIcons.exit}<span>End session</span></button></div></div></div>
+<div class="bar"><div class="brand"><span class="brand-mark">Cadre</span></div><div class="spacer" aria-hidden="true"></div><div class="warnings-wrap" id="warningsWrap" hidden><button class="warnings-button" id="warningsButton" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="warningsDrawer">${chromeIcons.warning}<span class="warnings-count" id="warningsCount">0</span></button><div class="menu warnings-drawer" id="warningsDrawer" role="dialog" aria-labelledby="warningsTitle" aria-describedby="warningsSummary" hidden><div class="warnings-head"><h2 class="warnings-title" id="warningsTitle">Layout issues</h2><p class="warnings-summary" id="warningsSummary"></p></div><div class="warnings-toolbar"><label class="warnings-selectall"><input type="checkbox" id="warningsSelectAll"><span>Select all</span></label><span class="warnings-selected" id="warningsSelected" role="status" aria-live="polite"></span></div><div class="warnings-list" id="warningsList"></div><div class="warnings-foot"><p class="warnings-note">Queueing sends a repair request with your next feedback. An issue is marked resolved only after a newer artifact load and a complete check at the same viewport no longer finds it.</p><button class="button" id="warningsQueueButton" type="button" disabled>Queue selected fixes</button></div></div></div><div class="threads-wrap" id="threadsWrap" hidden><button class="threads-button" id="threadsButton" type="button" title="Study threads" aria-haspopup="menu" aria-expanded="false" aria-controls="threadsMenu">${chromeIcons.bell}<span class="threads-count" id="threadsCount" hidden>0</span></button><div class="menu threads-menu" id="threadsMenu" role="menu" aria-label="Study threads" hidden><div class="menu-label">Study threads</div><div class="threads-list" id="threadsList"></div><div class="menu-rule"></div><button class="menu-item" id="threadsNotify" type="button" hidden>${chromeIcons.bell}<span>Notify me when I am in another tab</span></button></div></div><button class="annotate-switch" id="panelCollapse" type="button" aria-pressed="true" title="Show or hide the conversation panel"><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span><span>Chat</span></button><button class="annotate-switch" id="annotation" type="button" aria-pressed="true" title="${escapeHtml(modeToggleHint)}"><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span><span>Annotate</span></button><div class="more-wrap" id="moreWrap"><button class="more-button" id="moreButton" type="button" title="More" aria-haspopup="menu" aria-expanded="false">${chromeIcons.more}</button><div class="menu more-menu" id="moreMenu" hidden><div class="menu-head"><div class="menu-label">Editing</div><button class="menu-file" id="copyPath" type="button" title="Copy path · ${escapeHtml(session.file)}">${chromeIcons.file}<span class="menu-file-text"><span class="path-head">${escapeHtml(pathHead)}</span><span class="path-tail">${escapeHtml(pathTail)}</span></span><span class="copy-hint" id="copyHint"><span class="icon-copy">${chromeIcons.copy}</span><span class="icon-check">${chromeIcons.check}</span><span id="copyHintText">Copy</span></span></button></div><div class="menu-rule"></div><button class="menu-item" id="reloadArtifact" type="button">${chromeIcons.refresh}<span>Reload artifact</span></button><button class="menu-item" id="copySnapshot" type="button">${chromeIcons.camera}<span>Copy DOM snapshot</span></button><button class="menu-item" id="exportArtifact" type="button">${chromeIcons.download}<span>Export standalone HTML</span></button><button class="menu-item" id="shareArtifact" type="button">${chromeIcons.globe}<span>Publish link</span></button><div class="menu-rule"></div><button class="menu-item danger" id="end" type="button">${chromeIcons.exit}<span>End session</span></button></div></div></div>
 <div class="layout"><div class="frame"><iframe id="artifact" sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads" allow="fullscreen" data-artifact-src="/artifact/${session.key}/index.html"></iframe></div><div class="panel-scrim" id="panelScrim"></div><aside class="panel" id="panel"><div class="panel-head" id="panelHead"><span class="panel-handle" aria-hidden="true"></span><div class="panel-head-row"><h2>Conversation</h2><span class="panel-summary" id="panelSummary" role="status" aria-live="polite"></span><button class="panel-toggle" id="panelToggle" type="button" aria-expanded="false" aria-controls="panel" aria-label="Show conversation">${chromeIcons.chevronUp}</button></div></div><div class="panel-scroll" id="panelScroll"><div class="chat" id="chatLog"></div><div class="annotation-pills" id="annotationPills"></div></div><div class="composer" id="chatComposer"><div class="presence-banner handoff-banner" id="handoffBanner" hidden><span>This review is open in another Review Surface tab.</span><button class="handoff-takeover" id="handoffTakeover" type="button">Take over here</button></div><div class="presence-banner handoff-banner" id="outdatedBanner" hidden><span id="outdatedText">The Review Surface server this page was connected to is no longer running. Reloading will work once it is running again.</span><span class="outdated-actions"><button class="handoff-takeover" id="outdatedReload" type="button">Check and reload</button><button class="handoff-takeover" id="outdatedDismiss" type="button">Dismiss</button></span></div><div class="presence-banner" id="presenceBanner" hidden>Your agent is not listening. If this persists, ask your agent to poll for updates from Review Surface.</div><textarea id="chatInput" placeholder="Write a message for the agent..."></textarea><div class="chat-attachments" id="chatAttachments"></div><div class="chat-attachment-toolbar"><button class="chat-attach" id="chatAttach" type="button">Attach images</button><input id="chatAttachInput" type="file" accept="${escapeHtml(acceptedMime.join(","))}" multiple hidden><span class="chat-attachment-notice" id="chatAttachmentNotice" role="status"></span></div><div class="send-hint" id="sendHint" hidden>Write a message or annotate an element first.</div><div class="actions" id="sendActions"><button class="button button-danger" id="sendAndEnd" type="button">${chromeIcons.exit}<span>Send &amp; End</span></button><button class="button" id="send">Send to Agent</button></div></div></aside></div>
+<div class="thread-modal" id="threadModal" role="dialog" aria-modal="false" aria-labelledby="threadModalTitle" hidden><div class="thread-scrim" id="threadScrim"></div><div class="thread-window"><div class="thread-head"><h2 class="thread-title" id="threadModalTitle"></h2><span class="thread-presence" id="threadModalPresence" role="status" aria-live="polite"></span><a class="thread-action" id="threadOpenTab" href="#" target="_blank" rel="noopener" title="Open in its own tab">${chromeIcons.external}</a><button class="thread-action" id="threadMinimize" type="button" title="Minimize - it keeps running, and the bell tells you when it answers" aria-label="Minimize thread">${chromeIcons.minimize}</button></div><div class="thread-frames" id="threadFrames"></div></div></div>
 <div class="share-overlay" id="shareDialog" role="dialog" aria-modal="true" aria-labelledby="shareTitleText" hidden><form class="share-card" id="shareForm"><div class="share-head"><div><div class="share-kicker">Publish to <a class="share-link" href="https://ht-ml.app" target="_blank" rel="noopener noreferrer">ht-ml.app</a></div><h2 id="shareTitleText">Publish artifact</h2></div><button class="share-close" id="shareClose" type="button" aria-label="Close publish dialog"><svg width="14" height="14" viewBox="0 0 10 10" fill="none" aria-hidden="true" focusable="false"><path d="M1 1L9 9M9 1L1 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button></div><p class="share-note">ht-ml.app is a separate, third-party hosting service, not part of Review Surface. Publishing sends this artifact to its servers.</p><p class="share-copy">This uploads this artifact to ht-ml.app with local assets inlined. Without a password, the page is PUBLIC and anyone with the link can open it. With a password, the page is PRIVATE and viewers must supply the password to view.</p><p class="share-note">Do not publish secrets. The Review Surface annotation SDK is not included.</p><div class="share-grid"><label>Password (optional)<input id="sharePassword" name="password" type="password" autocomplete="new-password" placeholder="Leave blank for a public page"></label></div><div class="share-status" id="shareStatus" role="status"></div><div class="share-result" id="shareResult" hidden><label>Share URL<div class="share-copy-row"><input id="shareUrl" readonly><button class="share-copy-btn" id="copyShareUrl" type="button">Copy URL</button></div></label><label>Update key (secret)<div class="share-copy-row"><input id="shareUpdateKey" readonly><button class="share-copy-btn" id="copyUpdateKey" type="button">Copy key</button></div></label><p class="share-note">Keep the update key private. ht-ml.app returns it once and it is the only way to update or delete this page later.</p></div><div class="share-actions"><button class="share-cancel" id="shareCancel" type="button">Cancel</button><button class="button" id="sharePublish" type="submit">Publish</button></div></form></div>
 <div class="ended-overlay layout-gate-overlay" id="layoutGateOverlay"${layoutGateHidden} data-state="checking"><img class="layout-gate-ring" src="/hololoop-ring.svg" alt=""><div class="ended-card"><div class="ended-title" id="layoutGateTitle">Checking layout.<br>One moment.</div><p class="ended-copy" id="layoutGateCopy">Review Surface is waiting for fonts and final geometry before revealing this artifact.</p><button class="button ended-action" id="layoutGateAction" type="button">Show anyway</button></div></div>
 <div class="ended-overlay" id="endedOverlay" hidden><div class="ended-card"><div class="ended-title">Session ended.<br>Return to your agent to continue.</div><p class="ended-copy">${escapeHtml(session.file)}</p></div></div>
@@ -2584,13 +2736,13 @@ function serializeModuleHelpers(module) {
  * @param {string} key
  * @param {number} [artifactRevision]
  * @param {string} [artifactLoadToken]
- * @param {{ maxAttachmentCount?: number, maxAttachmentBytes?: number, acceptedImageMime?: string[] }} [options]
+ * @param {{ maxAttachmentCount?: number, maxAttachmentBytes?: number, acceptedImageMime?: string[], annotationActions?: unknown[] }} [options]
  */
 export function createSdkJs(
   key,
   artifactRevision = 0,
   artifactLoadToken = "",
-  { maxAttachmentCount, maxAttachmentBytes, acceptedImageMime = ACCEPTED_IMAGE_MIME } = {},
+  { maxAttachmentCount, maxAttachmentBytes, acceptedImageMime = ACCEPTED_IMAGE_MIME, annotationActions = [] } = {},
 ) {
   const mermaidHelperSource = serializeModuleHelpers(mermaidNode);
   const tableHelperSource = serializeModuleHelpers(tableCellHelpers);
@@ -2605,6 +2757,7 @@ export function createSdkJs(
     maxAttachmentCount: Number.isFinite(maxAttachmentCount) ? maxAttachmentCount : undefined,
     maxAttachmentBytes: Number.isFinite(maxAttachmentBytes) ? maxAttachmentBytes : undefined,
     acceptedImageMime: acceptedImageMime.map(String),
+    annotationActions: normalizeAnnotationActions(annotationActions),
   };
   return `(() => {
 const key=${JSON.stringify(key)};
@@ -2626,6 +2779,9 @@ const planClipboardPaste=${planClipboardPaste.toString()};
 const acceptedImageTypes=${acceptedImageTypes.toString()};
 const isTrustedAttachmentResult=${isTrustedAttachmentResult.toString()};
 const deriveAttachmentNoticeState=${deriveAttachmentNoticeState.toString()};
+const ANNOTATION_ACTION_LIMIT=${ANNOTATION_ACTION_LIMIT};
+const normalizeAnnotationActions=${normalizeAnnotationActions.toString()};
+const annotationActionPrompt=${annotationActionPrompt.toString()};
 ${mermaidHelperSource.declarations}
 const mermaidHelpers={ ${mermaidHelperSource.names.join(", ")} };
 ${tableHelperSource.declarations}

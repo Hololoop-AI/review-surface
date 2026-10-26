@@ -4995,6 +4995,36 @@ function deriveAttachmentNoticeState(state = {}) {
     return "You can attach up to " + maxCount + " image" + (maxCount === 1 ? "" : "s") + ".";
   return "";
 }
+var ANNOTATION_ACTION_LIMIT = 4;
+function normalizeAnnotationActions(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const raw of list) {
+    if (!raw || typeof raw !== "object") continue;
+    const id = String(raw.id || "").trim();
+    const label = String(raw.label || "").trim();
+    if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(id) || !label || label.length > 24 || seen.has(id)) continue;
+    seen.add(id);
+    out.push({
+      id,
+      label,
+      title: String(raw.title || "").slice(0, 160),
+      prefix: String(raw.prefix || "").slice(0, 60),
+      deliver: (
+        /** @type {"now" | "queue"} */
+        raw.deliver === "now" ? "now" : "queue"
+      ),
+      fallback: String(raw.fallback || "").trim().slice(0, 200)
+    });
+    if (out.length >= ANNOTATION_ACTION_LIMIT) break;
+  }
+  return out;
+}
+function annotationActionPrompt(action, note) {
+  const body = String(note || "").trim() || String(action?.fallback || "").trim();
+  return body ? String(action?.prefix || "") + body : "";
+}
 function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInteractiveControl, mermaid = mermaid_node_exports, artifactRevision = 0, artifactLoadToken = "", sessionKey2 = "", options = {}) {
   const { isMermaidSvg: isMermaidSvg2, mermaidNodeFrom: mermaidNodeFrom2, mermaidNodeElement: mermaidNodeElement2 } = mermaid;
   function postArtifactMessage(type, payload = {}) {
@@ -5527,6 +5557,12 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     setMermaidFrozen(annotationMode);
   }
   function queuePrompt(prompt, options2 = {}) {
+    postArtifactMessage("review-surface:queuePrompt", { prompt: promptItem(prompt, options2) });
+  }
+  function sendPrompt(prompt, options2 = {}) {
+    postArtifactMessage("review-surface:sendPrompt", { prompt: promptItem(prompt, options2) });
+  }
+  function promptItem(prompt, options2 = {}) {
     const originElement = options2.element || document.activeElement || document.body;
     const item = {
       ...context(originElement),
@@ -5546,10 +5582,40 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
       );
       if (attachments.length) item.attachments = attachments;
     }
-    postArtifactMessage("review-surface:queuePrompt", { prompt: item });
+    return item;
   }
   function sendQueuedPrompts() {
     postArtifactMessage("review-surface:sendQueuedPrompts");
+  }
+  const annotationActions = normalizeAnnotationActions(options.annotationActions).map((action) => ({
+    id: action.id,
+    label: action.label,
+    title: action.title,
+    run: (context2) => {
+      const text = annotationActionPrompt(action, context2.note);
+      if (!text) {
+        context2.notify("Write a note first.");
+        return false;
+      }
+      if (action.deliver === "now") context2.send(text);
+      else context2.queue(text);
+      return true;
+    }
+  }));
+  function addAnnotationAction(action) {
+    const id = String(action?.id || "").trim();
+    const label = String(action?.label || "").trim();
+    if (!id || !label || typeof action?.run !== "function") {
+      throw new TypeError("an annotation action needs an id, a label and a run function");
+    }
+    const entry = { id, label, title: String(action.title || ""), run: action.run };
+    const index = annotationActions.findIndex((existing) => existing.id === id);
+    if (index !== -1) annotationActions[index] = entry;
+    else annotationActions.push(entry);
+    return () => {
+      const at = annotationActions.indexOf(entry);
+      if (at !== -1) annotationActions.splice(at, 1);
+    };
   }
   function endSession() {
     postArtifactMessage("review-surface:endSession");
@@ -6457,7 +6523,7 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     document.documentElement.appendChild(host);
     shadow = host.attachShadow({ mode: "open" });
     const style = document.createElement("style");
-    style.textContent = `:host{all:initial;position:fixed;z-index:2147483647;left:0;top:0;color-scheme:dark;--ink-900:#0f1115;--ink-800:#11141a;--ink-700:#171a21;--ink-600:#1c212b;--steel-700:#2a2f3a;--steel-600:#303745;--steel-500:#3c4557;--steel-400:#8c96aa;--steel-300:#aeb6c6;--steel-200:#b9c0cf;--steel-100:#d8deea;--cream-50:#fffbf3;--cream-100:#f7f3ea;--cream-200:#e8e1cf;--brass-500:#f4c95d;--brass-400:#ffd877;--brass-ink:#17130a;--bg:var(--ink-900);--bg-panel:var(--ink-800);--bg-elevated:var(--ink-600);--fg:var(--cream-100);--fg-faint:var(--steel-300);--border:var(--steel-600);--accent:#f4c95d;--accent-hover:#ffd877;--font-sans:Geist,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--font-mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--radius-md:10px;--radius-xl:14px;--shadow-floating:0 20px 70px rgba(0,0,0,.35);font-family:var(--font-sans)}*{box-sizing:border-box}:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.review-surface-text-highlight{position:fixed;pointer-events:none;background:rgba(244,201,93,.28);border-radius:2px;box-shadow:0 0 0 1px rgba(244,201,93,.45)}.review-surface-annotation-card{position:fixed;width:min(320px,calc(100vw - 24px));padding:12px;border-radius:var(--radius-xl);background:var(--bg-panel);color:var(--fg);border:1px solid var(--accent);box-shadow:var(--shadow-floating);font:14px/1.4 var(--font-sans)}.review-surface-heading{font-weight:700;margin-bottom:6px}.review-surface-annotation-card textarea{width:100%;min-height:86px;resize:vertical;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg);color:var(--fg);padding:9px;font:inherit;font-family:var(--font-sans)}.review-surface-annotation-card textarea::placeholder{color:var(--fg-faint)}.review-surface-annotation-card .review-surface-hint{margin-top:6px;font-size:11px;color:var(--fg-faint)}.review-surface-annotation-card .review-surface-hint-alert{color:#ff9d7a;font-weight:700}.review-surface-annotation-card .review-surface-row{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}.review-surface-annotation-card button{border:0;border-radius:var(--radius-md);padding:8px 10px;font-family:var(--font-sans);font-size:13px;font-weight:700;cursor:pointer}.review-surface-annotation-card button:active{opacity:.85}.review-surface-annotation-card .review-surface-send{background:var(--accent);color:var(--brass-ink)}.review-surface-annotation-card .review-surface-send:hover{background:var(--accent-hover)}.review-surface-annotation-card .review-surface-cancel{background:var(--steel-700);color:var(--fg)}.review-surface-annotation-card.is-dropping{outline:2px dashed var(--accent);outline-offset:3px}.review-surface-attachments{display:flex;flex-direction:column;gap:6px;margin-top:8px;max-height:176px;overflow-y:auto}.review-surface-attachment-chip{display:flex;align-items:center;gap:8px;padding:6px;border-radius:var(--radius-md);background:var(--bg);border:1px solid var(--border)}.review-surface-attachment-chip.is-error{border-color:#e0623d}.review-surface-attachment-thumb{width:32px;height:32px;border-radius:6px;object-fit:cover;background:var(--ink-700);flex:0 0 auto}.review-surface-attachment-thumb-empty{display:inline-block}.review-surface-attachment-body{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1 1 auto}.review-surface-attachment-name{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.review-surface-attachment-status{font-size:11px;color:var(--fg-faint)}.review-surface-attachment-status-error{color:#ff9d7a}.review-surface-attachment-retry{flex:0 0 auto;padding:4px 8px;font-size:11px;font-weight:700;border-radius:8px;background:var(--steel-700);color:var(--fg);cursor:pointer;border:0}.review-surface-attachment-remove{flex:0 0 auto;display:flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0!important;border-radius:50%;background:transparent;color:rgba(255,255,255,.85);cursor:pointer;border:0}.review-surface-attachment-remove:hover{background:rgba(255,255,255,.14);color:#fff}.review-surface-attach-row{margin-top:8px}.review-surface-attach{display:inline-flex;align-items:center;gap:6px;padding:6px 9px!important;background:var(--steel-700)!important;color:var(--fg)!important;font-size:12px!important}.review-surface-attach:hover{background:var(--steel-600)!important}.review-surface-reveal-marker{position:fixed;pointer-events:none;border:2px solid var(--accent);border-radius:4px;box-shadow:0 0 0 4px rgba(244,201,93,.22);animation:review-surface-reveal-pulse 2.4s var(--ease,ease-out) forwards}@keyframes review-surface-reveal-pulse{0%{opacity:0}12%{opacity:1}70%{opacity:1}100%{opacity:0}}`;
+    style.textContent = `:host{all:initial;position:fixed;z-index:2147483647;left:0;top:0;color-scheme:dark;--ink-900:#0f1115;--ink-800:#11141a;--ink-700:#171a21;--ink-600:#1c212b;--steel-700:#2a2f3a;--steel-600:#303745;--steel-500:#3c4557;--steel-400:#8c96aa;--steel-300:#aeb6c6;--steel-200:#b9c0cf;--steel-100:#d8deea;--cream-50:#fffbf3;--cream-100:#f7f3ea;--cream-200:#e8e1cf;--brass-500:#f4c95d;--brass-400:#ffd877;--brass-ink:#17130a;--bg:var(--ink-900);--bg-panel:var(--ink-800);--bg-elevated:var(--ink-600);--fg:var(--cream-100);--fg-faint:var(--steel-300);--border:var(--steel-600);--accent:#f4c95d;--accent-hover:#ffd877;--font-sans:Geist,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--font-mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--radius-md:10px;--radius-xl:14px;--shadow-floating:0 20px 70px rgba(0,0,0,.35);font-family:var(--font-sans)}*{box-sizing:border-box}:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.review-surface-text-highlight{position:fixed;pointer-events:none;background:rgba(244,201,93,.28);border-radius:2px;box-shadow:0 0 0 1px rgba(244,201,93,.45)}.review-surface-annotation-card{position:fixed;width:min(320px,calc(100vw - 24px));padding:12px;border-radius:var(--radius-xl);background:var(--bg-panel);color:var(--fg);border:1px solid var(--accent);box-shadow:var(--shadow-floating);font:14px/1.4 var(--font-sans)}.review-surface-heading{font-weight:700;margin-bottom:6px}.review-surface-annotation-card textarea{width:100%;min-height:86px;resize:vertical;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg);color:var(--fg);padding:9px;font:inherit;font-family:var(--font-sans)}.review-surface-annotation-card textarea::placeholder{color:var(--fg-faint)}.review-surface-annotation-card .review-surface-hint{margin-top:6px;font-size:11px;color:var(--fg-faint)}.review-surface-annotation-card .review-surface-hint-alert{color:#ff9d7a;font-weight:700}.review-surface-annotation-card .review-surface-row{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}.review-surface-annotation-card button{border:0;border-radius:var(--radius-md);padding:8px 10px;font-family:var(--font-sans);font-size:13px;font-weight:700;cursor:pointer}.review-surface-annotation-card button:active{opacity:.85}.review-surface-annotation-card .review-surface-send{background:var(--accent);color:var(--brass-ink)}.review-surface-annotation-card .review-surface-send:hover{background:var(--accent-hover)}.review-surface-annotation-card .review-surface-cancel{background:var(--steel-700);color:var(--fg)}.review-surface-annotation-card .review-surface-action{background:var(--steel-700);color:var(--accent)}.review-surface-annotation-card .review-surface-action:hover{background:var(--steel-600)}.review-surface-annotation-card.is-dropping{outline:2px dashed var(--accent);outline-offset:3px}.review-surface-attachments{display:flex;flex-direction:column;gap:6px;margin-top:8px;max-height:176px;overflow-y:auto}.review-surface-attachment-chip{display:flex;align-items:center;gap:8px;padding:6px;border-radius:var(--radius-md);background:var(--bg);border:1px solid var(--border)}.review-surface-attachment-chip.is-error{border-color:#e0623d}.review-surface-attachment-thumb{width:32px;height:32px;border-radius:6px;object-fit:cover;background:var(--ink-700);flex:0 0 auto}.review-surface-attachment-thumb-empty{display:inline-block}.review-surface-attachment-body{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1 1 auto}.review-surface-attachment-name{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.review-surface-attachment-status{font-size:11px;color:var(--fg-faint)}.review-surface-attachment-status-error{color:#ff9d7a}.review-surface-attachment-retry{flex:0 0 auto;padding:4px 8px;font-size:11px;font-weight:700;border-radius:8px;background:var(--steel-700);color:var(--fg);cursor:pointer;border:0}.review-surface-attachment-remove{flex:0 0 auto;display:flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0!important;border-radius:50%;background:transparent;color:rgba(255,255,255,.85);cursor:pointer;border:0}.review-surface-attachment-remove:hover{background:rgba(255,255,255,.14);color:#fff}.review-surface-attach-row{margin-top:8px}.review-surface-attach{display:inline-flex;align-items:center;gap:6px;padding:6px 9px!important;background:var(--steel-700)!important;color:var(--fg)!important;font-size:12px!important}.review-surface-attach:hover{background:var(--steel-600)!important}.review-surface-reveal-marker{position:fixed;pointer-events:none;border:2px solid var(--accent);border-radius:4px;box-shadow:0 0 0 4px rgba(244,201,93,.22);animation:review-surface-reveal-pulse 2.4s var(--ease,ease-out) forwards}@keyframes review-surface-reveal-pulse{0%{opacity:0}12%{opacity:1}70%{opacity:1}100%{opacity:0}}`;
     shadow.appendChild(style);
     return shadow;
   }
@@ -6501,7 +6567,9 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     const heading = c.tag === "text" ? "Annotate text" : tableLabel ? isCellItself ? "Annotate cell: " + escapeAnnotationText(tableLabel) : "Annotate &lt;" + c.tag + "&gt; in " + escapeAnnotationText(tableLabel) : c.tag === "mermaid-node" ? "Annotate node" + (nodeLabel ? ": " + escapeAnnotationText(nodeLabel) : "") : "Annotate &lt;" + c.tag + "&gt;";
     const placeholder = c.tag === "text" ? "Tell the agent what to change about this text..." : isCellItself ? "Tell the agent what to change about this table cell..." : c.tag === "mermaid-node" ? "Tell the agent what to change about this diagram node..." : "Tell the agent what to change about this element...";
     const sendNowHint = /Mac|iP(hone|ad|od)/.test(navigator.platform) ? "\u2318" : "Ctrl";
-    card.innerHTML = '<div class="review-surface-heading">' + heading + '</div><textarea placeholder="' + placeholder + '"></textarea><div class="review-surface-attachments" data-attachments hidden></div><div class="review-surface-attach-row"><button class="review-surface-attach" type="button"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg><span>Attach image</span></button><input class="review-surface-attach-input" type="file" accept="' + ATTACHMENT_IMAGE_TYPES.accept + '" multiple hidden></div><div class="review-surface-hint">Enter to queue &middot; ' + sendNowHint + '+Enter to send &middot; paste or drop an image</div><div class="review-surface-row"><button class="review-surface-cancel" type="button">Cancel</button><button class="review-surface-send" type="button">Queue</button></div>';
+    card.innerHTML = '<div class="review-surface-heading">' + heading + '</div><textarea placeholder="' + placeholder + '"></textarea><div class="review-surface-attachments" data-attachments hidden></div><div class="review-surface-attach-row"><button class="review-surface-attach" type="button"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg><span>Attach image</span></button><input class="review-surface-attach-input" type="file" accept="' + ATTACHMENT_IMAGE_TYPES.accept + '" multiple hidden></div><div class="review-surface-hint">Enter to queue &middot; ' + sendNowHint + '+Enter to send &middot; paste or drop an image</div><div class="review-surface-row"><button class="review-surface-cancel" type="button">Cancel</button>' + annotationActions.map(
+      (action, index) => '<button class="review-surface-action" type="button" data-action-index="' + index + '"' + (action.title ? ' title="' + escapeAnnotationText(action.title) + '"' : "") + ">" + escapeAnnotationText(action.label) + "</button>"
+    ).join("") + '<button class="review-surface-send" type="button">Queue</button></div>';
     root.appendChild(card);
     function positionCard() {
       const left = Math.min(Math.max(12, rect.left), window.innerWidth - card.offsetWidth - 12);
@@ -6602,6 +6670,38 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     sendButton.onclick = () => {
       tryQueue();
     };
+    const cardActions = annotationActions.slice();
+    cardActions.forEach((action, index) => {
+      const button = (
+        /** @type {HTMLButtonElement | null} */
+        card.querySelector('.review-surface-action[data-action-index="' + index + '"]')
+      );
+      if (button) button.onclick = () => runAnnotationAction(action);
+    });
+    function runAnnotationAction(action) {
+      if (attachments.hasPending() || attachments.hasErrors()) {
+        attachments.setQueueBlocked(true);
+        return;
+      }
+      attachments.setQueueBlocked(false);
+      const ready = attachments.collectReady();
+      const targetOptions = { ...c, queueKey: "", attachments: ready };
+      let result;
+      try {
+        result = action.run({
+          note: textarea.value.trim(),
+          target: { uid: c.uid || "", selector: c.selector || "", tag: c.tag || "", text: c.text || "" },
+          queue: (text) => queuePrompt(text, targetOptions),
+          send: (text) => sendPrompt(text, targetOptions),
+          sendQueued: sendQueuedPrompts,
+          notify
+        });
+      } catch (error) {
+        notify(String(error?.message || error || "That action failed."));
+        return;
+      }
+      if (result !== false) closeCard();
+    }
     textarea.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
         event.preventDefault();
@@ -6627,6 +6727,8 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
   }
   window.reviewSurface = {
     queuePrompt,
+    sendPrompt,
+    addAnnotationAction,
     sendQueuedPrompts,
     endSession,
     getQueuedPrompts: () => [],
@@ -7540,7 +7642,7 @@ var AsyncMutex = class {
 };
 
 // src/page-graph.js
-var LINK_TYPES = Object.freeze(["child-of", "supersedes", "derived-from"]);
+var LINK_TYPES = Object.freeze(["child-of", "supersedes", "derived-from", "thread-of"]);
 var PAGE_STATES = Object.freeze(["needs-you", "agent-working", "new", "quiet", "ended"]);
 var SEARCH_KINDS = Object.freeze(["page", "feedback", "reply", "event"]);
 var REPLACED_FILTERS = Object.freeze(["no", "yes", "any"]);
@@ -7582,12 +7684,17 @@ function buildGraph(records) {
   const parent2 = /* @__PURE__ */ new Map();
   const replacedBy = /* @__PURE__ */ new Map();
   const derived = [];
+  const threadOf = /* @__PURE__ */ new Map();
   for (const record of records) {
     if (record.type === "child-of") parent2.set(record.from, record.to);
     else if (record.type === "supersedes") replacedBy.set(record.to, record.from);
+    else if (record.type === "thread-of") threadOf.set(record.from, record.to);
     else derived.push([record.from, record.to]);
   }
-  return { parent: parent2, replacedBy, derived };
+  return { parent: parent2, replacedBy, derived, threadOf };
+}
+function threadsOf(records, key) {
+  return [...buildGraph(records).threadOf].filter(([, page]) => page === key).map(([thread]) => thread);
 }
 function ancestors(parent2, key) {
   const seen = [];
@@ -7639,6 +7746,15 @@ function checkLink(graph, type, from, to) {
     }
     if (graph.replacedBy.has(to)) {
       throw new LinkError("That page is already replaced by another page", "REFUSED");
+    }
+    return "new";
+  }
+  if (type === "thread-of") {
+    const page = graph.threadOf.get(from);
+    if (page === to) return "unchanged";
+    if (page) throw new LinkError("That page is already a thread of another page", "REFUSED");
+    if (graph.threadOf.has(to) || [...graph.threadOf.values()].includes(from)) {
+      throw new LinkError("A thread cannot have threads of its own", "REFUSED");
     }
     return "new";
   }
@@ -7780,7 +7896,9 @@ function queryPages({ sessions, records, titles, now }, options = {}) {
         children: children.get(session.key) || [],
         replaced_by: graph.replacedBy.get(session.key) || null,
         replaces: [...graph.replacedBy].filter(([, next]) => next === session.key).map(([old]) => old),
-        derived_from: graph.derived.filter(([from]) => from === session.key).map(([, to]) => to)
+        derived_from: graph.derived.filter(([from]) => from === session.key).map(([, to]) => to),
+        thread_of: graph.threadOf.get(session.key) || null,
+        threads: [...graph.threadOf].filter(([, page]) => page === session.key).map(([thread]) => thread)
       }
     });
   }
@@ -9296,6 +9414,16 @@ function isValidWhiteboardChannelToken(token, secret, sessionKey2, now = Date.no
   const expectedBuffer = Buffer.from(expected, "utf8");
   return actualBuffer.length === expectedBuffer.length && crypto6.timingSafeEqual(actualBuffer, expectedBuffer);
 }
+function resolveAnnotationActions(env = process.env, log = void 0) {
+  const raw = String(env.REVIEW_SURFACE_ANNOTATION_ACTIONS || "").trim();
+  if (!raw) return [];
+  try {
+    return normalizeAnnotationActions(JSON.parse(raw));
+  } catch {
+    log?.("REVIEW_SURFACE_ANNOTATION_ACTIONS is not valid JSON; no annotation actions added");
+    return [];
+  }
+}
 function resolveIdleTimeoutMs(env = process.env) {
   const value = Number(env.REVIEW_SURFACE_IDLE_TIMEOUT_MS?.trim() || NaN);
   return Number.isFinite(value) && value > 0 ? value : null;
@@ -9344,6 +9472,7 @@ async function serve({
     const sessions = await store.listSessions();
     const result = await linkStore.record(sessions, link);
     const fileOf = (key) => sessions.find((session) => session.key === key)?.file;
+    if (result.records.length > 0) events.emit("links", result.records);
     for (const record of result.records) {
       void eventLog.append("link.recorded", record.from, {
         file: fileOf(record.from),
@@ -9446,7 +9575,7 @@ async function serve({
     });
   }
   app.use((req, res, next) => {
-    const guardedGet = req.method === "GET" && (req.path === "/api/poll" || req.path === "/api/events" || req.path === "/api/pages" || req.path === "/api/search" || /^\/api\/[^/]+\/export$/.test(req.path));
+    const guardedGet = req.method === "GET" && (req.path === "/api/poll" || req.path === "/api/events" || req.path === "/api/pages" || req.path === "/api/search" || /^\/api\/[^/]+\/(export|threads)$/.test(req.path) || /^\/events\/[^/]+\/threads$/.test(req.path));
     if (!guardedGet && (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS")) {
       next();
       return;
@@ -9458,6 +9587,7 @@ async function serve({
     next();
   });
   const attachmentConfig = resolveAttachmentConfig();
+  const annotationActions = resolveAnnotationActions(process.env, (line) => writeLog(`[review-surface] ${line}`));
   const attachmentStateRoot = path9.dirname(stateFile2);
   const defaultJsonParser = express.json({ limit: "2mb" });
   const whiteboardJsonParser = express.json({ limit: "20mb" });
@@ -9733,6 +9863,90 @@ async function serve({
       next(error);
     }
   });
+  async function threadSummaries(pageKey) {
+    const keys = threadsOf(await linkStore.read(), pageKey);
+    if (keys.length === 0) return [];
+    const sessions = await store.listSessions();
+    const now = Date.now();
+    const out = [];
+    for (const threadKey of keys) {
+      const session = sessions.find((candidate) => candidate.key === threadKey);
+      if (!session) continue;
+      const chat = session.chat || [];
+      const agentReplies = chat.filter((message) => message.role === "agent");
+      const last = agentReplies[agentReplies.length - 1];
+      out.push({
+        key: threadKey,
+        title: (await readPageTitle(session.file)).title,
+        url: `/session/${threadKey}`,
+        status: session.status,
+        state: derivePageState(session, now),
+        presence: computePresence(threadKey, activePolls, deliveredFeedback),
+        agent_replies: agentReplies.length,
+        last_agent_reply: last ? { at: last.at || null, text: String(last.text || "").slice(0, 240) } : null,
+        updated_at: session.updated_at || null
+      });
+    }
+    return out;
+  }
+  app.get("/api/:key/threads", async (req, res, next) => {
+    try {
+      res.json({ threads: await threadSummaries(req.params.key) });
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.get("/events/:key/threads", async (req, res, next) => {
+    const pageKey = String(req.params.key || "");
+    let known = /* @__PURE__ */ new Set();
+    let timer = null;
+    let closed = false;
+    const send = async () => {
+      timer = null;
+      if (closed) return;
+      try {
+        const threads = await threadSummaries(pageKey);
+        known = new Set(threads.map((thread) => thread.key));
+        if (!closed) res.write(`event: threads
+data: ${JSON.stringify({ threads })}
+
+`);
+      } catch (error) {
+        logEvent?.(`threads stream failed key=${pageKey}: ${error}`);
+      }
+    };
+    const schedule = () => {
+      if (!closed && !timer) timer = setTimeout(send, 150);
+    };
+    const onSession = (changed) => {
+      if (known.has(changed)) schedule();
+    };
+    const onLinks = (records) => {
+      if (records.some((record) => record.type === "thread-of" && record.to === pageKey)) schedule();
+    };
+    const sessionEvents = ["agent-reply", "agent-presence", "ended", "chat-sync", "feedback", "reload"];
+    const cleanup = () => {
+      closed = true;
+      if (timer) clearTimeout(timer);
+      for (const name of sessionEvents) events.off(name, onSession);
+      events.off("links", onLinks);
+    };
+    try {
+      res.writeHead(200, {
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache",
+        connection: "keep-alive"
+      });
+      res.write(": review-surface threads\n\n");
+      for (const name of sessionEvents) events.on(name, onSession);
+      events.on("links", onLinks);
+      req.once("close", cleanup);
+      await send();
+    } catch (error) {
+      cleanup();
+      next(error);
+    }
+  });
   app.post("/api/:key/layout-warnings/queue", async (req, res, next) => {
     try {
       const result = await store.prepareLayoutWarningFixes(req.params.key, req.body?.ids);
@@ -9930,8 +10144,12 @@ async function serve({
       await watchSession(session, watchers, events, logEvent, reloadDebounceMs);
       const artifactHtml = await readFile6(session.file, "utf8").catch(() => "");
       const { faviconTag, title } = extractArtifactHead(artifactHtml);
+      const embedded = req.query?.embed === "thread";
       if (frameAncestorOrigin) {
         res.setHeader("content-security-policy", `frame-ancestors 'self' ${frameAncestorOrigin}`);
+      } else if (embedded) {
+        res.setHeader("x-frame-options", "SAMEORIGIN");
+        res.setHeader("content-security-policy", "frame-ancestors 'self'");
       } else {
         res.setHeader("x-frame-options", "DENY");
         res.setHeader("content-security-policy", "frame-ancestors 'none'");
@@ -9947,7 +10165,8 @@ async function serve({
           chromeLoadToken: chromeLoad.chrome_load_token,
           attachmentMaxBytes: attachmentConfig.maxBytes,
           attachmentMaxCount: attachmentConfig.maxPerPrompt,
-          reloadState: reloadState(session.key)
+          reloadState: reloadState(session.key),
+          embedded
         })
       );
     } catch (error) {
@@ -10169,7 +10388,16 @@ data: ${JSON.stringify({ ended_by: endedBy || null })}
 `);
         }
       };
+      const sendThreadLinked = (records) => {
+        if (records.some((record) => record.type === "thread-of" && record.to === req.params.key)) {
+          res.write(`event: thread-linked
+data: {}
+
+`);
+        }
+      };
       events.on("reload", sendReload);
+      events.on("links", sendThreadLinked);
       events.on("agent-reply", sendAgentReply);
       events.on("agent-presence", sendPresence);
       events.on("layout-warnings", sendLayoutWarnings);
@@ -10181,6 +10409,7 @@ data: ${JSON.stringify({ ended_by: endedBy || null })}
         req.off("close", cleanup);
         sseClients.delete(res);
         events.off("reload", sendReload);
+        events.off("links", sendThreadLinked);
         events.off("agent-reply", sendAgentReply);
         events.off("agent-presence", sendPresence);
         events.off("layout-warnings", sendLayoutWarnings);
@@ -10264,7 +10493,8 @@ data: ${JSON.stringify({ state: displayPresence(computePresence(req.params.key, 
       res.type("application/javascript").send(
         createSdkJs(String(req.query.key || ""), verified.artifact_revision, verified.artifact_load_token, {
           maxAttachmentCount: attachmentConfig.maxPerPrompt,
-          maxAttachmentBytes: attachmentConfig.maxBytes
+          maxAttachmentBytes: attachmentConfig.maxBytes,
+          annotationActions
         })
       );
     } catch (error) {
@@ -10847,6 +11077,15 @@ function chromeIcon(paths, size = 16, strokeWidth = 1.7) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
 }
 var chromeIcons = {
+  bell: chromeIcon(
+    '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+    16
+  ),
+  minimize: chromeIcon('<line x1="5" y1="12" x2="19" y2="12"/>', 14),
+  external: chromeIcon(
+    '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+    14
+  ),
   more: chromeIcon(
     '<circle cx="12" cy="5" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="19" r="1.4"/>'
   ),
@@ -11004,7 +11243,8 @@ function createChromeHtml(session, {
   attachmentMaxBytes = 0,
   attachmentMaxCount = 0,
   attachmentAcceptedMime = ACCEPTED_IMAGE_MIME,
-  reloadState = null
+  reloadState = null,
+  embedded = false
 } = {}) {
   const acceptedMime = attachmentAcceptedMime.map(String);
   const sessionJson = jsonScript({
@@ -11031,10 +11271,12 @@ function createChromeHtml(session, {
     modeToggleHotkeyKey: MODE_TOGGLE_HOTKEY_KEY,
     attachmentMaxBytes,
     attachmentMaxCount,
-    attachmentAcceptedMime: acceptedMime
+    attachmentAcceptedMime: acceptedMime,
+    // Shown inside another page's thread window: that page owns the bell and the notifications.
+    embedded
   });
   const { head: pathHead, tail: pathTail } = displayPathParts(session.file);
-  const bodyClass = layoutGateEnabled ? "review-surface layout-gate-active" : "review-surface";
+  const bodyClass = (layoutGateEnabled ? "review-surface layout-gate-active" : "review-surface") + (embedded ? " embedded-thread" : "");
   const layoutGateHidden = layoutGateEnabled ? "" : " hidden";
   const modeHotkeyUpper = MODE_TOGGLE_HOTKEY_KEY.toUpperCase();
   const modeToggleHint = `Toggle annotate/explore mode (\u2318${modeHotkeyUpper} / Ctrl+${modeHotkeyUpper})`;
@@ -11048,8 +11290,9 @@ ${faviconTag}
 <link rel="stylesheet" href="/chrome.css">
 </head>
 <body class="${bodyClass}">
-<div class="bar"><div class="brand"><span class="brand-mark">Cadre</span></div><div class="spacer" aria-hidden="true"></div><div class="warnings-wrap" id="warningsWrap" hidden><button class="warnings-button" id="warningsButton" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="warningsDrawer">${chromeIcons.warning}<span class="warnings-count" id="warningsCount">0</span></button><div class="menu warnings-drawer" id="warningsDrawer" role="dialog" aria-labelledby="warningsTitle" aria-describedby="warningsSummary" hidden><div class="warnings-head"><h2 class="warnings-title" id="warningsTitle">Layout issues</h2><p class="warnings-summary" id="warningsSummary"></p></div><div class="warnings-toolbar"><label class="warnings-selectall"><input type="checkbox" id="warningsSelectAll"><span>Select all</span></label><span class="warnings-selected" id="warningsSelected" role="status" aria-live="polite"></span></div><div class="warnings-list" id="warningsList"></div><div class="warnings-foot"><p class="warnings-note">Queueing sends a repair request with your next feedback. An issue is marked resolved only after a newer artifact load and a complete check at the same viewport no longer finds it.</p><button class="button" id="warningsQueueButton" type="button" disabled>Queue selected fixes</button></div></div></div><button class="annotate-switch" id="panelCollapse" type="button" aria-pressed="true" title="Show or hide the conversation panel"><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span><span>Chat</span></button><button class="annotate-switch" id="annotation" type="button" aria-pressed="true" title="${escapeHtml(modeToggleHint)}"><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span><span>Annotate</span></button><div class="more-wrap" id="moreWrap"><button class="more-button" id="moreButton" type="button" title="More" aria-haspopup="menu" aria-expanded="false">${chromeIcons.more}</button><div class="menu more-menu" id="moreMenu" hidden><div class="menu-head"><div class="menu-label">Editing</div><button class="menu-file" id="copyPath" type="button" title="Copy path \xB7 ${escapeHtml(session.file)}">${chromeIcons.file}<span class="menu-file-text"><span class="path-head">${escapeHtml(pathHead)}</span><span class="path-tail">${escapeHtml(pathTail)}</span></span><span class="copy-hint" id="copyHint"><span class="icon-copy">${chromeIcons.copy}</span><span class="icon-check">${chromeIcons.check}</span><span id="copyHintText">Copy</span></span></button></div><div class="menu-rule"></div><button class="menu-item" id="reloadArtifact" type="button">${chromeIcons.refresh}<span>Reload artifact</span></button><button class="menu-item" id="copySnapshot" type="button">${chromeIcons.camera}<span>Copy DOM snapshot</span></button><button class="menu-item" id="exportArtifact" type="button">${chromeIcons.download}<span>Export standalone HTML</span></button><button class="menu-item" id="shareArtifact" type="button">${chromeIcons.globe}<span>Publish link</span></button><div class="menu-rule"></div><button class="menu-item danger" id="end" type="button">${chromeIcons.exit}<span>End session</span></button></div></div></div>
+<div class="bar"><div class="brand"><span class="brand-mark">Cadre</span></div><div class="spacer" aria-hidden="true"></div><div class="warnings-wrap" id="warningsWrap" hidden><button class="warnings-button" id="warningsButton" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="warningsDrawer">${chromeIcons.warning}<span class="warnings-count" id="warningsCount">0</span></button><div class="menu warnings-drawer" id="warningsDrawer" role="dialog" aria-labelledby="warningsTitle" aria-describedby="warningsSummary" hidden><div class="warnings-head"><h2 class="warnings-title" id="warningsTitle">Layout issues</h2><p class="warnings-summary" id="warningsSummary"></p></div><div class="warnings-toolbar"><label class="warnings-selectall"><input type="checkbox" id="warningsSelectAll"><span>Select all</span></label><span class="warnings-selected" id="warningsSelected" role="status" aria-live="polite"></span></div><div class="warnings-list" id="warningsList"></div><div class="warnings-foot"><p class="warnings-note">Queueing sends a repair request with your next feedback. An issue is marked resolved only after a newer artifact load and a complete check at the same viewport no longer finds it.</p><button class="button" id="warningsQueueButton" type="button" disabled>Queue selected fixes</button></div></div></div><div class="threads-wrap" id="threadsWrap" hidden><button class="threads-button" id="threadsButton" type="button" title="Study threads" aria-haspopup="menu" aria-expanded="false" aria-controls="threadsMenu">${chromeIcons.bell}<span class="threads-count" id="threadsCount" hidden>0</span></button><div class="menu threads-menu" id="threadsMenu" role="menu" aria-label="Study threads" hidden><div class="menu-label">Study threads</div><div class="threads-list" id="threadsList"></div><div class="menu-rule"></div><button class="menu-item" id="threadsNotify" type="button" hidden>${chromeIcons.bell}<span>Notify me when I am in another tab</span></button></div></div><button class="annotate-switch" id="panelCollapse" type="button" aria-pressed="true" title="Show or hide the conversation panel"><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span><span>Chat</span></button><button class="annotate-switch" id="annotation" type="button" aria-pressed="true" title="${escapeHtml(modeToggleHint)}"><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span><span>Annotate</span></button><div class="more-wrap" id="moreWrap"><button class="more-button" id="moreButton" type="button" title="More" aria-haspopup="menu" aria-expanded="false">${chromeIcons.more}</button><div class="menu more-menu" id="moreMenu" hidden><div class="menu-head"><div class="menu-label">Editing</div><button class="menu-file" id="copyPath" type="button" title="Copy path \xB7 ${escapeHtml(session.file)}">${chromeIcons.file}<span class="menu-file-text"><span class="path-head">${escapeHtml(pathHead)}</span><span class="path-tail">${escapeHtml(pathTail)}</span></span><span class="copy-hint" id="copyHint"><span class="icon-copy">${chromeIcons.copy}</span><span class="icon-check">${chromeIcons.check}</span><span id="copyHintText">Copy</span></span></button></div><div class="menu-rule"></div><button class="menu-item" id="reloadArtifact" type="button">${chromeIcons.refresh}<span>Reload artifact</span></button><button class="menu-item" id="copySnapshot" type="button">${chromeIcons.camera}<span>Copy DOM snapshot</span></button><button class="menu-item" id="exportArtifact" type="button">${chromeIcons.download}<span>Export standalone HTML</span></button><button class="menu-item" id="shareArtifact" type="button">${chromeIcons.globe}<span>Publish link</span></button><div class="menu-rule"></div><button class="menu-item danger" id="end" type="button">${chromeIcons.exit}<span>End session</span></button></div></div></div>
 <div class="layout"><div class="frame"><iframe id="artifact" sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads" allow="fullscreen" data-artifact-src="/artifact/${session.key}/index.html"></iframe></div><div class="panel-scrim" id="panelScrim"></div><aside class="panel" id="panel"><div class="panel-head" id="panelHead"><span class="panel-handle" aria-hidden="true"></span><div class="panel-head-row"><h2>Conversation</h2><span class="panel-summary" id="panelSummary" role="status" aria-live="polite"></span><button class="panel-toggle" id="panelToggle" type="button" aria-expanded="false" aria-controls="panel" aria-label="Show conversation">${chromeIcons.chevronUp}</button></div></div><div class="panel-scroll" id="panelScroll"><div class="chat" id="chatLog"></div><div class="annotation-pills" id="annotationPills"></div></div><div class="composer" id="chatComposer"><div class="presence-banner handoff-banner" id="handoffBanner" hidden><span>This review is open in another Review Surface tab.</span><button class="handoff-takeover" id="handoffTakeover" type="button">Take over here</button></div><div class="presence-banner handoff-banner" id="outdatedBanner" hidden><span id="outdatedText">The Review Surface server this page was connected to is no longer running. Reloading will work once it is running again.</span><span class="outdated-actions"><button class="handoff-takeover" id="outdatedReload" type="button">Check and reload</button><button class="handoff-takeover" id="outdatedDismiss" type="button">Dismiss</button></span></div><div class="presence-banner" id="presenceBanner" hidden>Your agent is not listening. If this persists, ask your agent to poll for updates from Review Surface.</div><textarea id="chatInput" placeholder="Write a message for the agent..."></textarea><div class="chat-attachments" id="chatAttachments"></div><div class="chat-attachment-toolbar"><button class="chat-attach" id="chatAttach" type="button">Attach images</button><input id="chatAttachInput" type="file" accept="${escapeHtml(acceptedMime.join(","))}" multiple hidden><span class="chat-attachment-notice" id="chatAttachmentNotice" role="status"></span></div><div class="send-hint" id="sendHint" hidden>Write a message or annotate an element first.</div><div class="actions" id="sendActions"><button class="button button-danger" id="sendAndEnd" type="button">${chromeIcons.exit}<span>Send &amp; End</span></button><button class="button" id="send">Send to Agent</button></div></div></aside></div>
+<div class="thread-modal" id="threadModal" role="dialog" aria-modal="false" aria-labelledby="threadModalTitle" hidden><div class="thread-scrim" id="threadScrim"></div><div class="thread-window"><div class="thread-head"><h2 class="thread-title" id="threadModalTitle"></h2><span class="thread-presence" id="threadModalPresence" role="status" aria-live="polite"></span><a class="thread-action" id="threadOpenTab" href="#" target="_blank" rel="noopener" title="Open in its own tab">${chromeIcons.external}</a><button class="thread-action" id="threadMinimize" type="button" title="Minimize - it keeps running, and the bell tells you when it answers" aria-label="Minimize thread">${chromeIcons.minimize}</button></div><div class="thread-frames" id="threadFrames"></div></div></div>
 <div class="share-overlay" id="shareDialog" role="dialog" aria-modal="true" aria-labelledby="shareTitleText" hidden><form class="share-card" id="shareForm"><div class="share-head"><div><div class="share-kicker">Publish to <a class="share-link" href="https://ht-ml.app" target="_blank" rel="noopener noreferrer">ht-ml.app</a></div><h2 id="shareTitleText">Publish artifact</h2></div><button class="share-close" id="shareClose" type="button" aria-label="Close publish dialog"><svg width="14" height="14" viewBox="0 0 10 10" fill="none" aria-hidden="true" focusable="false"><path d="M1 1L9 9M9 1L1 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button></div><p class="share-note">ht-ml.app is a separate, third-party hosting service, not part of Review Surface. Publishing sends this artifact to its servers.</p><p class="share-copy">This uploads this artifact to ht-ml.app with local assets inlined. Without a password, the page is PUBLIC and anyone with the link can open it. With a password, the page is PRIVATE and viewers must supply the password to view.</p><p class="share-note">Do not publish secrets. The Review Surface annotation SDK is not included.</p><div class="share-grid"><label>Password (optional)<input id="sharePassword" name="password" type="password" autocomplete="new-password" placeholder="Leave blank for a public page"></label></div><div class="share-status" id="shareStatus" role="status"></div><div class="share-result" id="shareResult" hidden><label>Share URL<div class="share-copy-row"><input id="shareUrl" readonly><button class="share-copy-btn" id="copyShareUrl" type="button">Copy URL</button></div></label><label>Update key (secret)<div class="share-copy-row"><input id="shareUpdateKey" readonly><button class="share-copy-btn" id="copyUpdateKey" type="button">Copy key</button></div></label><p class="share-note">Keep the update key private. ht-ml.app returns it once and it is the only way to update or delete this page later.</p></div><div class="share-actions"><button class="share-cancel" id="shareCancel" type="button">Cancel</button><button class="button" id="sharePublish" type="submit">Publish</button></div></form></div>
 <div class="ended-overlay layout-gate-overlay" id="layoutGateOverlay"${layoutGateHidden} data-state="checking"><img class="layout-gate-ring" src="/hololoop-ring.svg" alt=""><div class="ended-card"><div class="ended-title" id="layoutGateTitle">Checking layout.<br>One moment.</div><p class="ended-copy" id="layoutGateCopy">Review Surface is waiting for fonts and final geometry before revealing this artifact.</p><button class="button ended-action" id="layoutGateAction" type="button">Show anyway</button></div></div>
 <div class="ended-overlay" id="endedOverlay" hidden><div class="ended-card"><div class="ended-title">Session ended.<br>Return to your agent to continue.</div><p class="ended-copy">${escapeHtml(session.file)}</p></div></div>
@@ -11088,7 +11331,7 @@ function serializeModuleHelpers(module) {
     names: entries.map(([name]) => name)
   };
 }
-function createSdkJs(key, artifactRevision = 0, artifactLoadToken = "", { maxAttachmentCount, maxAttachmentBytes, acceptedImageMime = ACCEPTED_IMAGE_MIME } = {}) {
+function createSdkJs(key, artifactRevision = 0, artifactLoadToken = "", { maxAttachmentCount, maxAttachmentBytes, acceptedImageMime = ACCEPTED_IMAGE_MIME, annotationActions = [] } = {}) {
   const mermaidHelperSource = serializeModuleHelpers(mermaid_node_exports);
   const tableHelperSource = serializeModuleHelpers(table_cell_exports);
   const revisionNumber = Number(artifactRevision);
@@ -11097,7 +11340,8 @@ function createSdkJs(key, artifactRevision = 0, artifactLoadToken = "", { maxAtt
   const sdkOptions = {
     maxAttachmentCount: Number.isFinite(maxAttachmentCount) ? maxAttachmentCount : void 0,
     maxAttachmentBytes: Number.isFinite(maxAttachmentBytes) ? maxAttachmentBytes : void 0,
-    acceptedImageMime: acceptedImageMime.map(String)
+    acceptedImageMime: acceptedImageMime.map(String),
+    annotationActions: normalizeAnnotationActions(annotationActions)
   };
   return `(() => {
 const key=${JSON.stringify(key)};
@@ -11119,6 +11363,9 @@ const planClipboardPaste=${planClipboardPaste.toString()};
 const acceptedImageTypes=${acceptedImageTypes.toString()};
 const isTrustedAttachmentResult=${isTrustedAttachmentResult.toString()};
 const deriveAttachmentNoticeState=${deriveAttachmentNoticeState.toString()};
+const ANNOTATION_ACTION_LIMIT=${ANNOTATION_ACTION_LIMIT};
+const normalizeAnnotationActions=${normalizeAnnotationActions.toString()};
+const annotationActionPrompt=${annotationActionPrompt.toString()};
 ${mermaidHelperSource.declarations}
 const mermaidHelpers={ ${mermaidHelperSource.names.join(", ")} };
 ${tableHelperSource.declarations}
@@ -12571,7 +12818,7 @@ Usage:
   review-surface <html-file> [--no-open] [--no-gate] [--reopen]
   review-surface poll <html-file> [--agent-reply "..."]
   review-surface journal <html-file> [--limit <n>]
-  review-surface link <child-of|supersedes|derived-from> <page> <page> [--json]
+  review-surface link <child-of|supersedes|derived-from|thread-of> <page> <page> [--json]
   review-surface pages [--under <page>] [--depth <n>] [--state <states>] [--text <t>] [--replaced no|yes|any] [--json]
   review-surface search <text> [--kind <kinds>] [--json]
   review-surface end <html-file>
@@ -12603,9 +12850,9 @@ This command long-polls indefinitely for queued user prompts. It stays silent wh
 
 Print the session's accepted feedback batches from the append-only journal as JSON, oldest first. Every batch the user ever sent is journaled at accept time and never removed by delivery, so this is the recovery path when a delivered poll response was lost or mangled downstream - re-read the most recent batch here instead of asking the user to resubmit. --limit keeps only the newest <n> batches.
 `,
-    link: `Usage: review-surface link <child-of|supersedes|derived-from> <page> <page> [--json]
+    link: `Usage: review-surface link <child-of|supersedes|derived-from|thread-of> <page> <page> [--json]
 
-Record one typed link between two pages already opened with review-surface: \`child-of <page> <parent>\` files a page under a parent (a later child-of moves it), \`supersedes <new> <old>\` marks the old page replaced, \`derived-from <page> <source>\` records where a page came from. A page is a session key, a file path, or a unique path suffix. Refused, with nothing written: an unknown type, a self-link, a nesting cycle, a supersede cycle, a page already replaced by another page, and a page name that matches more than one page. Prints the result as TOON, or as raw JSON with --json.
+Record one typed link between two pages already opened with review-surface: \`child-of <page> <parent>\` files a page under a parent (a later child-of moves it), \`supersedes <new> <old>\` marks the old page replaced, \`derived-from <page> <source>\` records where a page came from. \`thread-of <thread> <page>\` makes a page a side conversation about another: that page's bell lists it and opens it in a window over the page. A page is a session key, a file path, or a unique path suffix. Refused, with nothing written: an unknown type, a self-link, a nesting cycle, a supersede cycle, a page already replaced by another page, a thread of a second page or of a thread, and a page name that matches more than one page. Prints the result as TOON, or as raw JSON with --json.
 `,
     pages: `Usage: review-surface pages [--under <page>] [--depth <n>] [--state <states>] [--text <t>] [--replaced no|yes|any] [--json]
 

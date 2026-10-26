@@ -1,4 +1,4 @@
-/* global EventSource, document, location, window */
+/* global EventSource, Notification, document, location, window */
 
 const sessionDataElement = document.getElementById("review-surface-session");
 const sessionData = JSON.parse(sessionDataElement?.textContent || "{}");
@@ -17,6 +17,10 @@ const reviewStateStorageKey = "review-surface:review-state:" + key;
 const retiredDraftStorageKey = "review-surface:retired-drafts:" + key;
 /** @type {any[]} */
 const retiredDraftNodes = [];
+/** @type {Set<HTMLElement>} */
+const unsentBubbles = new Set();
+/** @type {Map<HTMLElement, { unsent: any }>} */
+const unsentEntries = new Map();
 const internalQueueKeyField = "_reviewSurfaceQueueKey";
 const initialChat = Array.isArray(sessionData.initialChat) ? sessionData.initialChat : [];
 const MODE_TOGGLE_HOTKEY_KEY = String(sessionData.modeToggleHotkeyKey || "").toLowerCase();
@@ -528,7 +532,7 @@ function addChat(role, text, shouldScroll = true) {
 }
 
 function syncChat(chat) {
-  for (const el of [...chatLog.querySelectorAll(".bubble.user,.bubble.agent:not(.agent-working)")]) {
+  for (const el of [...chatLog.querySelectorAll(".bubble.user:not(.unsent),.bubble.agent:not(.agent-working)")]) {
     el.remove();
   }
 
@@ -538,6 +542,7 @@ function syncChat(chat) {
   // Handed-back drafts were written at the end of the conversation, and a rebuild re-appends the
   // whole transcript - so without this they end up above it, where the scroll below would leave
   // them off-screen. They are the one thing here the user cannot recover anywhere else.
+  for (const bubble of unsentBubbles) chatLog.appendChild(bubble);
   for (const note of retiredDraftNodes) chatLog.appendChild(note);
   const anchor = retiredDraftNodes[retiredDraftNodes.length - 1] || workingBubble || lastChatBubble;
   if (anchor) scrollElementIntoView(anchor);
@@ -648,7 +653,11 @@ function discardUnrestorableDraft(selector) {
 function loadRetiredDrafts() {
   const stored = loadJsonState(retiredDraftStorageKey, []);
   if (!Array.isArray(stored)) return [];
-  return stored.filter((entry) => typeof entry === "string" && entry.trim());
+  return stored.filter(
+    (entry) =>
+      (typeof entry === "string" && entry.trim()) ||
+      (entry && typeof entry === "object" && typeof entry.unsent?.prompt === "string"),
+  );
 }
 
 // No entry already handed back is ever dropped to make room for a new one. When browser storage
@@ -1204,6 +1213,97 @@ function sendQueued(endAfter) {
 
   if (endAfter && !chipsBlocked) endAfterSubmit = true;
   requestSnapshot("submit");
+}
+
+// One prompt from an annotation action that asked to go now (a "Study" button): posted
+// alone, through the same endpoint as Send, with the queue left exactly as it was - the
+// reviewer's other drafted annotations still go when they press Send. No DOM snapshot:
+// that belongs to the full review, and this is one aside.
+async function sendPromptNow(rawPrompt) {
+  const prompt = sanitizeQueuedPrompt(rawPrompt);
+  if (prompt) await deliverPromptNow(prompt, null);
+}
+
+async function deliverPromptNow(prompt, unsentBubble) {
+  if (ended) {
+    showSendHint("Session ended. Return to your agent to continue.", 6000);
+    return false;
+  }
+  try {
+    const response = await fetch("/api/" + key + "/prompts", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prompts: [stripInternalPromptFields(prompt)] }),
+    });
+    if (!response.ok) {
+      if (response.status === 409) {
+        const data = await response.json().catch(() => null);
+        if (data?.status === "ended") {
+          markSessionEnded();
+          showSendHint("Session ended. Return to your agent to continue.", 6000);
+          return false;
+        }
+      }
+      throw new Error("failed to send");
+    }
+  } catch {
+    markPromptUnsent(prompt, unsentBubble);
+    showSendHint("That didn't send. It is kept in the conversation with a Resend button.", 6000);
+    return false;
+  }
+  if (unsentBubble) {
+    unsentBubble.classList.remove("unsent");
+    unsentBubble.querySelector(".unsent-mark")?.remove();
+    unsentBubbles.delete(unsentBubble);
+    const entry = unsentEntries.get(unsentBubble);
+    unsentEntries.delete(unsentBubble);
+    if (entry) {
+      retiredDrafts = retiredDrafts.filter((candidate) => candidate !== entry);
+      saveJsonState(retiredDraftStorageKey, retiredDrafts);
+    }
+  } else {
+    addChat("user", prompt.prompt);
+  }
+  renderedChat.push({ role: "user", text: prompt.prompt });
+  if (agentPresence === "listening") setAgentPresence("working");
+  return true;
+}
+
+function markPromptUnsent(prompt, existing, storedEntry = null) {
+  const bubble = existing || addChat("user", prompt.prompt);
+  if (!bubble) return;
+  bubble.classList.add("unsent");
+  unsentBubbles.add(bubble);
+  if (!unsentEntries.has(bubble)) {
+    const entry = storedEntry || { unsent: stripInternalPromptFields(prompt) };
+    if (!storedEntry) {
+      retiredDrafts = [...retiredDrafts, entry];
+      saveJsonState(retiredDraftStorageKey, retiredDrafts);
+    }
+    unsentEntries.set(bubble, entry);
+  }
+  let mark = bubble.querySelector(".unsent-mark");
+  if (!mark) {
+    mark = document.createElement("div");
+    mark.className = "unsent-mark";
+    const label = document.createElement("span");
+    label.textContent = "Not sent";
+    const resend = document.createElement("button");
+    resend.type = "button";
+    resend.className = "unsent-resend";
+    resend.textContent = "Resend";
+    mark.appendChild(label);
+    mark.appendChild(resend);
+    bubble.appendChild(mark);
+  }
+  const resend = /** @type {HTMLButtonElement | null} */ (mark.querySelector(".unsent-resend"));
+  if (resend) {
+    resend.disabled = false;
+    resend.onclick = () => {
+      if (!ended) resend.disabled = true;
+      void deliverPromptNow(prompt, bubble);
+    };
+  }
 }
 
 async function submitQueued() {
@@ -2849,6 +2949,7 @@ window.addEventListener("message", (event) => {
   // removal note below: the iframe cannot be trusted to decide a delete, and the
   // chrome cannot see every live reference, so reclamation is the sweeper's job.
   if (msg.type === "review-surface:sendQueuedPrompts") sendQueued();
+  if (msg.type === "review-surface:sendPrompt") sendPromptNow(msg.prompt);
   if (msg.type === "review-surface:endSession") endSession();
   if (msg.type === "review-surface:toggleAnnotationMode") toggleAnnotationMode();
   // Only on a real click: the reviewer's click inside the frame activates this window too, and
@@ -3176,6 +3277,11 @@ document.addEventListener("keydown", (event) => {
       closeWhiteboard();
     } else if (!shareDialog.hidden) {
       closeShareDialog();
+    } else if (!threadsMenu.hidden) {
+      setThreadsMenuOpen(false);
+      threadsButton.focus();
+    } else if (!threadModal.hidden) {
+      minimizeThread();
     } else if (warningsDrawerOpen) {
       closeWarningsDrawer({ restoreFocus: true });
     } else if (!moreMenu.hidden) {
@@ -3310,6 +3416,7 @@ function openLiveStream() {
   stream.addEventListener("agent-presence", (event) => setAgentPresence(JSON.parse(event.data).state));
   stream.addEventListener("layout-warnings", (event) => setLayoutWarnings(JSON.parse(event.data).warnings || []));
   stream.addEventListener("ended", () => markSessionEnded());
+  stream.addEventListener("thread-linked", () => openThreadsStream());
   // A reconnecting stream means this chrome may have missed updates while it was away.
   let checkedOutage = false;
   stream.addEventListener("open", () => {
@@ -3331,13 +3438,267 @@ function closeLiveStream() {
 document.addEventListener("visibilitychange", () => (document.hidden ? closeLiveStream() : openLiveStream()));
 if (!document.hidden) openLiveStream();
 
+// Study threads: side conversations about this page, each its own session. The bell lists them
+// and counts the ones with a reply you have not seen; clicking one opens it in the thread window,
+// a central window over this page that keeps running when minimized. The list arrives on its own
+// stream, opened only once the page has a thread: every stream is one of the six connections a
+// browser allows per host. While the tab is hidden it stays open only while a thread is live, so a
+// reply that lands while you are elsewhere can raise a desktop notification that opens the thread.
+const threadsWrap = /** @type {HTMLDivElement} */ (document.getElementById("threadsWrap"));
+const threadsButton = /** @type {HTMLButtonElement} */ (document.getElementById("threadsButton"));
+const threadsCount = /** @type {HTMLSpanElement} */ (document.getElementById("threadsCount"));
+const threadsMenu = /** @type {HTMLDivElement} */ (document.getElementById("threadsMenu"));
+const threadsList = /** @type {HTMLDivElement} */ (document.getElementById("threadsList"));
+const threadsNotify = /** @type {HTMLButtonElement} */ (document.getElementById("threadsNotify"));
+const threadModal = /** @type {HTMLDivElement} */ (document.getElementById("threadModal"));
+const threadScrim = /** @type {HTMLDivElement} */ (document.getElementById("threadScrim"));
+const threadModalTitle = /** @type {HTMLHeadingElement} */ (document.getElementById("threadModalTitle"));
+const threadModalPresence = /** @type {HTMLSpanElement} */ (document.getElementById("threadModalPresence"));
+const threadOpenTab = /** @type {HTMLAnchorElement} */ (document.getElementById("threadOpenTab"));
+const threadMinimize = /** @type {HTMLButtonElement} */ (document.getElementById("threadMinimize"));
+const threadFrames = /** @type {HTMLDivElement} */ (document.getElementById("threadFrames"));
+const embeddedThread = Boolean(sessionData.embedded);
+/** @type {any[]} */
+let threads = [];
+/** @type {Map<string, number> | null} */
+let threadReplyCounts = null;
+/** @type {Map<string, HTMLIFrameElement>} */
+const threadFrameByKey = new Map();
+let activeThread = "";
+let threadsStream = /** @type {EventSource | null} */ (null);
+
+/** @param {string} threadKey */
+function threadSeenCount(threadKey) {
+  try {
+    return Number(window.localStorage.getItem("review-surface:thread-seen:" + threadKey)) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** @param {any} thread */
+function markThreadSeen(thread) {
+  try {
+    window.localStorage.setItem("review-surface:thread-seen:" + thread.key, String(thread.agent_replies || 0));
+  } catch {
+    // storage unavailable: the badge simply forgets across reloads
+  }
+}
+
+function threadWindowShowing() {
+  return !threadModal.hidden && !document.hidden;
+}
+
+/** @param {any} thread */
+function threadUnread(thread) {
+  if (thread.key === activeThread && threadWindowShowing()) return false;
+  return (thread.agent_replies || 0) > threadSeenCount(thread.key);
+}
+
+/** @param {any} thread */
+function threadPresenceLabel(thread) {
+  if (thread.status === "ended") return "Ended";
+  if (thread.presence === "working") return "Thinking…";
+  if (thread.presence === "listening") return "Listening";
+  // Its engine is still writing the first answer, and only polls once that is sent.
+  if (!thread.agent_replies) return "Starting…";
+  return "Asleep · your next message wakes it";
+}
+
+/** @param {any} thread */
+function threadLive(thread) {
+  if (thread.status === "ended") return false;
+  return thread.presence === "working" || thread.presence === "listening" || !thread.agent_replies;
+}
+
+/** @param {boolean} open */
+function setThreadsMenuOpen(open) {
+  setMenuOpen(threadsButton, threadsMenu, open);
+}
+
+function renderThreads() {
+  threadsWrap.hidden = embeddedThread || threads.length === 0;
+  const unread = threads.filter(threadUnread);
+  threadsCount.hidden = unread.length === 0;
+  threadsCount.textContent = String(unread.length);
+  threadsButton.classList.toggle("has-unread", unread.length > 0);
+  threadsButton.setAttribute("aria-label", unread.length ? `Study threads, ${unread.length} new` : "Study threads");
+  const ordered = [...threads].sort(
+    (a, b) =>
+      Number(threadUnread(b)) - Number(threadUnread(a)) || String(b.updated_at).localeCompare(String(a.updated_at)),
+  );
+  threadsList.replaceChildren(
+    ...ordered.map((thread) => {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "menu-item thread-item" + (threadUnread(thread) ? " unread" : "");
+      item.setAttribute("role", "menuitem");
+      item.dataset.threadKey = thread.key;
+      const title = document.createElement("span");
+      title.className = "thread-item-title";
+      title.textContent = thread.title;
+      const meta = document.createElement("span");
+      meta.className = "thread-item-meta";
+      meta.textContent = threadPresenceLabel(thread);
+      item.appendChild(title);
+      item.appendChild(meta);
+      if (thread.last_agent_reply?.text) {
+        const snippet = document.createElement("span");
+        snippet.className = "thread-item-snippet";
+        snippet.textContent = thread.last_agent_reply.text;
+        item.appendChild(snippet);
+      }
+      item.onclick = () => openThread(thread.key);
+      return item;
+    }),
+  );
+  threadsNotify.hidden = !("Notification" in window) || Notification.permission !== "default";
+  const active = threads.find((thread) => thread.key === activeThread);
+  if (active) {
+    threadModalTitle.textContent = active.title;
+    threadModalPresence.textContent = threadPresenceLabel(active);
+  }
+}
+
+/** @param {string} threadKey */
+function openThread(threadKey) {
+  const thread = threads.find((candidate) => candidate.key === threadKey);
+  if (!thread) return;
+  activeThread = threadKey;
+  let threadFrame = threadFrameByKey.get(threadKey);
+  if (!threadFrame) {
+    threadFrame = document.createElement("iframe");
+    threadFrame.className = "thread-frame";
+    threadFrame.title = thread.title;
+    threadFrame.src = thread.url + "?embed=thread";
+    threadFrameByKey.set(threadKey, threadFrame);
+    threadFrames.appendChild(threadFrame);
+  }
+  for (const [frameKey, element] of threadFrameByKey) element.hidden = frameKey !== threadKey;
+  threadOpenTab.href = thread.url;
+  threadModal.hidden = false;
+  // Replies that arrived while the window was minimized landed below the fold of a hidden frame;
+  // the thread is same-origin, so bring its conversation to the newest message.
+  const shown = threadFrame;
+  window.requestAnimationFrame(() => {
+    const scroller = shown.contentDocument?.getElementById("panelScroll");
+    if (scroller) scroller.scrollTop = scroller.scrollHeight;
+  });
+  setThreadsMenuOpen(false);
+  markThreadSeen(thread);
+  renderThreads();
+}
+
+// Minimized, not closed: the thread's frame stays loaded so its conversation keeps streaming, and
+// the bell takes over telling you when it answers.
+function minimizeThread() {
+  if (threadModal.hidden) return;
+  threadModal.hidden = true;
+  activeThread = "";
+  renderThreads();
+  threadsButton.focus();
+}
+
+/** @param {any} thread */
+function notifyThreadReply(thread) {
+  if (!("Notification" in window) || Notification.permission !== "granted" || !document.hidden) return;
+  const note = new Notification(thread.title, {
+    body: thread.last_agent_reply?.text || "New reply",
+    tag: "review-surface-thread-" + thread.key,
+  });
+  note.onclick = () => {
+    window.focus();
+    openThread(thread.key);
+    note.close();
+  };
+}
+
+/** @param {any[]} next */
+function receiveThreads(next) {
+  const previous = threadReplyCounts;
+  threads = next;
+  threadReplyCounts = new Map(next.map((thread) => [thread.key, thread.agent_replies || 0]));
+  if (previous) {
+    for (const thread of next) {
+      // A thread that appears while this page is open was just started from it (the Study
+      // button): it pops up rather than waiting behind the bell.
+      if (!previous.has(thread.key)) {
+        if (thread.status !== "ended") openThread(thread.key);
+        continue;
+      }
+      if ((thread.agent_replies || 0) > (previous.get(thread.key) || 0)) notifyThreadReply(thread);
+    }
+  }
+  const active = next.find((thread) => thread.key === activeThread);
+  if (active && threadWindowShowing()) markThreadSeen(active);
+  renderThreads();
+  if (next.length === 0 || (document.hidden && !next.some(threadLive))) closeThreadsStream();
+}
+
+function openThreadsStream() {
+  if (embeddedThread || threadsStream || typeof EventSource === "undefined") return;
+  threadsStream = new EventSource("/events/" + key + "/threads");
+  threadsStream.addEventListener("threads", (event) => receiveThreads(JSON.parse(event.data).threads || []));
+}
+
+function closeThreadsStream() {
+  threadsStream?.close();
+  threadsStream = null;
+}
+
+async function checkForThreads() {
+  if (embeddedThread || threadsStream) return;
+  try {
+    const response = await fetch("/api/" + key + "/threads");
+    if (!response.ok || threadsStream) return;
+    receiveThreads((await response.json()).threads || []);
+  } catch {
+    return;
+  }
+  if (threads.length > 0 && (!document.hidden || threads.some(threadLive))) openThreadsStream();
+}
+
+threadsButton.onclick = () => {
+  const open = threadsMenu.hidden;
+  closeMenus();
+  setThreadsMenuOpen(open);
+};
+threadsNotify.onclick = () => {
+  Notification.requestPermission().then(() => renderThreads());
+};
+threadMinimize.onclick = minimizeThread;
+threadScrim.onclick = minimizeThread;
+document.addEventListener("mousedown", (event) => {
+  if (!threadsMenu.hidden && !threadsWrap.contains(/** @type {Node} */ (event.target))) setThreadsMenuOpen(false);
+});
+// Coming back to the tab is when the open thread's replies are actually read.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    if (!threads.some(threadLive)) closeThreadsStream();
+    return;
+  }
+  if (threads.length > 0) openThreadsStream();
+  else void checkForThreads();
+  const active = threads.find((thread) => thread.key === activeThread);
+  if (active && !threadModal.hidden) markThreadSeen(active);
+  renderThreads();
+});
+void checkForThreads();
+
 applySheetState();
 render();
 setChromeOutdated(false);
 setWarningsDrawerOpen(false);
 renderWarnings();
 initialChat.forEach((item) => addChat(item.role, item.text));
-retiredDrafts.forEach((text) => renderRetiredDraft(text));
+retiredDrafts.forEach((entry) => {
+  if (typeof entry === "string") {
+    renderRetiredDraft(entry);
+    return;
+  }
+  const prompt = sanitizeQueuedPrompt(entry.unsent);
+  if (prompt) markPromptUnsent(prompt, null, entry);
+});
 setAgentPresence(sessionData.delivery === "push" ? "push" : "waiting");
 // The session already ended before this page (re)loaded, so there is no future SSE `ended` event
 // to wait for - start read-only instead of looking live until a Send gets silently refused.
