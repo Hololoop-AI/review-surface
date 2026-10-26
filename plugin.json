@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "review-surface",
-  "version": "0.2.0",
+  "version": "0.1.57",
   "description": "Artifact-first review surface for AI agents: annotate, decide, whiteboard — locally served, feedback as consumable events.",
   "author": {
     "name": "Kun Chen",
