@@ -323,7 +323,12 @@ test("a page is unseen until a browser loads the version the agent last wrote", 
     assert.equal(page.viewed_at, null);
     assert.equal(page.unseen, true);
     const seen = new Date(Date.now() + 60_000).toISOString();
-    const [opened] = queryPages({ sessions: [session("k1", file, { viewed_at: seen })], records: [], titles, now: Date.now() });
+    const [opened] = queryPages({
+      sessions: [session("k1", file, { viewed_at: seen })],
+      records: [],
+      titles,
+      now: Date.now(),
+    });
     assert.equal(opened.viewed_at, seen);
     assert.equal(opened.unseen, false);
   } finally {
