@@ -557,6 +557,7 @@ export class SessionStore {
       ) {
         return { session, changed: false, stale: true };
       }
+      if (session.status === "ended") return { session, changed: false };
       const normalized = normalizeArtifactFailures(payload?.failures);
       const previous = Array.isArray(session.artifact_failures) ? session.artifact_failures : [];
       const { failures, changed } = mergeArtifactFailures(previous, normalized);
@@ -564,7 +565,7 @@ export class SessionStore {
         return { session, changed: false };
       }
       session.artifact_failures = failures;
-      if (session.status !== "ended") session.status = "feedback";
+      session.status = "feedback";
       session.updated_at = new Date().toISOString();
       await this.writeState(state);
       return { session, changed: true };

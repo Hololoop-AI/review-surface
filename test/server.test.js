@@ -29,6 +29,7 @@ import {
   resolveArtifactAsset,
   resolveDesignAssetPath,
   parseFrameAncestorOrigin,
+  resolveAnnotationActions,
   resolveIdleTimeoutMs,
   resolveWatchTarget,
   serve,
@@ -5484,6 +5485,12 @@ test("ended session shows an overlay card over the dimmed chrome", async () => {
   assert.match(js, /moreButton\.disabled = true/);
 });
 
+test("ended session notice says the page is read-only", () => {
+  const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
+
+  assert.match(html, /Session ended\. Read-only\. /);
+});
+
 test("layout gate curtain reuses the ended overlay card styling", async () => {
   const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
   const noGateHtml = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" }, { layoutGateEnabled: false });
@@ -5724,4 +5731,19 @@ test("the artifact frame lets a page's video go fullscreen", () => {
   // allow="fullscreen" document.fullscreenEnabled is false inside the artifact.
   const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
   assert.match(html, /<iframe id="artifact"[^>]* allow="fullscreen"/);
+});
+
+test("resolveAnnotationActions reads the host's card actions and survives a bad setting", () => {
+  const logged = [];
+  const log = (line) => logged.push(line);
+  assert.deepEqual(resolveAnnotationActions({}, log), []);
+  assert.deepEqual(
+    resolveAnnotationActions(
+      { REVIEW_SURFACE_ANNOTATION_ACTIONS: '[{"id":"study","label":"Study","prefix":"study: ","deliver":"now"}]' },
+      log,
+    ),
+    [{ id: "study", label: "Study", title: "", prefix: "study: ", deliver: "now", fallback: "" }],
+  );
+  assert.deepEqual(resolveAnnotationActions({ REVIEW_SURFACE_ANNOTATION_ACTIONS: "[{oops" }, log), []);
+  assert.match(logged.join("\n"), /not valid JSON/);
 });

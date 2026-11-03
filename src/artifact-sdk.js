@@ -443,6 +443,57 @@ export function deriveAttachmentNoticeState(state = {}) {
   return "";
 }
 
+// Annotation actions: extra buttons on the annotation card, beside Queue. A host
+// declares them as data (REVIEW_SURFACE_ANNOTATION_ACTIONS, delivered through
+// createSdkJs) and a page adds its own as functions (reviewSurface.addAnnotationAction).
+// The data form is kept deliberately small - a label, a prefix for the note, and
+// whether the note goes now or into the queue - because it is the one that crosses
+// from server config into every artifact.
+export const ANNOTATION_ACTION_LIMIT = 4;
+
+/**
+ * Keep only well-formed declarative actions: `{ id, label, prefix?, deliver?, fallback?, title? }`.
+ * `deliver` is "now" (sent alone, at once, leaving the queue as it was) or "queue" (the default).
+ * `fallback` stands in for an empty note; without one an empty note does nothing.
+ * @param {unknown} list
+ * @returns {{ id: string, label: string, title: string, prefix: string, deliver: "now" | "queue", fallback: string }[]}
+ */
+export function normalizeAnnotationActions(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const raw of list) {
+    if (!raw || typeof raw !== "object") continue;
+    const id = String(raw.id || "").trim();
+    const label = String(raw.label || "").trim();
+    if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(id) || !label || label.length > 24 || seen.has(id)) continue;
+    seen.add(id);
+    out.push({
+      id,
+      label,
+      title: String(raw.title || "").slice(0, 160),
+      prefix: String(raw.prefix || "").slice(0, 60),
+      deliver: /** @type {"now" | "queue"} */ (raw.deliver === "now" ? "now" : "queue"),
+      fallback: String(raw.fallback || "")
+        .trim()
+        .slice(0, 200),
+    });
+    if (out.length >= ANNOTATION_ACTION_LIMIT) break;
+  }
+  return out;
+}
+
+/**
+ * The prompt a declarative action sends for the note the reviewer typed, or "" when
+ * there is nothing to send (an empty note and no fallback).
+ * @param {{ prefix?: string, fallback?: string }} action
+ * @param {string} note
+ */
+export function annotationActionPrompt(action, note) {
+  const body = String(note || "").trim() || String(action?.fallback || "").trim();
+  return body ? String(action?.prefix || "") + body : "";
+}
+
 /**
  * @param {*} deriveQueueKey
  * @param {*} [isNativeInteractive]
@@ -450,7 +501,7 @@ export function deriveAttachmentNoticeState(state = {}) {
  * @param {number} [artifactRevision]
  * @param {string} [artifactLoadToken]
  * @param {string} [sessionKey]
- * @param {{ maxAttachmentCount?: number, maxAttachmentBytes?: number, acceptedImageMime?: string[] }} [options]
+ * @param {{ maxAttachmentCount?: number, maxAttachmentBytes?: number, acceptedImageMime?: string[], annotationActions?: unknown[] }} [options]
  */
 export function createArtifactSdk(
   deriveQueueKey,
@@ -1207,6 +1258,18 @@ export function createArtifactSdk(
   }
 
   function queuePrompt(prompt, options = {}) {
+    postArtifactMessage("review-surface:queuePrompt", { prompt: promptItem(prompt, options) });
+  }
+
+  // Deliver one prompt now, on its own: the chrome posts it straight to the agent and
+  // leaves the queue exactly as it was, so the reviewer's other drafted annotations
+  // still go when they press Send. For an action that must not wait for - or flush -
+  // the rest of the review (a "Study" button that starts something beside it).
+  function sendPrompt(prompt, options = {}) {
+    postArtifactMessage("review-surface:sendPrompt", { prompt: promptItem(prompt, options) });
+  }
+
+  function promptItem(prompt, options = {}) {
     const originElement = options.element || document.activeElement || document.body;
     /** @type {{ uid: string, prompt: string, selector: string, tag: string, text: string, target?: unknown, attachments?: Array<{ id: string, name?: string }>, _reviewSurfaceQueueKey?: string }} */
     const item = {
@@ -1234,12 +1297,47 @@ export function createArtifactSdk(
         );
       if (attachments.length) item.attachments = attachments;
     }
-
-    postArtifactMessage("review-surface:queuePrompt", { prompt: item });
+    return item;
   }
 
   function sendQueuedPrompts() {
     postArtifactMessage("review-surface:sendQueuedPrompts");
+  }
+
+  // The card's extra buttons, in order: the host's declared actions first, then any
+  // the page added. Each is `{ id, label, title?, run(context) }`; `run` returning
+  // false keeps the card open (e.g. it asked for a note first), anything else closes it.
+  /** @type {{ id: string, label: string, title: string, run: (context: any) => unknown }[]} */
+  const annotationActions = normalizeAnnotationActions(options.annotationActions).map((action) => ({
+    id: action.id,
+    label: action.label,
+    title: action.title,
+    run: (context) => {
+      const text = annotationActionPrompt(action, context.note);
+      if (!text) {
+        context.notify("Write a note first.");
+        return false;
+      }
+      if (action.deliver === "now") context.send(text);
+      else context.queue(text);
+      return true;
+    },
+  }));
+
+  function addAnnotationAction(action) {
+    const id = String(action?.id || "").trim();
+    const label = String(action?.label || "").trim();
+    if (!id || !label || typeof action?.run !== "function") {
+      throw new TypeError("an annotation action needs an id, a label and a run function");
+    }
+    const entry = { id, label, title: String(action.title || ""), run: action.run };
+    const index = annotationActions.findIndex((existing) => existing.id === id);
+    if (index !== -1) annotationActions[index] = entry;
+    else annotationActions.push(entry);
+    return () => {
+      const at = annotationActions.indexOf(entry);
+      if (at !== -1) annotationActions.splice(at, 1);
+    };
   }
 
   function endSession() {
@@ -2350,7 +2448,7 @@ export function createArtifactSdk(
 
     shadow = host.attachShadow({ mode: "open" });
     const style = document.createElement("style");
-    style.textContent = `:host{all:initial;position:fixed;z-index:2147483647;left:0;top:0;color-scheme:dark;--ink-900:#0f1115;--ink-800:#11141a;--ink-700:#171a21;--ink-600:#1c212b;--steel-700:#2a2f3a;--steel-600:#303745;--steel-500:#3c4557;--steel-400:#8c96aa;--steel-300:#aeb6c6;--steel-200:#b9c0cf;--steel-100:#d8deea;--cream-50:#fffbf3;--cream-100:#f7f3ea;--cream-200:#e8e1cf;--brass-500:#f4c95d;--brass-400:#ffd877;--brass-ink:#17130a;--bg:var(--ink-900);--bg-panel:var(--ink-800);--bg-elevated:var(--ink-600);--fg:var(--cream-100);--fg-faint:var(--steel-300);--border:var(--steel-600);--accent:#f4c95d;--accent-hover:#ffd877;--font-sans:Geist,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--font-mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--radius-md:10px;--radius-xl:14px;--shadow-floating:0 20px 70px rgba(0,0,0,.35);font-family:var(--font-sans)}*{box-sizing:border-box}:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.review-surface-text-highlight{position:fixed;pointer-events:none;background:rgba(244,201,93,.28);border-radius:2px;box-shadow:0 0 0 1px rgba(244,201,93,.45)}.review-surface-annotation-card{position:fixed;width:min(320px,calc(100vw - 24px));padding:12px;border-radius:var(--radius-xl);background:var(--bg-panel);color:var(--fg);border:1px solid var(--accent);box-shadow:var(--shadow-floating);font:14px/1.4 var(--font-sans)}.review-surface-heading{font-weight:700;margin-bottom:6px}.review-surface-annotation-card textarea{width:100%;min-height:86px;resize:vertical;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg);color:var(--fg);padding:9px;font:inherit;font-family:var(--font-sans)}.review-surface-annotation-card textarea::placeholder{color:var(--fg-faint)}.review-surface-annotation-card .review-surface-hint{margin-top:6px;font-size:11px;color:var(--fg-faint)}.review-surface-annotation-card .review-surface-hint-alert{color:#ff9d7a;font-weight:700}.review-surface-annotation-card .review-surface-row{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}.review-surface-annotation-card button{border:0;border-radius:var(--radius-md);padding:8px 10px;font-family:var(--font-sans);font-size:13px;font-weight:700;cursor:pointer}.review-surface-annotation-card button:active{opacity:.85}.review-surface-annotation-card .review-surface-send{background:var(--accent);color:var(--brass-ink)}.review-surface-annotation-card .review-surface-send:hover{background:var(--accent-hover)}.review-surface-annotation-card .review-surface-cancel{background:var(--steel-700);color:var(--fg)}.review-surface-annotation-card.is-dropping{outline:2px dashed var(--accent);outline-offset:3px}.review-surface-attachments{display:flex;flex-direction:column;gap:6px;margin-top:8px;max-height:176px;overflow-y:auto}.review-surface-attachment-chip{display:flex;align-items:center;gap:8px;padding:6px;border-radius:var(--radius-md);background:var(--bg);border:1px solid var(--border)}.review-surface-attachment-chip.is-error{border-color:#e0623d}.review-surface-attachment-thumb{width:32px;height:32px;border-radius:6px;object-fit:cover;background:var(--ink-700);flex:0 0 auto}.review-surface-attachment-thumb-empty{display:inline-block}.review-surface-attachment-body{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1 1 auto}.review-surface-attachment-name{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.review-surface-attachment-status{font-size:11px;color:var(--fg-faint)}.review-surface-attachment-status-error{color:#ff9d7a}.review-surface-attachment-retry{flex:0 0 auto;padding:4px 8px;font-size:11px;font-weight:700;border-radius:8px;background:var(--steel-700);color:var(--fg);cursor:pointer;border:0}.review-surface-attachment-remove{flex:0 0 auto;display:flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0!important;border-radius:50%;background:transparent;color:rgba(255,255,255,.85);cursor:pointer;border:0}.review-surface-attachment-remove:hover{background:rgba(255,255,255,.14);color:#fff}.review-surface-attach-row{margin-top:8px}.review-surface-attach{display:inline-flex;align-items:center;gap:6px;padding:6px 9px!important;background:var(--steel-700)!important;color:var(--fg)!important;font-size:12px!important}.review-surface-attach:hover{background:var(--steel-600)!important}.review-surface-reveal-marker{position:fixed;pointer-events:none;border:2px solid var(--accent);border-radius:4px;box-shadow:0 0 0 4px rgba(244,201,93,.22);animation:review-surface-reveal-pulse 2.4s var(--ease,ease-out) forwards}@keyframes review-surface-reveal-pulse{0%{opacity:0}12%{opacity:1}70%{opacity:1}100%{opacity:0}}`;
+    style.textContent = `:host{all:initial;position:fixed;z-index:2147483647;left:0;top:0;color-scheme:dark;--ink-900:#0f1115;--ink-800:#11141a;--ink-700:#171a21;--ink-600:#1c212b;--steel-700:#2a2f3a;--steel-600:#303745;--steel-500:#3c4557;--steel-400:#8c96aa;--steel-300:#aeb6c6;--steel-200:#b9c0cf;--steel-100:#d8deea;--cream-50:#fffbf3;--cream-100:#f7f3ea;--cream-200:#e8e1cf;--brass-500:#f4c95d;--brass-400:#ffd877;--brass-ink:#17130a;--bg:var(--ink-900);--bg-panel:var(--ink-800);--bg-elevated:var(--ink-600);--fg:var(--cream-100);--fg-faint:var(--steel-300);--border:var(--steel-600);--accent:#f4c95d;--accent-hover:#ffd877;--font-sans:Geist,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--font-mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--radius-md:10px;--radius-xl:14px;--shadow-floating:0 20px 70px rgba(0,0,0,.35);font-family:var(--font-sans)}*{box-sizing:border-box}:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.review-surface-text-highlight{position:fixed;pointer-events:none;background:rgba(244,201,93,.28);border-radius:2px;box-shadow:0 0 0 1px rgba(244,201,93,.45)}.review-surface-annotation-card{position:fixed;width:min(320px,calc(100vw - 24px));padding:12px;border-radius:var(--radius-xl);background:var(--bg-panel);color:var(--fg);border:1px solid var(--accent);box-shadow:var(--shadow-floating);font:14px/1.4 var(--font-sans)}.review-surface-heading{font-weight:700;margin-bottom:6px}.review-surface-annotation-card textarea{width:100%;min-height:86px;resize:vertical;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg);color:var(--fg);padding:9px;font:inherit;font-family:var(--font-sans)}.review-surface-annotation-card textarea::placeholder{color:var(--fg-faint)}.review-surface-annotation-card .review-surface-hint{margin-top:6px;font-size:11px;color:var(--fg-faint)}.review-surface-annotation-card .review-surface-hint-alert{color:#ff9d7a;font-weight:700}.review-surface-annotation-card .review-surface-row{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}.review-surface-annotation-card button{border:0;border-radius:var(--radius-md);padding:8px 10px;font-family:var(--font-sans);font-size:13px;font-weight:700;cursor:pointer}.review-surface-annotation-card button:active{opacity:.85}.review-surface-annotation-card .review-surface-send{background:var(--accent);color:var(--brass-ink)}.review-surface-annotation-card .review-surface-send:hover{background:var(--accent-hover)}.review-surface-annotation-card .review-surface-cancel{background:var(--steel-700);color:var(--fg)}.review-surface-annotation-card .review-surface-action{background:var(--steel-700);color:var(--accent)}.review-surface-annotation-card .review-surface-action:hover{background:var(--steel-600)}.review-surface-annotation-card.is-dropping{outline:2px dashed var(--accent);outline-offset:3px}.review-surface-attachments{display:flex;flex-direction:column;gap:6px;margin-top:8px;max-height:176px;overflow-y:auto}.review-surface-attachment-chip{display:flex;align-items:center;gap:8px;padding:6px;border-radius:var(--radius-md);background:var(--bg);border:1px solid var(--border)}.review-surface-attachment-chip.is-error{border-color:#e0623d}.review-surface-attachment-thumb{width:32px;height:32px;border-radius:6px;object-fit:cover;background:var(--ink-700);flex:0 0 auto}.review-surface-attachment-thumb-empty{display:inline-block}.review-surface-attachment-body{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1 1 auto}.review-surface-attachment-name{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.review-surface-attachment-status{font-size:11px;color:var(--fg-faint)}.review-surface-attachment-status-error{color:#ff9d7a}.review-surface-attachment-retry{flex:0 0 auto;padding:4px 8px;font-size:11px;font-weight:700;border-radius:8px;background:var(--steel-700);color:var(--fg);cursor:pointer;border:0}.review-surface-attachment-remove{flex:0 0 auto;display:flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0!important;border-radius:50%;background:transparent;color:rgba(255,255,255,.85);cursor:pointer;border:0}.review-surface-attachment-remove:hover{background:rgba(255,255,255,.14);color:#fff}.review-surface-attach-row{margin-top:8px}.review-surface-attach{display:inline-flex;align-items:center;gap:6px;padding:6px 9px!important;background:var(--steel-700)!important;color:var(--fg)!important;font-size:12px!important}.review-surface-attach:hover{background:var(--steel-600)!important}.review-surface-reveal-marker{position:fixed;pointer-events:none;border:2px solid var(--accent);border-radius:4px;box-shadow:0 0 0 4px rgba(244,201,93,.22);animation:review-surface-reveal-pulse 2.4s var(--ease,ease-out) forwards}@keyframes review-surface-reveal-pulse{0%{opacity:0}12%{opacity:1}70%{opacity:1}100%{opacity:0}}`;
     shadow.appendChild(style);
     return shadow;
   }
@@ -2433,7 +2531,20 @@ export function createArtifactSdk(
       '<div class="review-surface-hint">Enter to queue &middot; ' +
       sendNowHint +
       "+Enter to send &middot; paste or drop an image" +
-      '</div><div class="review-surface-row"><button class="review-surface-cancel" type="button">Cancel</button><button class="review-surface-send" type="button">Queue</button></div>';
+      '</div><div class="review-surface-row"><button class="review-surface-cancel" type="button">Cancel</button>' +
+      annotationActions
+        .map(
+          (action, index) =>
+            '<button class="review-surface-action" type="button" data-action-index="' +
+            index +
+            '"' +
+            (action.title ? ' title="' + escapeAnnotationText(action.title) + '"' : "") +
+            ">" +
+            escapeAnnotationText(action.label) +
+            "</button>",
+        )
+        .join("") +
+      '<button class="review-surface-send" type="button">Queue</button></div>';
     root.appendChild(card);
 
     // Clamp the card fully inside the viewport. Called again whenever its height
@@ -2544,6 +2655,42 @@ export function createArtifactSdk(
     sendButton.onclick = () => {
       tryQueue();
     };
+    // Snapshot the actions the card was drawn with: one added or removed while the card
+    // is open must not shift which button runs which action.
+    const cardActions = annotationActions.slice();
+    cardActions.forEach((action, index) => {
+      const button = /** @type {HTMLButtonElement | null} */ (
+        card.querySelector('.review-surface-action[data-action-index="' + index + '"]')
+      );
+      if (button) button.onclick = () => runAnnotationAction(action);
+    });
+
+    // An action carries the card's target and its ready images like Queue does, and is
+    // held back by the same upload gates - running it mid-upload would drop the image.
+    function runAnnotationAction(action) {
+      if (attachments.hasPending() || attachments.hasErrors()) {
+        attachments.setQueueBlocked(true);
+        return;
+      }
+      attachments.setQueueBlocked(false);
+      const ready = attachments.collectReady();
+      const targetOptions = { ...c, queueKey: "", attachments: ready };
+      let result;
+      try {
+        result = action.run({
+          note: textarea.value.trim(),
+          target: { uid: c.uid || "", selector: c.selector || "", tag: c.tag || "", text: c.text || "" },
+          queue: (text) => queuePrompt(text, targetOptions),
+          send: (text) => sendPrompt(text, targetOptions),
+          sendQueued: sendQueuedPrompts,
+          notify,
+        });
+      } catch (error) {
+        notify(String(error?.message || error || "That action failed."));
+        return;
+      }
+      if (result !== false) closeCard();
+    }
     textarea.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
         event.preventDefault();
@@ -2576,6 +2723,8 @@ export function createArtifactSdk(
 
   /** @type {Window & { reviewSurface?: unknown }} */ (window).reviewSurface = {
     queuePrompt,
+    sendPrompt,
+    addAnnotationAction,
     sendQueuedPrompts,
     endSession,
     getQueuedPrompts: () => [],

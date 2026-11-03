@@ -713,6 +713,31 @@ test("fatal artifact failures still reach the agent without user action", async 
   }
 });
 
+test("an ended session records no artifact failures for a later poll or reopen", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "review-surface-store-"));
+  try {
+    const stateFile = path.join(dir, "state.json");
+    const artifact = path.join(dir, "artifact.html");
+    await writeFile(artifact, "<h1>Hello</h1>");
+
+    const store = new SessionStore(stateFile);
+    const session = await store.upsertSession(artifact, "http://localhost:4387/session/test");
+    await store.endSession(session.key, "agent");
+    const load = await beginArtifactLoad(store, session.key);
+    const result = await store.recordArtifactFailures(session.key, {
+      ...diagnosticPayload(load, 1),
+      failures: [{ kind: "artifact-asset-unavailable", detail: "<img> could not load /artifact/x/logo.png" }],
+    });
+    assert.equal(result.changed, false);
+
+    assert.equal((await store.takeFeedback(session.key)).status, "ended");
+    await store.upsertSession(artifact, "http://localhost:4387/session/test");
+    assert.equal((await store.takeFeedback(session.key)).status, "waiting");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("stale artifact failures and duplicate diagnostic sequences have no side effects", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "review-surface-store-"));
   try {
