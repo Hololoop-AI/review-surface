@@ -694,7 +694,7 @@ async function refreshChromeLoadHandoff(requestSequence) {
   const data = await response.json().catch(() => ({}));
   const token = String(data?.chrome_load_token || "");
   if (!response.ok || !token) throw new Error("failed to refresh chrome handoff");
-  if (requestSequence !== artifactLoadRequestSequence || ended) return false;
+  if (requestSequence !== artifactLoadRequestSequence) return false;
   chromeLoadToken = token;
   const revision = Number(data?.artifact_revision);
   const loadToken = String(data?.artifact_load_token || "");
@@ -2163,7 +2163,9 @@ async function replaceArtifactFrame({ recoveryRetry = false } = {}) {
   let transportAttempt = 0;
   let handoffRefreshAttempted = false;
   while (true) {
-    if (requestSequence !== artifactLoadRequestSequence || ended) return false;
+    // An ended session still loads its page: links from other pages land on ended sessions, and
+    // read-only is the point. Retries after a failure still stop on `ended` (recoverLater).
+    if (requestSequence !== artifactLoadRequestSequence) return false;
     try {
       const response = await fetch("/api/" + key + "/artifact-loads/begin", {
         method: "POST",
@@ -2222,7 +2224,7 @@ async function replaceArtifactFrame({ recoveryRetry = false } = {}) {
       await new Promise((resolve) => window.setTimeout(resolve, delay));
     }
   }
-  if (requestSequence !== artifactLoadRequestSequence || ended) return false;
+  if (requestSequence !== artifactLoadRequestSequence) return false;
   const revision = Number(load?.artifact_revision);
   const token = String(load?.artifact_load_token || "");
   if (!Number.isSafeInteger(revision) || revision < 0 || !token) return recoverLater();

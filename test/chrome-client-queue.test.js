@@ -4216,6 +4216,18 @@ test("chrome boots read-only when the session already ended before this page loa
   assert.equal(chrome.element("endedOverlay").hidden, false);
 });
 
+test("an ended session still loads its page, read-only", async () => {
+  const chrome = await createChromeHarness({
+    sessionData: { ...defaultSessionData, initialEnded: true, initialEndedBy: "agent" },
+    artifactSrc: "/artifact/abc/index.html",
+  });
+  await flushPromises();
+  await flushPromises();
+
+  assert.match(String(chrome.frame.src), /artifact_load_token=/);
+  assert.equal(chrome.element("annotation").disabled, true);
+});
+
 // #171: a race between this tab's own in-flight Send and a session end elsewhere must not leave
 // the queue looking sent when the server actually refused it.
 test("a queued Send refused because the session already ended marks the chrome read-only (#171)", async () => {
