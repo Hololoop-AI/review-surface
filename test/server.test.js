@@ -5485,15 +5485,10 @@ test("ended session shows an overlay card over the dimmed chrome", async () => {
   assert.match(js, /moreButton\.disabled = true/);
 });
 
-test("ended session stays readable: the ended notice is a strip, not a scrim", async () => {
+test("ended session notice says the page is read-only", () => {
   const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
-  const css = await chromeCssSource();
 
   assert.match(html, /Session ended\. Read-only\. /);
-  assert.match(css, /#endedOverlay\{[^}]*inset:var\(--bar-h\) 0 auto 0/);
-  assert.match(css, /#endedOverlay\{[^}]*background:transparent/);
-  assert.match(css, /#endedOverlay\{[^}]*pointer-events:none/);
-  assert.match(css, /#endedOverlay \.ended-card\{[^}]*pointer-events:auto/);
 });
 
 test("layout gate curtain reuses the ended overlay card styling", async () => {

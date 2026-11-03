@@ -8463,6 +8463,7 @@ var SessionStore = class {
       if (!load || artifactLoadToken !== load.artifactLoadToken || !reportedRevision.present || reportedRevision.value !== load.artifactRevision) {
         return { session, changed: false, stale: true };
       }
+      if (session.status === "ended") return { session, changed: false };
       const normalized = normalizeArtifactFailures(payload?.failures);
       const previous = Array.isArray(session.artifact_failures) ? session.artifact_failures : [];
       const { failures, changed } = mergeArtifactFailures(previous, normalized);
@@ -8470,7 +8471,7 @@ var SessionStore = class {
         return { session, changed: false };
       }
       session.artifact_failures = failures;
-      if (session.status !== "ended") session.status = "feedback";
+      session.status = "feedback";
       session.updated_at = (/* @__PURE__ */ new Date()).toISOString();
       await this.writeState(state);
       return { session, changed: true };
