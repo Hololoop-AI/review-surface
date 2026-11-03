@@ -121,6 +121,9 @@ export class SessionStore {
       delivered_attachments: Array.isArray(existing.delivered_attachments) ? existing.delivered_attachments : [],
       dom_snapshot: existing.dom_snapshot || "",
       chat: existing.chat || [],
+      // When a browser last loaded this page: the home page's "unopened" filter compares it
+      // with the file's last write, so a reopen by the agent must not reset it.
+      ...(existing.viewed_at ? { viewed_at: existing.viewed_at } : {}),
       delivery: normalizeDelivery(options.delivery) || normalizeDelivery(existing.delivery) || "poll",
       updated_at: new Date().toISOString(),
     };
@@ -399,6 +402,8 @@ export class SessionStore {
       });
       session.artifact_revision = artifactRevision;
       session.updated_at = new Date().toISOString();
+      // Only the chrome begins artifact loads, so this is the moment someone had the page on screen.
+      session.viewed_at = session.updated_at;
       await this.writeState(state);
       return { session, artifact_revision: artifactRevision, artifact_load_token: artifactLoadToken };
     });

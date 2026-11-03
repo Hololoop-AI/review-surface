@@ -2122,3 +2122,24 @@ test("every image delivered in one poll survives, across accumulated batches (po
     assert.deepEqual(missing, [], `every id in the actual delivery stays referenced (${missing.length} were not)`);
   });
 });
+
+test("a browser loading the page stamps viewed_at, and reopening the session keeps it", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "review-surface-viewed-"));
+  try {
+    const artifact = path.join(dir, "artifact.html");
+    await writeFile(artifact, "<!doctype html><title>t</title>");
+    const store = new SessionStore(path.join(dir, "state.json"));
+    const session = await store.upsertSession(artifact, "http://127.0.0.1/session/x");
+    assert.equal(session.viewed_at, undefined);
+
+    const load = await beginArtifactLoad(store, session.key);
+    assert.ok(Date.parse(load.session.viewed_at) > 0);
+    const stamped = (await store.findByKey(session.key)).viewed_at;
+    assert.equal(stamped, load.session.viewed_at);
+
+    const reopened = await store.upsertSession(artifact, "http://127.0.0.1/session/x");
+    assert.equal(reopened.viewed_at, stamped);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

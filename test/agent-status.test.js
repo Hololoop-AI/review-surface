@@ -191,3 +191,15 @@ test("a reconnecting stream and a freshly served page both report how often the 
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("agent-status says whether the driver has opened the page's current version", async () => {
+  const { dir, server, base, key } = await servedSession();
+  try {
+    const status = await fetch(`${base}/api/${key}/agent-status`).then((r) => r.json());
+    assert.equal(status.viewed_at, null);
+    assert.equal(status.unseen, true);
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
