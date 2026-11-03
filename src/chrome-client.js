@@ -854,6 +854,12 @@ function syncVisualViewport() {
   if (!(height > 0)) return;
   root.style.setProperty("--vv-height", Math.round(height) + "px");
   root.style.setProperty("--vv-top", Math.round(Math.max(0, top || 0)) + "px");
+  // The annotation card lives inside the artifact frame, which an iOS keyboard covers without
+  // resizing, so the frame cannot see where the keyboard starts. Tell it, in its own coordinates.
+  if (frame && typeof frame.getBoundingClientRect === "function") {
+    const frameTop = frame.getBoundingClientRect().top;
+    postToFrame({ type: "review-surface:visibleArea", bottom: Math.round((top || 0) + height - frameTop) });
+  }
 }
 
 function sheetDragOffset(event) {

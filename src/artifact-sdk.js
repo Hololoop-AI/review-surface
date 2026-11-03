@@ -2303,6 +2303,12 @@ export function createArtifactSdk(
   // ---------------------------------------------------------------------------
 
   let activeCardContext = null;
+  // Where the visible part of this frame ends, in frame coordinates, as the chrome last reported
+  // it. A phone keyboard covers the frame without resizing it on iOS, so nothing inside the frame
+  // can measure it; null until the chrome says otherwise.
+  let hostVisibleBottom = null;
+  // Re-places the open annotation card; null when no card is open.
+  let repositionActiveCard = null;
   let reviewStateTimer = 0;
   let draftRestoreTimer = 0;
   const REVIEW_DRAFT_ANCHOR_SETTLE_MS = 1500;
@@ -2453,8 +2459,26 @@ export function createArtifactSdk(
     return shadow;
   }
 
+  // The lowest y, in frame coordinates, that the driver can actually see: the frame's own
+  // bottom, narrowed by its visual viewport (Android, where the keyboard resizes the page) and
+  // by what the chrome reports (iOS, where the keyboard covers the frame and only the chrome's
+  // visual viewport shrinks).
+  function visibleFrameBottom() {
+    let bottom = window.innerHeight;
+    const viewport = window.visualViewport;
+    if (viewport && viewport.height > 0) bottom = Math.min(bottom, viewport.offsetTop + viewport.height);
+    if (typeof hostVisibleBottom === "number" && hostVisibleBottom > 0) bottom = Math.min(bottom, hostVisibleBottom);
+    return bottom;
+  }
+
+  window.addEventListener("resize", () => repositionActiveCard?.());
+  if (window.visualViewport && typeof window.visualViewport.addEventListener === "function") {
+    window.visualViewport.addEventListener("resize", () => repositionActiveCard?.());
+  }
+
   function closeCard() {
     activeCardContext = null;
+    repositionActiveCard = null;
     if (activeAttachments) {
       activeAttachments.destroy();
       activeAttachments = null;
@@ -2547,17 +2571,20 @@ export function createArtifactSdk(
       '<button class="review-surface-send" type="button">Queue</button></div>';
     root.appendChild(card);
 
-    // Clamp the card fully inside the viewport. Called again whenever its height
-    // changes (attachment chip rows are added/removed) so a grown card never pushes
-    // its Queue/Cancel buttons off the bottom of the frame (W3). The anchor `rect` is
-    // captured once; only the card's own measured size varies between calls.
+    // Clamp the card fully inside the visible part of the frame. Called again whenever its
+    // height changes (attachment chip rows are added/removed) so a grown card never pushes
+    // its Queue/Cancel buttons off the bottom of the frame (W3), and whenever the visible
+    // area changes - a phone keyboard opening is the case that matters: without it the
+    // textarea sat under the keyboard while the driver typed. The anchor `rect` is
+    // captured once; only the card's size and the visible area vary between calls.
     function positionCard() {
       const left = Math.min(Math.max(12, rect.left), window.innerWidth - card.offsetWidth - 12);
-      const top = Math.min(Math.max(12, rect.bottom + 8), window.innerHeight - card.offsetHeight - 12);
+      const top = Math.min(Math.max(12, rect.bottom + 8), visibleFrameBottom() - card.offsetHeight - 12);
       card.style.left = left + "px";
-      card.style.top = top + "px";
+      card.style.top = Math.max(12, top) + "px";
     }
     positionCard();
+    repositionActiveCard = positionCard;
 
     const textarea = /** @type {HTMLTextAreaElement | null} */ (card.querySelector("textarea"));
     const cancelButton = /** @type {HTMLButtonElement | null} */ (card.querySelector(".review-surface-cancel"));
@@ -2750,6 +2777,11 @@ export function createArtifactSdk(
     }
     if (msg.type === "review-surface:restoreReviewState") restoreReviewState(msg.state);
     if (msg.type === "review-surface:revealElement") revealElement(msg.selector);
+    if (msg.type === "review-surface:visibleArea") {
+      const bottom = Number(msg.bottom);
+      hostVisibleBottom = Number.isFinite(bottom) && bottom > 0 ? bottom : null;
+      repositionActiveCard?.();
+    }
   });
 
   // Bring a warning's element into view and flash it. The marker is Review Surface UI, so it is excluded
