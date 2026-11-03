@@ -1316,6 +1316,30 @@ body.review-surface {
 .ended-overlay[hidden] {
   display: none;
 }
+/* An ended session stays readable: links from other pages land here, so the
+   ended notice is a slim strip under the bar, not a scrim over the page. */
+#endedOverlay {
+  inset: var(--bar-h) 0 auto 0;
+  background: transparent;
+  padding: 8px;
+  pointer-events: none;
+}
+#endedOverlay .ended-card {
+  pointer-events: auto;
+  width: auto;
+  max-width: calc(100vw - 48px);
+  padding: 6px 16px;
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+}
+#endedOverlay .ended-title {
+  font-size: 14px;
+  margin: 0;
+}
+#endedOverlay .ended-title br {
+  display: none;
+}
 .ended-card {
   width: min(360px, calc(100vw - 48px));
   border: 1px solid var(--border);

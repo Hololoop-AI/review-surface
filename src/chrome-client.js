@@ -694,7 +694,7 @@ async function refreshChromeLoadHandoff(requestSequence) {
   const data = await response.json().catch(() => ({}));
   const token = String(data?.chrome_load_token || "");
   if (!response.ok || !token) throw new Error("failed to refresh chrome handoff");
-  if (requestSequence !== artifactLoadRequestSequence || ended) return false;
+  if (requestSequence !== artifactLoadRequestSequence) return false;
   chromeLoadToken = token;
   const revision = Number(data?.artifact_revision);
   const loadToken = String(data?.artifact_load_token || "");
@@ -1429,7 +1429,7 @@ function setLayoutGateActive(active) {
 // spinner that never resolves or a blank frame, with nothing explaining it and nothing to click.
 // Bumping the cycle retires any pending reveal timer so a stale one cannot hide this card.
 function setLayoutGateFailure(title, copy, actionLabel = "Reload", onAction, { sticky = false } = {}) {
-  if (ended) return;
+  if (ended && artifactLoadToken) return;
   // A sticky card is the user's to retire, and that has to hold against being overwritten as
   // well as against being cleared: the version-skew warning is the only thing telling this page
   // it is running the pre-upgrade client, and a later ordinary load failure must not replace it.
@@ -1580,7 +1580,7 @@ async function submitLayoutDiagnostics(pass) {
 }
 
 async function reportArtifactFailures(failures, loadToken = artifactLoadToken) {
-  if (loadToken !== artifactLoadToken) return;
+  if (ended || loadToken !== artifactLoadToken) return;
   await fetch("/api/" + key + "/artifact-failures", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -1938,8 +1938,10 @@ function markSessionEnded() {
   if (handoffBanner) handoffBanner.hidden = true;
   if (outdatedBanner) outdatedBanner.hidden = true;
   layoutGateManuallyBypassed = true;
-  layoutGateFailureSticky = false;
-  revealLayoutGate();
+  if (!layoutGateFailureActive || artifactLoadToken) {
+    layoutGateFailureSticky = false;
+    revealLayoutGate();
+  }
   postToFrame({ type: "review-surface:setAnnotationMode", enabled: false });
   endedOverlay.hidden = false;
 }
@@ -2142,7 +2144,7 @@ async function replaceArtifactFrame({ recoveryRetry = false } = {}) {
   // is what leaves the review permanently unloaded.
   const recoverLater = () => {
     preservePreviousLoad();
-    if (requestSequence !== artifactLoadRequestSequence || ended) return false;
+    if (requestSequence !== artifactLoadRequestSequence) return false;
     if (scheduleArtifactLoadRecovery()) return false;
     // Out of retries. Only say so when there is nothing on screen to say it over: a chrome that
     // already shows an artifact keeps showing it rather than losing a usable review.
@@ -2163,7 +2165,9 @@ async function replaceArtifactFrame({ recoveryRetry = false } = {}) {
   let transportAttempt = 0;
   let handoffRefreshAttempted = false;
   while (true) {
-    if (requestSequence !== artifactLoadRequestSequence || ended) return false;
+    // An ended session still loads its page: links from other pages land on ended sessions, and
+    // read-only is the point. Retries after a failure still stop on `ended` (recoverLater).
+    if (requestSequence !== artifactLoadRequestSequence) return false;
     try {
       const response = await fetch("/api/" + key + "/artifact-loads/begin", {
         method: "POST",
@@ -2222,7 +2226,7 @@ async function replaceArtifactFrame({ recoveryRetry = false } = {}) {
       await new Promise((resolve) => window.setTimeout(resolve, delay));
     }
   }
-  if (requestSequence !== artifactLoadRequestSequence || ended) return false;
+  if (requestSequence !== artifactLoadRequestSequence) return false;
   const revision = Number(load?.artifact_revision);
   const token = String(load?.artifact_load_token || "");
   if (!Number.isSafeInteger(revision) || revision < 0 || !token) return recoverLater();

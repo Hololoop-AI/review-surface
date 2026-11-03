@@ -5485,6 +5485,12 @@ test("ended session shows an overlay card over the dimmed chrome", async () => {
   assert.match(js, /moreButton\.disabled = true/);
 });
 
+test("ended session notice says the page is read-only", () => {
+  const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
+
+  assert.match(html, /Session ended\. Read-only\. /);
+});
+
 test("layout gate curtain reuses the ended overlay card styling", async () => {
   const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
   const noGateHtml = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" }, { layoutGateEnabled: false });

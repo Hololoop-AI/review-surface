@@ -4216,6 +4216,64 @@ test("chrome boots read-only when the session already ended before this page loa
   assert.equal(chrome.element("endedOverlay").hidden, false);
 });
 
+test("an ended session still loads its page, read-only", async () => {
+  const chrome = await createChromeHarness({
+    sessionData: { ...defaultSessionData, initialEnded: true, initialEndedBy: "agent" },
+    artifactSrc: "/artifact/abc/index.html",
+  });
+  await flushPromises();
+  await flushPromises();
+
+  assert.match(String(chrome.frame.src), /artifact_load_token=/);
+  assert.equal(chrome.element("annotation").disabled, true);
+});
+
+test("an ended page whose first load fails says why instead of showing a blank frame", async () => {
+  const beginLoadResponses = [];
+  for (let i = 0; i < 40; i += 1) beginLoadResponses.push({ ok: false, status: 503 });
+  const chrome = await createChromeHarness({
+    sessionData: { ...defaultSessionData, initialEnded: true, initialEndedBy: "agent" },
+    artifactSrc: "/artifact/abc/index.html",
+    beginLoadResponses,
+  });
+
+  await exhaustOneBeginLoadAttempt(chrome);
+  const attempts = chrome.artifactBeginRequests.length;
+
+  assert.equal(chrome.frame.src, "");
+  assert.equal(chrome.element("layoutGateOverlay").hidden, false);
+  assert.equal(chrome.element("layoutGateTitle").textContent, "Review Surface could not load this artifact.");
+  assert.equal(chrome.element("annotation").disabled, true);
+  // Ended pages still never retry on their own.
+  chrome.runTimers(60000);
+  await flushPromises();
+  assert.equal(chrome.artifactBeginRequests.length, attempts);
+});
+
+test("an ended page does not report artifact failures to the agent", async () => {
+  const posts = [];
+  const chrome = await createChromeHarness({
+    sessionData: { ...defaultSessionData, initialEnded: true, initialEndedBy: "agent" },
+    artifactSrc: "/artifact/abc/index.html",
+    fetchImpl: async (url, init = {}) => {
+      posts.push({ url, body: init.body ? JSON.parse(init.body) : null });
+      return { ok: true, json: async () => ({}) };
+    },
+  });
+  await flushPromises();
+  await flushPromises();
+
+  chrome.sendFrameMessage({
+    artifact_load_token: chrome.artifactLoadToken(),
+    type: "review-surface:artifactAssetFailure",
+    detail: "missing image on a prior round",
+  });
+  await flushPromises();
+
+  assert.match(String(chrome.frame.src), /artifact_load_token=/);
+  assert.equal(posts.filter((post) => post.url === "/api/abc/artifact-failures").length, 0);
+});
+
 // #171: a race between this tab's own in-flight Send and a session end elsewhere must not leave
 // the queue looking sent when the server actually refused it.
 test("a queued Send refused because the session already ended marks the chrome read-only (#171)", async () => {
