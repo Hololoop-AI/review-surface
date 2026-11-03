@@ -856,9 +856,13 @@ function syncVisualViewport() {
   root.style.setProperty("--vv-top", Math.round(Math.max(0, top || 0)) + "px");
   // The annotation card lives inside the artifact frame, which an iOS keyboard covers without
   // resizing, so the frame cannot see where the keyboard starts. Tell it, in its own coordinates.
+  // On a phone the conversation dock rides on top of the keyboard, over the frame, so its
+  // footprint (the layout row reserved under the frame) is not visible either.
   if (frame && typeof frame.getBoundingClientRect === "function") {
-    const frameTop = frame.getBoundingClientRect().top;
-    postToFrame({ type: "review-surface:visibleArea", bottom: Math.round((top || 0) + height - frameTop) });
+    const frameRect = frame.getBoundingClientRect();
+    let visibleBottom = (top || 0) + height;
+    if (isMobileSheet()) visibleBottom -= Math.max(0, window.innerHeight - frameRect.bottom);
+    postToFrame({ type: "review-surface:visibleArea", bottom: Math.round(visibleBottom - frameRect.top) });
   }
 }
 
