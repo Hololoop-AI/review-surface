@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
-import { appendFile, mkdir, readFile, realpath } from "node:fs/promises";
+import { appendFile, mkdir, readFile, realpath, stat } from "node:fs/promises";
 import { isIP } from "node:net";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -53,6 +53,7 @@ import {
 import { EventLog, eventLogFile } from "./event-log.js";
 import {
   LinkError,
+  isUnseen,
   LinkStore,
   linksFile,
   loadPageGraphInputs,
@@ -266,6 +267,15 @@ export function isValidWhiteboardChannelToken(token, secret, sessionKey, now = D
 export function resolveIdleTimeoutMs(env = process.env) {
   const value = Number(env.REVIEW_SURFACE_IDLE_TIMEOUT_MS?.trim() || NaN);
   return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+/** The artifact's last write time, or null when it cannot be read (gone, unreadable). */
+async function fileModifiedMs(file) {
+  try {
+    return (await stat(file)).mtimeMs;
+  } catch {
+    return null;
+  }
 }
 
 export async function serve({
@@ -858,6 +868,8 @@ export async function serve({
         pending_prompts: (session.prompts || []).length,
         updated_at: session.updated_at || null,
         last_agent_reply_at: lastAgentReply?.at || null,
+        viewed_at: session.viewed_at || null,
+        unseen: isUnseen(session, await fileModifiedMs(session.file)),
       });
     } catch (error) {
       next(error);

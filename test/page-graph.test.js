@@ -9,6 +9,7 @@ process.env.REVIEW_SURFACE_LINK_HOST = "127.0.0.1";
 
 import {
   derivePageState,
+  isUnseen,
   LinkStore,
   parsePageQuery,
   QUIET_AFTER_MS,
@@ -286,6 +287,38 @@ test("the link route maps refusals to 400/404/409 and the read routes are origin
     );
   } finally {
     await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a page is unseen until a browser loads the version the agent last wrote", async () => {
+  const viewed = "2026-11-03T10:00:00.000Z";
+  const before = Date.parse(viewed) - 60_000;
+  const after = Date.parse(viewed) + 60_000;
+  // never loaded in a browser
+  assert.equal(isUnseen(session("x", "/f"), before), true);
+  // loaded after the agent's last write, then rewritten by the agent
+  assert.equal(isUnseen(session("x", "/f", { viewed_at: viewed }), before), false);
+  assert.equal(isUnseen(session("x", "/f", { viewed_at: viewed }), after), true);
+  // a missing file proves nothing new was written
+  assert.equal(isUnseen(session("x", "/f", { viewed_at: viewed }), null), false);
+  // loaded before viewed_at was recorded: unknown, never a false "unopened"
+  assert.equal(isUnseen(session("x", "/f", { artifact_revision: 3 }), after), null);
+
+  const dir = await tempDir();
+  try {
+    const file = path.join(dir, "page.html");
+    await writeFile(file, "<!doctype html><title>Round 2</title><body></body>");
+    const { readPageTitle } = await import("../src/page-graph.js");
+    const titles = new Map([["k1", await readPageTitle(file)]]);
+    const [page] = queryPages({ sessions: [session("k1", file)], records: [], titles, now: Date.now() });
+    assert.equal(page.viewed_at, null);
+    assert.equal(page.unseen, true);
+    const seen = new Date(Date.now() + 60_000).toISOString();
+    const [opened] = queryPages({ sessions: [session("k1", file, { viewed_at: seen })], records: [], titles, now: Date.now() });
+    assert.equal(opened.viewed_at, seen);
+    assert.equal(opened.unseen, false);
+  } finally {
     await rm(dir, { recursive: true, force: true });
   }
 });

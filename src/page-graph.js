@@ -208,6 +208,21 @@ export function derivePageState(session, now) {
   return last === "agent" ? "needs-you" : "new";
 }
 
+/**
+ * Whether the driver has yet to open the version of this page the agent last wrote: true when
+ * no browser has loaded it since `modifiedMs` (the file's last write), false when one has or the
+ * file is gone, and null when the page was loaded before `viewed_at` existed - unknown, which a
+ * caller must never present as "unopened".
+ * @param {{ viewed_at?: string, artifact_revision?: number }} session
+ * @param {number | null | undefined} modifiedMs
+ */
+export function isUnseen(session, modifiedMs) {
+  const viewed = Date.parse(session.viewed_at || "");
+  if (Number.isFinite(viewed)) return Number.isFinite(modifiedMs) && Number(modifiedMs) > viewed;
+  if (Number(session.artifact_revision) > 0) return null;
+  return true;
+}
+
 /** The page's own `<title>`, for display and text search; the file name when it has none. */
 export async function readPageTitle(file) {
   let handle;
@@ -215,11 +230,12 @@ export async function readPageTitle(file) {
     handle = await open(file, "r");
     const buffer = Buffer.alloc(TITLE_READ_BYTES);
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    const { mtimeMs } = await handle.stat();
     const match = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(buffer.toString("utf8", 0, bytesRead));
     const title = match ? decodeEntities(match[1]).replace(/\s+/g, " ").trim() : "";
-    return { title: title || path.basename(file, path.extname(file)), exists: true };
+    return { title: title || path.basename(file, path.extname(file)), exists: true, modifiedMs: mtimeMs };
   } catch {
-    return { title: path.basename(file, path.extname(file)), exists: false };
+    return { title: path.basename(file, path.extname(file)), exists: false, modifiedMs: null };
   } finally {
     await handle?.close();
   }
@@ -285,7 +301,11 @@ export function queryPages({ sessions, records, titles, now }, options = {}) {
     if ((replaced === "no" && isReplaced) || (replaced === "yes" && !isReplaced)) continue;
     const state = derivePageState(session, now);
     if (options.states && !options.states.includes(state)) continue;
-    const { title, exists } = titles.get(session.key) || { title: path.basename(session.file), exists: false };
+    const { title, exists, modifiedMs } = titles.get(session.key) || {
+      title: path.basename(session.file),
+      exists: false,
+      modifiedMs: null,
+    };
     if (text && !`${title} ${session.file}`.toLowerCase().includes(text)) continue;
     out.push({
       key: session.key,
@@ -293,6 +313,8 @@ export function queryPages({ sessions, records, titles, now }, options = {}) {
       title,
       state,
       updated_at: session.updated_at || null,
+      viewed_at: session.viewed_at || null,
+      unseen: isUnseen(session, modifiedMs),
       exists,
       depth,
       links: {
