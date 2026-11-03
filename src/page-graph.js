@@ -236,7 +236,7 @@ export function derivePageState(session, now) {
  * no browser has loaded it since `modifiedMs` (the file's last write), false when one has or the
  * file is gone, and null when the page was loaded before `viewed_at` existed - unknown, which a
  * caller must never present as "unopened".
- * @param {{ viewed_at?: string, artifact_revision?: number }} session
+ * @param {{ viewed_at?: string, artifact_revision?: number, [key: string]: any }} session
  * @param {number | null | undefined} modifiedMs
  */
 export function isUnseen(session, modifiedMs) {
@@ -303,7 +303,7 @@ export function parsePageQuery(raw) {
 
 /**
  * Every page, with its derived state and its links. Pure over its inputs.
- * @param {{ sessions: any[], records: any[], titles: Map<string, { title: string, exists: boolean }>, now: number }} input
+ * @param {{ sessions: any[], records: any[], titles: Map<string, { title: string, exists: boolean, modifiedMs?: number | null }>, now: number }} input
  * @param {{ under?: string, depth?: number, states?: string[], text?: string, replaced?: string }} [options]
  */
 export function queryPages({ sessions, records, titles, now }, options = {}) {
