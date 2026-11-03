@@ -4398,10 +4398,10 @@ function writeTextFileAtomically(file, content, operations = {}) {
   const rename3 = operations.renameSync || renameSync;
   const remove = operations.rmSync || rmSync;
   const chmod2 = operations.chmodSync || chmodSync;
-  const stat4 = operations.statSync || statSync;
+  const stat5 = operations.statSync || statSync;
   let mode;
   try {
-    mode = stat4(file).mode & 511;
+    mode = stat5(file).mode & 511;
   } catch {
   }
   try {
@@ -4523,7 +4523,7 @@ function attrValue(attrs, name) {
 import crypto6 from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync as existsSync2 } from "node:fs";
-import { appendFile as appendFile4, mkdir as mkdir6, readFile as readFile6, realpath as realpath4 } from "node:fs/promises";
+import { appendFile as appendFile4, mkdir as mkdir6, readFile as readFile6, realpath as realpath4, stat as stat4 } from "node:fs/promises";
 import { isIP } from "node:net";
 import { homedir } from "node:os";
 import path9 from "node:path";
@@ -6407,6 +6407,8 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
   }
   window.addEventListener("error", reportLocalAssetFailure, true);
   let activeCardContext = null;
+  let hostVisibleBottom = null;
+  let repositionActiveCard = null;
   let reviewStateTimer = 0;
   let draftRestoreTimer = 0;
   const REVIEW_DRAFT_ANCHOR_SETTLE_MS = 1500;
@@ -6527,8 +6529,20 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     shadow.appendChild(style);
     return shadow;
   }
+  function visibleFrameBottom() {
+    let bottom = window.innerHeight;
+    const viewport = window.visualViewport;
+    if (viewport && viewport.height > 0) bottom = Math.min(bottom, viewport.offsetTop + viewport.height);
+    if (typeof hostVisibleBottom === "number" && hostVisibleBottom > 0) bottom = Math.min(bottom, hostVisibleBottom);
+    return bottom;
+  }
+  window.addEventListener("resize", () => repositionActiveCard?.());
+  if (window.visualViewport && typeof window.visualViewport.addEventListener === "function") {
+    window.visualViewport.addEventListener("resize", () => repositionActiveCard?.());
+  }
   function closeCard() {
     activeCardContext = null;
+    repositionActiveCard = null;
     if (activeAttachments) {
       activeAttachments.destroy();
       activeAttachments = null;
@@ -6573,11 +6587,12 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     root.appendChild(card);
     function positionCard() {
       const left = Math.min(Math.max(12, rect.left), window.innerWidth - card.offsetWidth - 12);
-      const top = Math.min(Math.max(12, rect.bottom + 8), window.innerHeight - card.offsetHeight - 12);
+      const top = Math.min(Math.max(12, rect.bottom + 8), visibleFrameBottom() - card.offsetHeight - 12);
       card.style.left = left + "px";
-      card.style.top = top + "px";
+      card.style.top = Math.max(12, top) + "px";
     }
     positionCard();
+    repositionActiveCard = positionCard;
     const textarea = (
       /** @type {HTMLTextAreaElement | null} */
       card.querySelector("textarea")
@@ -6751,6 +6766,11 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     }
     if (msg.type === "review-surface:restoreReviewState") restoreReviewState(msg.state);
     if (msg.type === "review-surface:revealElement") revealElement(msg.selector);
+    if (msg.type === "review-surface:visibleArea") {
+      const bottom = Number(msg.bottom);
+      hostVisibleBottom = Number.isFinite(bottom) && bottom > 0 ? bottom : null;
+      repositionActiveCard?.();
+    }
   });
   function revealElement(selector2) {
     const target = selector2 === "html" ? document.documentElement : safeQuerySelector(selector2);
@@ -7820,17 +7840,24 @@ function derivePageState(session, now) {
   if (Number.isFinite(updated) && now - updated >= QUIET_AFTER_MS) return "quiet";
   return last === "agent" ? "needs-you" : "new";
 }
+function isUnseen(session, modifiedMs) {
+  const viewed = Date.parse(session.viewed_at || "");
+  if (Number.isFinite(viewed)) return Number.isFinite(modifiedMs) && Number(modifiedMs) > viewed;
+  if (Number(session.artifact_revision) > 0) return null;
+  return true;
+}
 async function readPageTitle(file) {
   let handle;
   try {
     handle = await open2(file, "r");
     const buffer = Buffer.alloc(TITLE_READ_BYTES);
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    const { mtimeMs } = await handle.stat();
     const match = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(buffer.toString("utf8", 0, bytesRead));
     const title = match ? decodeEntities(match[1]).replace(/\s+/g, " ").trim() : "";
-    return { title: title || path6.basename(file, path6.extname(file)), exists: true };
+    return { title: title || path6.basename(file, path6.extname(file)), exists: true, modifiedMs: mtimeMs };
   } catch {
-    return { title: path6.basename(file, path6.extname(file)), exists: false };
+    return { title: path6.basename(file, path6.extname(file)), exists: false, modifiedMs: null };
   } finally {
     await handle?.close();
   }
@@ -7881,7 +7908,11 @@ function queryPages({ sessions, records, titles, now }, options = {}) {
     if (replaced === "no" && isReplaced || replaced === "yes" && !isReplaced) continue;
     const state = derivePageState(session, now);
     if (options.states && !options.states.includes(state)) continue;
-    const { title, exists } = titles.get(session.key) || { title: path6.basename(session.file), exists: false };
+    const { title, exists, modifiedMs } = titles.get(session.key) || {
+      title: path6.basename(session.file),
+      exists: false,
+      modifiedMs: null
+    };
     if (text && !`${title} ${session.file}`.toLowerCase().includes(text)) continue;
     out.push({
       key: session.key,
@@ -7889,6 +7920,8 @@ function queryPages({ sessions, records, titles, now }, options = {}) {
       title,
       state,
       updated_at: session.updated_at || null,
+      viewed_at: session.viewed_at || null,
+      unseen: isUnseen(session, modifiedMs),
       exists,
       depth,
       links: {
@@ -8103,6 +8136,9 @@ var SessionStore = class {
       delivered_attachments: Array.isArray(existing.delivered_attachments) ? existing.delivered_attachments : [],
       dom_snapshot: existing.dom_snapshot || "",
       chat: existing.chat || [],
+      // When a browser last loaded this page: the home page's "unopened" filter compares it
+      // with the file's last write, so a reopen by the agent must not reset it.
+      ...existing.viewed_at ? { viewed_at: existing.viewed_at } : {},
       delivery: normalizeDelivery(options.delivery) || normalizeDelivery(existing.delivery) || "poll",
       updated_at: (/* @__PURE__ */ new Date()).toISOString()
     };
@@ -8330,6 +8366,7 @@ var SessionStore = class {
       });
       session.artifact_revision = artifactRevision;
       session.updated_at = (/* @__PURE__ */ new Date()).toISOString();
+      session.viewed_at = session.updated_at;
       await this.writeState(state);
       return { session, artifact_revision: artifactRevision, artifact_load_token: artifactLoadToken };
     });
@@ -9429,6 +9466,13 @@ function resolveIdleTimeoutMs(env = process.env) {
   const value = Number(env.REVIEW_SURFACE_IDLE_TIMEOUT_MS?.trim() || NaN);
   return Number.isFinite(value) && value > 0 ? value : null;
 }
+async function fileModifiedMs(file) {
+  try {
+    return (await stat4(file)).mtimeMs;
+  } catch {
+    return null;
+  }
+}
 async function serve({
   port,
   stateFile: stateFile2,
@@ -9858,7 +9902,9 @@ async function serve({
         delivery: session.delivery === "push" ? "push" : "poll",
         pending_prompts: (session.prompts || []).length,
         updated_at: session.updated_at || null,
-        last_agent_reply_at: lastAgentReply?.at || null
+        last_agent_reply_at: lastAgentReply?.at || null,
+        viewed_at: session.viewed_at || null,
+        unseen: isUnseen(session, await fileModifiedMs(session.file))
       });
     } catch (error) {
       next(error);
