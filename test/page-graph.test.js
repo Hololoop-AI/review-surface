@@ -4,20 +4,24 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { parse } from "parse5";
+
 process.env.REVIEW_SURFACE_HOST = "127.0.0.1";
 process.env.REVIEW_SURFACE_LINK_HOST = "127.0.0.1";
 
 import {
+  buildGraph,
   derivePageState,
   isUnseen,
   LinkStore,
+  newestReplacement,
   parsePageQuery,
   QUIET_AFTER_MS,
   queryPages,
   readLinkRecords,
   searchEverything,
 } from "../src/page-graph.js";
-import { serve } from "../src/server.js";
+import { createChromeHtml, serve } from "../src/server.js";
 
 async function tempDir() {
   return mkdtemp(path.join(tmpdir(), "review-surface-page-graph-"));
@@ -464,6 +468,117 @@ test("only a thread-window load of a page may be framed, and only by this server
     assert.equal(embedded.headers.get("content-security-policy"), "frame-ancestors 'self'");
     assert.match(await embedded.text(), /class="review-surface[^"]* embedded-thread"/);
     assert.doesNotMatch(await plain.text(), /embedded-thread"/);
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+/** Every element in a parsed HTML document whose class list includes `className`. */
+function elementsWithClass(html, className) {
+  const found = [];
+  const stack = /** @type {any[]} */ ([parse(html)]);
+  while (stack.length) {
+    const node = stack.pop();
+    const classes = node.attrs?.find((attr) => attr.name === "class")?.value.split(/\s+/) || [];
+    if (classes.includes(className)) found.push(node);
+    stack.push(...(node.childNodes || []), ...(node.content ? [node.content] : []));
+  }
+  return found;
+}
+/** @param {any} node @param {string} name */
+const attr = (node, name) => node.attrs.find((a) => a.name === name)?.value;
+/** @param {any} node @returns {string} */
+const textOf = (node) =>
+  node.nodeName === "#text" ? node.value : (node.childNodes || []).map(textOf).join("").replace(/\s+/g, " ");
+/** @param {any} node */
+const ancestorIds = (node) => {
+  const ids = [];
+  for (let n = node.parentNode; n; n = n.parentNode) if (n.attrs) ids.push(attr(n, "id"));
+  return ids.filter(Boolean);
+};
+
+test("a replaced page resolves to the newest page in its line of work, through every hop", () => {
+  // b replaced a, c replaced b: from either older page the way forward is c.
+  const { replacedBy } = buildGraph([
+    { type: "supersedes", from: "b", to: "a" },
+    { type: "supersedes", from: "c", to: "b" },
+    { type: "child-of", from: "a", to: "project" },
+  ]);
+  assert.equal(newestReplacement(replacedBy, "a"), "c");
+  assert.equal(newestReplacement(replacedBy, "b"), "c");
+  assert.equal(newestReplacement(replacedBy, "c"), null, "the newest page is not replaced");
+  assert.equal(newestReplacement(replacedBy, "project"), null, "a page outside any supersede chain");
+});
+
+test("a hand-edited cycle or an over-long chain still ends, at the newest page reached", () => {
+  const cycle = new Map([
+    ["a", "b"],
+    ["b", "c"],
+    ["c", "a"],
+  ]);
+  assert.equal(newestReplacement(cycle, "a"), "c");
+  const loop = new Map([["a", "a"]]);
+  assert.equal(newestReplacement(loop, "a"), null, "a page replaced by itself has nowhere newer to go");
+  const long = new Map(Array.from({ length: 200 }, (_, i) => [`p${i}`, `p${i + 1}`]));
+  assert.equal(newestReplacement(long, "p0", 5), "p5");
+  assert.equal(newestReplacement(long, "p0"), "p64");
+});
+
+test("the chrome of a replaced page links to the newest page, escaping its title", () => {
+  const newerPage = { key: "c0ffee", title: 'Round <3> & "final"' };
+  const html = createChromeHtml({ key: "abc", file: "/tmp/old.html" }, { newerPage });
+
+  const [bar] = elementsWithClass(html, "newer-page-bar");
+  assert.ok(bar, "a replaced page shows the newer-page bar");
+  assert.match(textOf(bar), /This is an older page\. The newest in this line of work is/);
+  const links = elementsWithClass(html, "newer-page-link");
+  assert.equal(links.length, 2, "one link in the bar, one in the ended strip");
+  for (const link of links) {
+    assert.equal(attr(link, "href"), "/session/c0ffee");
+    assert.equal(textOf(link).trim(), 'Round <3> & "final" →', "the title arrives as text, not markup");
+  }
+  assert.deepEqual(
+    links.map((link) => ["newerPageBar", "endedOverlay"].find((id) => ancestorIds(link).includes(id))).sort(),
+    ["endedOverlay", "newerPageBar"],
+    "the read-only notice of an ended page carries the way forward too",
+  );
+  assert.doesNotMatch(html, /<3>/, "the raw title never reaches the document unescaped");
+});
+
+test("the chrome of a page nothing replaced shows no newer-page bar", () => {
+  const html = createChromeHtml({ key: "abc", file: "/tmp/current.html" });
+  assert.equal(elementsWithClass(html, "newer-page-bar").length, 0);
+  assert.equal(elementsWithClass(html, "newer-page-link").length, 0);
+});
+
+test("a served older page links to the head of its supersede chain; the head shows no bar", async () => {
+  const { dir, server, base, post, page } = await served();
+  try {
+    const first = await page("first.html");
+    const second = await page("second.html");
+    const third = await page("third.html");
+    const a = (await (await post("/api/sessions", { file: first })).json()).key;
+    const b = (await (await post("/api/sessions", { file: second, supersedes: first })).json()).key;
+    const c = (await (await post("/api/sessions", { file: third, supersedes: second })).json()).key;
+
+    for (const older of [a, b]) {
+      const html = await (await fetch(`${base}/session/${older}`)).text();
+      const [link] = elementsWithClass(html, "newer-page-link");
+      assert.ok(link, `page ${older} is old and must say so`);
+      assert.equal(attr(link, "href"), `/session/${c}`);
+      assert.equal(textOf(link).trim(), "third.html →", "named by the newest page's own <title>");
+    }
+    const head = await (await fetch(`${base}/session/${c}`)).text();
+    assert.equal(elementsWithClass(head, "newer-page-bar").length, 0);
+
+    const ended = await post(`/api/${a}/end`, {}, { origin: base });
+    assert.equal(ended.status, 200);
+    const endedHtml = await (await fetch(`${base}/session/${a}`)).text();
+    const endedLink = elementsWithClass(endedHtml, "newer-page-link").find((link) =>
+      ancestorIds(link).includes("endedOverlay"),
+    );
+    assert.equal(attr(endedLink, "href"), `/session/${c}`, "an ended old page still links forward");
   } finally {
     await server.close();
     await rm(dir, { recursive: true, force: true });
