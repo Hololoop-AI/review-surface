@@ -81,6 +81,29 @@ export function threadsOf(records, key) {
   return [...buildGraph(records).threadOf].filter(([, page]) => page === key).map(([thread]) => thread);
 }
 
+/** How many `supersedes` hops newestReplacement follows before it stops looking further. */
+export const REPLACEMENT_DEPTH_LIMIT = 64;
+
+/**
+ * The newest page in the line of work a replaced page belongs to: follow `replacedBy` until a page
+ * nothing replaces. Null when the page itself is not replaced. A cycle or an over-long chain stops
+ * at the newest page reached so far - checkLink refuses both, but the links file is plain JSONL.
+ * @param {Map<string, string>} replacedBy
+ * @param {string} key
+ */
+export function newestReplacement(replacedBy, key, depthLimit = REPLACEMENT_DEPTH_LIMIT) {
+  if (!replacedBy.has(key)) return null;
+  const seen = new Set([key]);
+  let node = key;
+  for (let depth = 0; depth < depthLimit && replacedBy.has(node); depth++) {
+    const next = replacedBy.get(node);
+    if (seen.has(next)) break;
+    seen.add(next);
+    node = next;
+  }
+  return node === key ? null : node;
+}
+
 export function ancestors(parent, key) {
   const seen = [];
   let node = key;

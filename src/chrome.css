@@ -872,6 +872,52 @@ body.review-surface {
   min-height: 0;
   background: #fff;
   overflow: hidden;
+  position: relative;
+}
+/* A replaced page says so over its own artifact and links to the newest page in its line of
+   work. It floats above the layout gate (z 60) so the way out is there while the page loads or
+   fails, and stays under the menus (70+). An ended page carries the same link in its ended strip,
+   so this one steps aside rather than stack two strips. */
+.newer-page-bar {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 61;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: calc(100% - 24px);
+  padding: 8px 14px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-tooltip);
+  color: var(--fg);
+  font-size: var(--text-sm);
+  font-weight: var(--w-medium);
+  line-height: 1.4;
+}
+body:has(#endedOverlay:not([hidden])) .newer-page-bar {
+  display: none;
+}
+.newer-page-link {
+  color: var(--accent);
+  font-weight: var(--w-semi);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.newer-page-link:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
+}
+.ended-newer {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
 }
 .panel {
   width: var(--panel-w);
