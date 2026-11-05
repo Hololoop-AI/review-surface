@@ -2425,3 +2425,44 @@ test("opening an artifact names that session as the one to reload across a versi
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+// Round 3 (2026-11-03): a message thread's placeholder page is not an artifact to change, and an
+// agent mid-run must not be told to block on a poll to answer a quick message.
+test("an answer in a message thread says to use it, not to edit the placeholder, and passes on quick", () => {
+  const previous = process.env.REVIEW_SURFACE_STATE_DIR;
+  process.env.REVIEW_SURFACE_STATE_DIR = "/tmp/rs-state-for-message-test";
+  try {
+    const file = "/tmp/rs-state-for-message-test/conversations/2026-11-03-abc.html";
+    const output = createPollOutput({
+      file,
+      response: {
+        status: "feedback",
+        dom_snapshot: "",
+        prompts: [{ prompt: "Files.", tag: "message", text: "Freeform message", speed: "quick" }],
+      },
+    });
+    assert.match(output.next_step, /answered your message/);
+    assert.doesNotMatch(output.next_step, /Apply the requested changes/);
+    assert.match(output.next_step, /review-surface message --thread/);
+    assert.match(output.next_step, /quick answer/);
+  } finally {
+    if (previous === undefined) delete process.env.REVIEW_SURFACE_STATE_DIR;
+    else process.env.REVIEW_SURFACE_STATE_DIR = previous;
+  }
+});
+
+// Round 8 (2026-11-05): Enter in the page's own chat is a direct conversation, not a page round.
+test("a direct chat batch asks for a reply in the conversation, not a rewrite of the page", () => {
+  const output = createPollOutput({
+    file: "/tmp/report.html",
+    response: {
+      status: "feedback",
+      dom_snapshot: "",
+      prompts: [{ prompt: "Why two locks?", tag: "message", text: "Freeform message", channel: "chat" }],
+    },
+  });
+  assert.match(output.next_step, /chatting with you directly/);
+  assert.doesNotMatch(output.next_step, /Apply the requested changes/);
+  assert.match(output.next_step, /--agent-reply/);
+  assertObservablePollWakePath(output.next_step);
+});

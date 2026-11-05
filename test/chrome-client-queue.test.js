@@ -16,7 +16,7 @@ const servedChromeIds = new Set(
   ),
 );
 
-/** @typedef {{ key: string, file: string, layoutGateEnabled?: boolean, layoutGateMaxHoldMs?: number, modeToggleHotkeyKey?: string, initialLayoutWarnings?: any[], chromeLoadToken?: string, initialArtifactRevision?: number, initialArtifactLoadToken?: string, initialArtifactLoadSequence?: number, attachmentMaxBytes?: number, attachmentMaxCount?: number, attachmentAcceptedMime?: string[], initialEnded?: boolean, initialEndedBy?: string | null, delivery?: string, initialReloadState?: { boot: string, version: string, count: number }, initialChat?: { role: string, text: string }[] }} HarnessSessionData */
+/** @typedef {{ key: string, file: string, layoutGateEnabled?: boolean, layoutGateMaxHoldMs?: number, modeToggleHotkeyKey?: string, initialLayoutWarnings?: any[], chromeLoadToken?: string, initialArtifactRevision?: number, initialArtifactLoadToken?: string, initialArtifactLoadSequence?: number, attachmentMaxBytes?: number, attachmentMaxCount?: number, attachmentAcceptedMime?: string[], initialEnded?: boolean, initialEndedBy?: string | null, delivery?: string, initialReloadState?: { boot: string, version: string, count: number }, initialChat?: { role: string, text: string }[], threadAgents?: { id: string, label: string, title: string, prefix: string }[], hostUrl?: string | null, messageFeed?: string }} HarnessSessionData */
 /** @type {HarnessSessionData} */
 const defaultSessionData = {
   key: "abc",
@@ -49,6 +49,8 @@ async function createChromeHarness({
   notificationPermission = undefined,
   // What `GET /api/<key>/threads` answers at boot: the page's existing study threads.
   initialThreads = [],
+  // What `GET /api/notifications` answers, read on every request so a test can change it.
+  notificationRows = () => [],
 } = {}) {
   const source = await readFile(sourceUrl, "utf8");
   // Seed sessionStorage before the client boots, to model a tab whose queue was
@@ -59,6 +61,7 @@ async function createChromeHarness({
   const inlineWhiteboards = [];
   const eventSources = [];
   const localStore = new Map();
+  const notificationRequests = [];
   const sessionStreams = () => eventSources.filter((source) => !String(source.url).endsWith("/threads"));
   const windowListeners = new Map();
   const documentListeners = new Map();
@@ -254,6 +257,9 @@ async function createChromeHarness({
   element("warningsDrawer").hidden = true;
   // Shipped hidden by the markup, like the menus above.
   element("threadsMenu").hidden = true;
+  element("notifyMenu").hidden = true;
+  element("chatPop").hidden = true;
+  element("queueMenu").hidden = true;
   element("threadModal").hidden = true;
   const whiteboardFrame = element("whiteboardFrame");
   whiteboardFrame.contentWindow = {
@@ -270,6 +276,10 @@ async function createChromeHarness({
         ok: true,
         json: async () => ({ chrome_load_token: "harness-chrome-refresh", artifact_revision: artifactRevision }),
       };
+    }
+    if (String(url).startsWith("/api/notifications")) {
+      notificationRequests.push(String(url));
+      return { ok: true, json: async () => ({ notifications: notificationRows() }) };
     }
     if (String(url) === `/api/${sessionData.key}/threads`) {
       return { ok: true, json: async () => ({ threads: initialThreads }) };
@@ -545,6 +555,7 @@ async function createChromeHarness({
       for (const { handler } of documentListeners.get("mousedown") || []) handler({ target });
     },
     runTimers,
+    notificationRequests,
     advanceClock(ms) {
       clockNow += ms;
     },
@@ -5742,20 +5753,30 @@ test("the bell counts unseen thread replies, pops up a new thread, and a notific
   });
 
   send([]);
-  assert.equal(chrome.element("threadsWrap").hidden, true, "no threads, no bell");
+  // Round 8: the page's own conversation is always a footer tab, so the footer stays.
+  assert.equal(chrome.element("threadsWrap").hidden, false, "no threads, still the This page tab");
+  assert.deepEqual(
+    chrome.element("threadsPageTab").children.map((tab) => tab.dataset.threadKey),
+    ["page:abc"],
+    "This page sits at the footer's right end",
+  );
   assert.equal(threads.closed, true, "an empty list lets the stream go even while visible");
   chrome.eventSource().listeners.get("thread-linked")({ data: "{}" });
   const linked = chrome.threadsStream();
   const sendLinked = (list) => linked.listeners.get("threads")({ data: JSON.stringify({ threads: list }) });
 
-  // started from this page while it is open: it pops up in the thread window
+  // started from this page while it is open: it pops up in the chat window (round 3: a thread is
+  // a conversation first; its page is one click away)
   sendLinked([thread({})]);
   assert.equal(chrome.element("threadsWrap").hidden, false);
-  assert.equal(chrome.element("threadModal").hidden, false);
+  assert.equal(chrome.element("chatPop").hidden, false);
+  assert.equal(chrome.element("chatPopTitle").textContent, "Study: why the lock");
+  assert.equal(chrome.element("chatPopPresence").textContent, "Starting…");
+  chrome.element("chatPopExpand").onclick();
+  assert.equal(chrome.element("threadModal").hidden, false, "open with its page: the big window");
   const [threadFrame] = chrome.element("threadFrames").children;
   assert.equal(threadFrame.src, "/session/t1?embed=thread");
-  assert.equal(chrome.element("threadModalTitle").textContent, "Study: why the lock");
-  assert.equal(chrome.element("threadModalPresence").textContent, "Starting…");
+  assert.equal(chrome.element("chatPop").hidden, true);
 
   // minimized, it keeps running; a reply lands while the reader is in another tab
   chrome.element("threadMinimize").onclick();
@@ -5773,9 +5794,527 @@ test("the bell counts unseen thread replies, pops up a new thread, and a notific
   // clicking the notification brings the thread back and clears the badge
   chrome.setDocumentHidden(false);
   chrome.notifications[0].onclick();
-  assert.equal(chrome.element("threadModal").hidden, false);
+  assert.equal(chrome.element("chatPop").hidden, false);
   assert.equal(chrome.element("threadsCount").hidden, true);
   assert.equal(chrome.notifications[0].closed, true);
   assert.equal(chrome.localStore.get("review-surface:thread-seen:t1"), "1", "seen survives a reload");
-  assert.equal(chrome.element("threadFrames").children.length, 1, "the same frame, not a new one");
+});
+
+// Message threads (2026-11-03). The driver: "a thin footer with unread counts that follows me
+// across pages, where a thread can continue onto other pages and I can pick which agent answers it".
+const footerThread = (extra) => ({
+  key: "t1",
+  title: "Study: why the lock",
+  url: "/session/t1",
+  status: "open",
+  state: "new",
+  presence: "waiting",
+  here: true,
+  pages: [{ key: "abc", title: "This page" }],
+  agent_replies: 0,
+  last_agent_reply: null,
+  updated_at: "2026-11-03T06:00:00.000Z",
+  ...extra,
+});
+
+test("the footer lists another page's thread apart, never pops it up, and Continue here links and opens it", async () => {
+  const linkBodies = [];
+  const chrome = await createChromeHarness({
+    notificationPermission: "granted",
+    initialThreads: [footerThread({ agent_replies: 1 })],
+    fetchImpl: async (url, init) => {
+      if (String(url) === "/api/links") linkBodies.push(JSON.parse(init.body));
+      return { ok: true, json: async () => ({ status: "recorded" }) };
+    },
+  });
+  await flushPromises();
+  const stream = chrome.threadsStream();
+  const send = (list) => stream.listeners.get("threads")({ data: JSON.stringify({ threads: list }) });
+  const elsewhere = footerThread({
+    key: "t2",
+    title: "Ask: which store",
+    url: "/session/t2",
+    here: false,
+    pages: [{ key: "zzz", title: "Runner design" }],
+  });
+
+  send([footerThread({ agent_replies: 1 }), elsewhere]);
+  assert.equal(chrome.element("threadModal").hidden, true, "another page's new thread joins the list only");
+  assert.equal(chrome.element("threadsWrap").hidden, false);
+  assert.equal(chrome.element("threadsList").children.length, 2, "This page, then its own thread");
+  assert.equal(chrome.element("threadsOtherList").children.length, 1);
+  assert.equal(chrome.element("threadsOtherLabel").hidden, false);
+  assert.equal(chrome.element("threadsSummary").textContent, "1 on this page · 1 on other pages");
+  assert.equal(chrome.element("threadsCount").textContent, "1", "this page's unseen reply counts");
+
+  // its reply raises the footer count, but the notification belongs to the page it is on
+  chrome.setDocumentHidden(false);
+  send([footerThread({ agent_replies: 1 }), { ...elsewhere, agent_replies: 1, last_agent_reply: { text: "Files." } }]);
+  assert.equal(chrome.element("threadsCount").textContent, "2", "unread follows you across pages");
+  assert.equal(chrome.notifications.length, 0);
+
+  const [row] = chrome.element("threadsOtherList").children;
+  const carry = row.children.find((child) => child.className === "thread-continue");
+  assert.equal(carry.textContent, "Continue here");
+  await carry.onclick();
+  await flushPromises();
+  assert.deepEqual(linkBodies, [{ type: "thread-of", from: "t2", to: "abc" }]);
+  assert.equal(chrome.element("chatPop").hidden, false, "the carried thread opens");
+  assert.equal(chrome.element("chatPopTitle").textContent, "Ask: which store");
+  assert.equal(chrome.element("threadsOtherList").children.length, 0, "it is this page's thread now");
+});
+
+test("a hidden page does not hold the threads stream for a live thread on another page", async () => {
+  const chrome = await createChromeHarness({
+    initialThreads: [footerThread({ here: false, presence: "working", pages: [{ key: "zzz", title: "Other" }] })],
+  });
+  await flushPromises();
+  assert.equal(chrome.threadsStream().closed, false);
+  chrome.setDocumentHidden(true);
+  assert.equal(
+    chrome.allEventSources().filter((source) => source.url.endsWith("/threads") && !source.closed).length,
+    0,
+    "only a live thread on this page keeps a hidden tab's stream",
+  );
+});
+
+test("the footer starts a thread with the agent you pick, sent now, leaving the review queue alone", async () => {
+  const promptBodies = [];
+  const chrome = await createChromeHarness({
+    sessionData: {
+      ...defaultSessionData,
+      threadAgents: [{ id: "study", label: "Study", title: "Study it beside the page", prefix: "study: " }],
+    },
+    storedQueue: [{ uid: "", prompt: "Fix the header", selector: "h1", tag: "element", text: "Header" }],
+    fetchImpl: async (url, init) => {
+      if (String(url).endsWith("/prompts")) promptBodies.push(JSON.parse(init.body));
+      return { ok: true, json: async () => ({ threads: [] }) };
+    },
+  });
+  await flushPromises();
+  assert.equal(chrome.element("threadsWrap").hidden, false, "a page with an agent to ask shows the footer");
+  assert.equal(chrome.element("threadsNew").hidden, false);
+  assert.equal(chrome.element("threadsSummary").textContent, "No threads yet");
+  const [study] = chrome.element("threadsNewAgents").children;
+  assert.equal(study.textContent, "Study");
+
+  await study.onclick();
+  assert.equal(promptBodies.length, 0, "an empty question sends nothing");
+  chrome.element("threadsNewText").value = "  why one lock for both writes?  ";
+  await study.onclick();
+  await flushPromises();
+  assert.deepEqual(
+    promptBodies.map((body) => body.prompts.map((prompt) => [prompt.prompt, prompt.tag])),
+    [[["study: why one lock for both writes?", "thread"]]],
+  );
+  assert.equal(chrome.element("threadsNewText").value, "");
+  assert.deepEqual(
+    chrome.queued().map((prompt) => prompt.prompt),
+    ["Fix the header"],
+  );
+});
+
+test("an ended page offers no new thread but keeps listing its threads", async () => {
+  const chrome = await createChromeHarness({
+    sessionData: {
+      ...defaultSessionData,
+      initialEnded: true,
+      threadAgents: [{ id: "study", label: "Study", title: "", prefix: "study: " }],
+    },
+    initialThreads: [footerThread({ agent_replies: 1 })],
+  });
+  await flushPromises();
+  assert.equal(chrome.element("threadsNew").hidden, true);
+  assert.equal(chrome.element("threadsWrap").hidden, false);
+  assert.equal(chrome.element("threadsList").children.length, 2, "This page, then its own thread");
+});
+
+// Round 2 (2026-11-03). The driver: "the threads should expand out width wise on desktop until
+// they can't anymore. Then the most recent can stay horizontal while the full message list is in
+// the drop down / up" - and keep a bell for other notifications, "like a page returning".
+test("the footer shows a tab per thread, unread and newest first, and a tab opens its thread", async () => {
+  const chrome = await createChromeHarness({
+    initialThreads: [
+      footerThread({ key: "t1", title: "Old and read", updated_at: "2026-11-03T05:00:00.000Z" }),
+      footerThread({
+        key: "t2",
+        title: "Answered",
+        url: "/session/t2",
+        agent_replies: 1,
+        updated_at: "2026-11-03T04:00:00.000Z",
+      }),
+    ],
+  });
+  chrome.localStore.set("review-surface:thread-seen:t1", "0");
+  await flushPromises();
+  const tabs = chrome.element("threadsTabs").children;
+  assert.deepEqual(
+    tabs.map((tab) => tab.dataset.threadKey),
+    ["t2", "t1"],
+    "the unread one leads; This page sits apart at the right end",
+  );
+  assert.match(chrome.element("threadsPageTab").children[0].className, /page-tab/);
+  assert.match(tabs[0].className, /unread/);
+  assert.equal(chrome.element("threadsMore").hidden, true, "everything fits: no +N");
+  tabs[0].onclick();
+  assert.equal(chrome.element("chatPop").hidden, false);
+  assert.equal(chrome.element("chatPopTitle").textContent, "Answered");
+});
+
+test("the bell counts other pages that moved, clears on open, and refetches when a page moves", async () => {
+  let rows = [
+    {
+      key: "p1",
+      type: "page.version",
+      label: "New version",
+      at: "2026-11-03T06:00:00.000Z",
+      title: "Runner design",
+      url: "/session/p1",
+    },
+  ];
+  const chrome = await createChromeHarness({ notificationRows: () => rows });
+  chrome.localStore.set("review-surface:notifications-seen-at", "2026-11-03T05:00:00.000Z");
+  await flushPromises();
+  await flushPromises();
+  // the boot fetch may have landed before the seen mark was set; ask again with it in place
+  chrome.eventSource().listeners.get("activity")({ data: "{}" });
+  chrome.runTimers(400);
+  await flushPromises();
+  await flushPromises();
+  assert.equal(chrome.notificationRequests[0], "/api/notifications?page=abc", "this page's own news is left out");
+  assert.equal(chrome.element("notifyWrap").hidden, false);
+  assert.equal(chrome.element("notifyCount").textContent, "1");
+  assert.equal(chrome.element("notifyList").children.length, 1);
+  assert.match(chrome.element("notifyList").children[0].children[1].textContent, /^New version · /);
+
+  chrome.element("notifyButton").onclick();
+  assert.equal(chrome.element("notifyMenu").hidden, false);
+  assert.equal(chrome.element("notifyCount").hidden, true, "opening it clears the count");
+  assert.equal(chrome.localStore.get("review-surface:notifications-seen-at"), "2026-11-03T06:00:00.000Z");
+
+  // another page comes back: the page's own stream says so, and the bell refetches
+  rows = [
+    {
+      key: "p2",
+      type: "page.agent_reply",
+      label: "Agent replied",
+      at: "2026-11-03T07:00:00.000Z",
+      title: "Living map",
+      url: "/session/p2",
+    },
+    ...rows,
+  ];
+  const before = chrome.notificationRequests.length;
+  chrome.eventSource().listeners.get("activity")({ data: "{}" });
+  chrome.runTimers(400);
+  await flushPromises();
+  await flushPromises();
+  assert.equal(chrome.notificationRequests.length, before + 1);
+  assert.equal(chrome.element("notifyCount").textContent, "1");
+});
+
+test("a first visit treats everything already logged as seen", async () => {
+  const chrome = await createChromeHarness({
+    notificationRows: () => [
+      {
+        key: "p1",
+        type: "page.version",
+        label: "New version",
+        at: "2026-11-01T06:00:00.000Z",
+        title: "Old",
+        url: "/session/p1",
+      },
+    ],
+  });
+  await flushPromises();
+  await flushPromises();
+  assert.equal(chrome.element("notifyCount").hidden, true);
+  assert.equal(chrome.localStore.get("review-surface:notifications-seen-at"), "2026-11-01T06:00:00.000Z");
+});
+
+// Round 3 (2026-11-03): "it doesn't need to be a page. It would be a message right? So footer ui."
+test("an agent's question waits in the footer unread, opens as a chat, and the reply can ask for speed", async () => {
+  const sent = [];
+  const chrome = await createChromeHarness({
+    notificationPermission: "granted",
+    initialThreads: [footerThread({ key: "t0" })],
+    fetchImpl: async (url, init) => {
+      if (String(url) === "/api/q1/conversation") {
+        return {
+          ok: true,
+          json: async () => ({
+            title: "Which store?",
+            status: "open",
+            chat: [{ role: "agent", text: "Files or SQLite?" }],
+          }),
+        };
+      }
+      if (String(url) === "/api/q1/prompts") {
+        sent.push(JSON.parse(init.body));
+        return { ok: true, json: async () => ({}) };
+      }
+      return { ok: true, json: async () => ({}) };
+    },
+  });
+  await flushPromises();
+  const live = chrome.threadsStream();
+  const question = footerThread({
+    key: "q1",
+    title: "Which store?",
+    url: "/session/q1",
+    agent_replies: 1,
+    state: "needs-you",
+    last_agent_reply: { text: "Files or SQLite?" },
+  });
+  chrome.setDocumentHidden(true);
+  live.listeners.get("threads")({ data: JSON.stringify({ threads: [footerThread({ key: "t0" }), question] }) });
+  assert.equal(chrome.element("chatPop").hidden, true, "an agent's message does not take over the screen");
+  assert.equal(chrome.notifications.at(-1)?.title, "Which store?");
+  chrome.setDocumentHidden(false);
+  assert.match(chrome.element("threadsCount").textContent, /1/);
+
+  const tab = chrome.element("threadsTabs").children.find((child) => child.dataset.threadKey === "q1");
+  tab.onclick();
+  await flushPromises();
+  await flushPromises();
+  assert.equal(chrome.element("chatPop").hidden, false);
+  assert.deepEqual(
+    chrome.element("chatPopLog").children.map((line) => [line.className, line.textContent]),
+    [["chat-pop-line from-agent", "Files or SQLite?"]],
+  );
+
+  chrome.element("chatPopInput").value = "Files.";
+  chrome.element("chatPopQuick").checked = true;
+  chrome.element("chatPopForm").onsubmit({ preventDefault() {} });
+  await flushPromises();
+  await flushPromises();
+  assert.deepEqual(
+    sent.map((body) => body.prompts.map((prompt) => [prompt.prompt, prompt.tag, prompt.speed])),
+    [[["Files.", "message", "quick"]]],
+  );
+  assert.equal(chrome.element("chatPopInput").value, "");
+});
+
+// Round 4 (2026-11-03): a host page - Cadre's fleet - shows under the same frame, loaded straight
+// from its own address, with the threads footer and the bell working as on any page.
+test("a host page skips the artifact load handshake but keeps the footer and the bell", async () => {
+  const chrome = await createChromeHarness({
+    sessionData: { ...defaultSessionData, hostUrl: "/fleet", layoutGateEnabled: false },
+    artifactSrc: "/fleet",
+    initialThreads: [footerThread({ here: false, pages: [{ key: "zzz", title: "Runner design" }] })],
+  });
+  await flushPromises();
+  await flushPromises();
+  assert.equal(chrome.artifactBeginRequests.length, 0, "no handshake for the host's own page");
+  assert.equal(chrome.element("threadsWrap").hidden, false);
+  assert.equal(chrome.element("threadsOtherList").children.length, 1);
+  assert.equal(chrome.notificationRequests.length, 1, "the bell asks for news");
+});
+
+// Round 5 (2026-11-04). The driver: "the current page's chats should take priority on the footer."
+test("this page's threads lead the footer tabs, even over unread threads from other pages", async () => {
+  const chrome = await createChromeHarness({
+    initialThreads: [
+      footerThread({
+        key: "away",
+        title: "Unread elsewhere",
+        here: false,
+        agent_replies: 2,
+        pages: [{ key: "zzz", title: "Other" }],
+        updated_at: "2026-11-04T09:00:00.000Z",
+      }),
+      footerThread({ key: "mine-old", title: "Mine, read", updated_at: "2026-11-04T05:00:00.000Z" }),
+      footerThread({
+        key: "mine-new",
+        title: "Mine, unread",
+        agent_replies: 1,
+        updated_at: "2026-11-04T06:00:00.000Z",
+      }),
+    ],
+  });
+  await flushPromises();
+  assert.deepEqual(
+    chrome.element("threadsTabs").children.map((tab) => tab.dataset.threadKey),
+    ["mine-new", "mine-old", "away"],
+  );
+});
+
+// Round 5 (2026-11-04). Track A's page settled "messages live in track B's footer messenger", and
+// track A keeps them in the runner's store behind a feed. The footer reads that feed.
+test("the host's message feed: a run's question is a footer tab, opens in the chat window, and the reply answers it", async () => {
+  const posts = [];
+  const question = {
+    id: "task-x-q1",
+    conv: "task-x",
+    at: 1793700000,
+    from: "agent",
+    kind: "question",
+    text: "Which greeting?",
+    recommendation: "Hello, world!",
+  };
+  const chrome = await createChromeHarness({
+    sessionData: { ...defaultSessionData, messageFeed: "/api/messages" },
+    fetchImpl: async (url, init) => {
+      if (String(url) === "/api/messages") {
+        return {
+          ok: true,
+          json: async () => ({
+            conversations: [
+              {
+                conv: "task-x",
+                title: "Greeting tool",
+                asks: [{ ticket: "task-x-q1", question: "Which greeting?" }],
+                unread: 1,
+                latest_unread: question,
+                last: question,
+                page: "/tmp/artifact.html",
+              },
+            ],
+          }),
+        };
+      }
+      if (String(url) === "/api/messages/task-x" && !init?.method) {
+        return {
+          ok: true,
+          json: async () => ({
+            conv: "task-x",
+            title: "Greeting tool",
+            summary: { asks: [{ ticket: "task-x-q1" }], unread: 1 },
+            lines: [question, { id: "task-x-s", kind: "seen", from: "driver", refers_to: "x" }],
+          }),
+        };
+      }
+      if (String(url) === "/api/messages/task-x" && init?.method === "POST") {
+        posts.push(JSON.parse(init.body));
+        return { ok: true, json: async () => ({ id: "task-x-a1" }) };
+      }
+      return { ok: true, json: async () => ({ threads: [] }) };
+    },
+  });
+  await flushPromises();
+  await flushPromises();
+  const [tab] = chrome.element("threadsTabs").children;
+  assert.equal(tab.dataset.threadKey, "feed:task-x");
+  assert.match(tab.className, /unread/);
+  assert.equal(chrome.element("threadsCount").textContent, "1");
+
+  tab.onclick();
+  await flushPromises();
+  await flushPromises();
+  assert.equal(chrome.element("chatPop").hidden, false);
+  assert.equal(chrome.element("chatPopPresence").textContent, "Asks you");
+  assert.deepEqual(
+    chrome.element("chatPopLog").children.map((line) => line.textContent),
+    ["Question: Which greeting?\nSuggested: Hello, world!"],
+    "markers such as seen are not shown",
+  );
+  assert.deepEqual(posts, [{ kind: "seen" }], "opening it reads it");
+
+  chrome.element("chatPopInput").value = "Hi there";
+  chrome.element("chatPopForm").onsubmit({ preventDefault() {} });
+  await flushPromises();
+  await flushPromises();
+  assert.deepEqual(posts[1], { kind: "answer", refers_to: "task-x-q1", text: "Hi there", via: "footer" });
+  assert.match(chrome.element("chatPopHint").textContent, /^Answered/);
+});
+
+// Round 6 (2026-11-05). The driver: "Surely this could be a special footer item that can show queued
+// items and run the entire page (ideally with an easy to click little button to send it off without
+// having to open it up, although you still would want to open it to check the queue items."
+test("the footer shows the queue with a one-click Send and a drop-up to check and remove items", async () => {
+  const chrome = await createChromeHarness({
+    storedQueue: [
+      { uid: "", prompt: "Fix the header", selector: "h1", tag: "element", text: "Header" },
+      { uid: "", prompt: "Shorter intro", selector: "p.intro", tag: "element", text: "Intro" },
+    ],
+  });
+  await flushPromises();
+  assert.equal(chrome.element("threadsWrap").hidden, false, "a queue alone is enough to show the footer");
+  assert.equal(chrome.element("queueDock").hidden, false);
+  assert.equal(chrome.element("queueCount").textContent, "2");
+
+  chrome.element("queueOpen").onclick();
+  assert.equal(chrome.element("queueMenu").hidden, false);
+  const rows = chrome.element("queueList").children;
+  assert.equal(rows.length, 2);
+  rows[1].children.find((child) => child.className === "queue-item-remove").onclick({ stopPropagation() {} });
+  assert.deepEqual(
+    chrome.queued().map((prompt) => prompt.prompt),
+    ["Fix the header"],
+  );
+  assert.equal(chrome.element("queueCount").textContent, "1");
+
+  chrome.element("queueSend").onclick();
+  assert.equal(chrome.element("queueMenu").hidden, true);
+  assert.equal(chrome.postedToFrame.at(-1).type, "review-surface:requestSnapshot", "the same send as the panel's");
+});
+
+test("an ended page shows no queue to send", async () => {
+  const chrome = await createChromeHarness({
+    sessionData: { ...defaultSessionData, initialEnded: true },
+    storedQueue: [{ uid: "", prompt: "Late note", selector: "h1", tag: "element", text: "Header" }],
+  });
+  await flushPromises();
+  assert.equal(chrome.element("queueDock").hidden, true);
+});
+
+// Round 8 (2026-11-05). The driver, on folding the sidebar into the footer: "yes. It should be easy
+// to tell apart from the others though... Hitting enter just keeps the direct chat going", "only
+// send off the full page on a button click", full screen like a terminal, and thinking shown.
+test("This page: first tab, marked apart, a direct chat on Enter, Send page sends the review, thinking shown, full screen", async () => {
+  const posts = [];
+  const chrome = await createChromeHarness({
+    storedQueue: [{ uid: "", prompt: "Fix the header", selector: "h1", tag: "element", text: "Header" }],
+    fetchImpl: async (url, init) => {
+      if (String(url) === "/api/abc/conversation") {
+        return {
+          ok: true,
+          json: async () => ({
+            title: "artifact",
+            status: "open",
+            chat: [
+              { role: "user", text: "Why two locks?" },
+              { role: "thinking", text: "Checking the store." },
+              { role: "agent", text: "One guards state.json." },
+            ],
+          }),
+        };
+      }
+      if (String(url) === "/api/abc/prompts") posts.push(JSON.parse(init.body));
+      return { ok: true, json: async () => ({ threads: [] }) };
+    },
+  });
+  await flushPromises();
+  const [tab] = chrome.element("threadsPageTab").children;
+  assert.equal(tab.dataset.threadKey, "page:abc");
+  assert.match(tab.className, /page-tab/);
+  assert.equal(chrome.element("panelCollapse")["aria-pressed"], "false", "the sidebar starts collapsed");
+
+  tab.onclick();
+  await flushPromises();
+  await flushPromises();
+  assert.equal(chrome.element("chatPopSendPage").hidden, false);
+  assert.equal(chrome.element("chatPopSendPage").textContent, "Send page (1)");
+  assert.deepEqual(
+    chrome.element("chatPopLog").children.map((line) => line.className),
+    ["chat-pop-line from-you", "chat-pop-line from-thinking", "chat-pop-line from-agent"],
+  );
+
+  chrome.element("chatPopInput").value = "And the second?";
+  chrome.element("chatPopForm").onsubmit({ preventDefault() {} });
+  await flushPromises();
+  assert.deepEqual(
+    posts.map((body) => body.prompts.map((prompt) => [prompt.prompt, prompt.channel])),
+    [[["And the second?", "chat"]]],
+    "Enter is a direct chat, the queued note stays queued",
+  );
+  assert.deepEqual(
+    chrome.queued().map((prompt) => prompt.prompt),
+    ["Fix the header"],
+  );
+
+  chrome.element("chatPopFull").onclick();
+  assert.equal(chrome.element("chatPop").classList.contains("full"), true);
+  chrome.element("chatPopSendPage").onclick();
+  assert.equal(chrome.postedToFrame.at(-1).type, "review-surface:requestSnapshot", "Send page is the full review send");
 });

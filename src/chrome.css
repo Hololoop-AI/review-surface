@@ -98,6 +98,7 @@
   --bar-h: 56px;
   --bar-pad: var(--space-8);
   --panel-w: 360px;
+  --foot-h: 30px;
   --ease: cubic-bezier(0.2, 0.6, 0.2, 1);
   --dur-fast: 120ms;
   --dur: 180ms;
@@ -1803,16 +1804,460 @@ body.layout-gate-active iframe#artifact {
     display: none;
   }
 }
-/* Study threads: the bell lists side conversations about this page; one opens in the thread
-   window, a central window that minimizes back to the bell and keeps running. */
-.threads-wrap {
+/* Threads: a thin footer under the page lists every live thread (this page's first, then other
+   pages', which can continue here) and counts unseen replies; one opens in the thread window, a
+   central window that minimizes back to the footer and keeps running. */
+.threads-footer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  height: var(--foot-h);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 var(--bar-pad);
+  background: var(--bg-bar);
+  border-top: var(--hairline-subtle);
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+.threads-footer[hidden] {
+  display: none;
+}
+body.has-threads-footer .layout {
+  height: calc(100vh - var(--bar-h) - var(--foot-h));
+}
+.threads-button {
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--fg-dim);
+  border-radius: 7px;
+  cursor: pointer;
+  font: inherit;
+}
+.threads-button svg {
+  width: 13px;
+  height: 13px;
+}
+.threads-button:hover,
+.threads-button[aria-expanded="true"] {
+  border-color: var(--border-strong);
+  background: var(--steel-700);
+  color: var(--fg);
+}
+.threads-button.has-unread {
+  color: var(--accent);
+  border-color: rgba(244, 201, 93, 0.45);
+}
+/* Desktop: one tab per thread, as many as fit; the rest behind "+N". */
+.threads-tabs {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+.thread-tab {
+  flex: 0 0 auto;
+  max-width: 220px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  background: var(--bg-panel);
+  color: var(--fg-dim);
+  font: inherit;
+  cursor: pointer;
+}
+.thread-tab[hidden] {
+  display: none;
+}
+.thread-tab:hover,
+.thread-tab.active {
+  border-color: var(--border-strong);
+  color: var(--fg);
+}
+.thread-tab.unread {
+  color: var(--fg);
+}
+.thread-tab.unread::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+.thread-tab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.threads-more {
+  flex: 0 0 auto;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  cursor: pointer;
+}
+.threads-more[hidden] {
+  display: none;
+}
+.threads-footer.has-tabs .threads-summary {
+  display: none;
+}
+/* A host page (the host's own live page, such as Cadre's fleet) under the frame: no agent writes
+   it, so there is no conversation with its author and nothing to annotate yet. The top bar, the
+   bell, the threads footer and the chat window are what it keeps. */
+body.host-page .layout {
+  grid-template-columns: minmax(0, 1fr);
+}
+body.host-page .panel,
+body.host-page .panel-scrim,
+body.host-page #panelCollapse,
+body.host-page #annotation {
+  display: none;
+}
+/* The footer's right-hand end: "This page", the queue and its Send - the page's own business. */
+.footer-home {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.threads-page-tab {
+  display: inline-flex;
+}
+/* Annotate is an icon toggle; its tooltip names the mode and the shortcut. */
+.annotate-toggle {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  padding: 0;
+}
+.annotate-toggle:hover {
+  border-color: var(--border-strong);
+  color: var(--fg);
+}
+.annotate-toggle[aria-pressed="true"] {
+  border-color: rgba(244, 201, 93, 0.55);
+  background: rgba(244, 201, 93, 0.12);
+  color: var(--accent);
+}
+.annotate-toggle:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+#panelCollapse[aria-pressed="true"] {
+  color: var(--accent);
+}
+/* The queue in the footer: count, one-click Send, and a drop-up to check what is queued. */
+.queue-dock {
+  position: relative;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.queue-dock[hidden] {
+  display: none;
+}
+.queue-open,
+.queue-send {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}
+.queue-open:hover,
+.queue-open[aria-expanded="true"] {
+  border-color: var(--border-strong);
+  background: var(--steel-700);
+}
+.queue-count {
+  margin-left: 4px;
+  font-weight: var(--w-bold);
+  color: var(--accent);
+}
+.queue-send {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: var(--w-semi);
+}
+.queue-send:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.queue-menu {
+  right: 0;
+  bottom: calc(var(--foot-h) + 4px);
+  width: min(380px, calc(100vw - 24px));
+  max-height: min(60vh, 460px);
+  overflow: auto;
+}
+.queue-menu .menu-label {
+  padding: 7px 10px 0;
+}
+.queue-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 8px;
+  padding: 8px 10px;
+  border-bottom: var(--hairline-subtle);
+}
+.queue-item-target {
+  grid-column: 1 / -1;
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.queue-item-text {
+  font-size: var(--text-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.queue-item-remove {
+  align-self: start;
+  padding: 2px 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+.queue-menu-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 10px 4px;
+}
+/* The chat window: a thread as a conversation, above the footer, like a message app's. */
+.chat-pop {
+  position: fixed;
+  z-index: 60;
+  /* One fixed corner, bottom right, above "This page" - the button that opens the page's chat. */
+  right: var(--bar-pad);
+  bottom: calc(var(--foot-h) + 6px);
+  width: min(360px, calc(100vw - 24px));
+  height: min(480px, calc(100vh - var(--bar-h) - var(--foot-h) - 24px));
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-floating);
+  overflow: hidden;
+}
+.chat-pop[hidden] {
+  display: none;
+}
+.chat-pop-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px 6px 12px;
+  border-bottom: var(--hairline-subtle);
+  background: var(--bg-bar);
+}
+/* The status is a few words and always readable; the title gives way. */
+.chat-pop-head .thread-presence {
+  flex: 0 0 auto;
+}
+.chat-pop-title {
+  flex: 1 1 0;
+  min-width: 0;
+  font-weight: var(--w-semi);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-pop-log {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+/* Chat lines are plain text, like a chat app's transcript: the agent's on the left, yours on the
+   right in a dimmer tone. No bubbles - in a small window they were more frame than words. */
+.chat-pop-line {
+  max-width: 88%;
+  font-size: var(--text-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.chat-pop-line.from-agent {
+  align-self: flex-start;
+  color: var(--fg);
+}
+.chat-pop-line.from-you {
+  align-self: flex-end;
+  text-align: right;
+  color: var(--fg-dim);
+}
+/* The input is a raw prompt line, as in a terminal: no box around it, a prompt mark before it. */
+.chat-pop-compose {
+  position: relative;
+  padding: 8px;
+  border-top: var(--hairline-subtle);
+}
+.chat-pop-compose::before {
+  content: "\203A";
+  position: absolute;
+  left: 10px;
+  top: 11px;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+.chat-pop-compose textarea {
+  width: 100%;
+  resize: none;
+  padding: 4px 4px 4px 16px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  outline: none;
+}
+.chat-pop-compose textarea:focus-visible {
+  outline: none;
+}
+.chat-pop-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.chat-pop-speed {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+/* A runner conversation carries no speed and has no page of its own: both controls hide. */
+.chat-pop-speed[hidden],
+.chat-pop-head .thread-action[hidden] {
+  display: none;
+}
+.chat-pop-hint {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+}
+/* "This page": the page's own conversation with its agent, first in the footer and marked apart
+   from side threads - an accent edge and bolder text. */
+.thread-tab.page-tab {
+  border-color: rgba(244, 201, 93, 0.55);
+  color: var(--fg);
+  font-weight: var(--w-semi);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.chat-pop.page-chat .chat-pop-head {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+.chat-pop-send-page {
+  background: transparent;
+  border: 1px solid rgba(244, 201, 93, 0.55);
+  color: var(--accent);
+}
+.chat-pop-send-page[hidden] {
+  display: none;
+}
+/* The agent's thinking: there to watch, quieter than what it says. */
+.chat-pop-line.from-thinking {
+  align-self: flex-start;
+  color: var(--fg-faint);
+  font-style: italic;
+  font-size: var(--text-xs);
+}
+.chat-pop-line.from-thinking::before {
+  content: "thinking  ";
+  font-style: normal;
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  font-size: 9px;
+}
+/* Full screen: the chat as a terminal session. Every line reads top to bottom in one column, in a
+   monospace face; your lines carry a prompt mark instead of sitting on the right. */
+.chat-pop.full {
+  inset: var(--bar-h) 0 0 0 !important;
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  border: 0;
+  z-index: 72;
+  background: #0b0d10;
+}
+.chat-pop.full .chat-pop-log {
+  padding: 16px 24px;
+  font-family: var(--font-mono);
+}
+.chat-pop.full .chat-pop-line {
+  max-width: none;
+  align-self: stretch;
+  text-align: left;
+  font-family: inherit;
+}
+.chat-pop.full .chat-pop-line.from-you {
+  color: var(--accent);
+}
+.chat-pop.full .chat-pop-line.from-you::before {
+  content: "> ";
+}
+.chat-pop.full .chat-pop-compose textarea {
+  font-family: var(--font-mono);
+}
+.chat-pop-head .thread-action[aria-pressed="true"] {
+  color: var(--accent);
+  border-color: rgba(244, 201, 93, 0.55);
+}
+/* The bell: other pages that moved since you last looked. */
+.notify-wrap {
   position: relative;
   flex-shrink: 0;
 }
-.threads-wrap[hidden] {
+.notify-wrap[hidden] {
   display: none;
 }
-.threads-button {
+.notify-button {
   position: relative;
   width: 34px;
   height: 34px;
@@ -1825,22 +2270,80 @@ body.layout-gate-active iframe#artifact {
   cursor: pointer;
   padding: 0;
 }
-.threads-button:hover,
-.threads-button[aria-expanded="true"] {
+.notify-button:hover,
+.notify-button[aria-expanded="true"] {
   border-color: var(--border-strong);
   background: var(--steel-700);
   color: var(--fg);
 }
-.threads-button.has-unread {
+.notify-button.has-unread {
   color: var(--accent);
   border-color: rgba(244, 201, 93, 0.45);
 }
-.threads-count {
+.notify-count {
   position: absolute;
   top: -6px;
   right: -6px;
   min-width: 18px;
   height: 18px;
+  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 11px;
+  font-weight: var(--w-bold);
+  line-height: 1;
+}
+.notify-count[hidden] {
+  display: none;
+}
+.notify-menu {
+  right: 0;
+  top: 42px;
+  width: min(340px, calc(100vw - 24px));
+  max-height: min(70vh, 520px);
+  overflow: auto;
+}
+.notify-menu .menu-label {
+  padding: 7px 10px 0;
+}
+.notify-item {
+  display: grid;
+  gap: 2px;
+  position: relative;
+  padding-left: 22px;
+}
+.notify-item.unread::before {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 15px;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+.notify-empty {
+  margin: 4px 10px 8px;
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+}
+.notify-empty[hidden] {
+  display: none;
+}
+.threads-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-faint);
+}
+.threads-count {
+  min-width: 16px;
+  height: 16px;
   padding: 0 5px;
   display: inline-flex;
   align-items: center;
@@ -1857,14 +2360,66 @@ body.layout-gate-active iframe#artifact {
   display: none;
 }
 .threads-menu {
-  right: 0;
-  top: 42px;
-  width: min(360px, calc(100vw - 24px));
+  left: var(--bar-pad);
+  bottom: calc(var(--foot-h) + 4px);
+  width: min(380px, calc(100vw - 24px));
   max-height: min(70vh, 520px);
   overflow: auto;
 }
 .threads-menu .menu-label {
   padding: 7px 10px 0;
+}
+.thread-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+.thread-row .thread-item {
+  flex: 1;
+  min-width: 0;
+}
+.thread-continue {
+  flex-shrink: 0;
+  margin-top: 6px;
+  padding: 3px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+.thread-continue:hover {
+  border-color: var(--border-strong);
+  color: var(--fg);
+}
+.threads-new {
+  padding: 8px 10px 4px;
+  border-top: var(--hairline-subtle);
+  margin-top: 4px;
+}
+.threads-new[hidden] {
+  display: none;
+}
+.threads-new textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 44px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+.threads-new-agents {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 6px;
 }
 .thread-item {
   display: grid;
@@ -1985,12 +2540,52 @@ body.layout-gate-active iframe#artifact {
 .thread-frame[hidden] {
   display: none;
 }
-/* Inside a thread window the page that owns the window carries the bell and the brand. */
+/* Inside a thread window the page that owns the window carries the footer and the brand. */
 body.embedded-thread .brand,
-body.embedded-thread .threads-wrap {
+body.embedded-thread .chat-pop,
+body.embedded-thread .notify-wrap,
+body.embedded-thread .threads-footer {
   display: none;
 }
 @media (max-width: 860px) {
+  /* The bottom edge belongs to the conversation sheet's dock, so the footer rides just above it
+     and the layout reserves its height with the dock's; the open sheet covers it. */
+  .threads-footer {
+    bottom: calc(var(--dock-h) + env(safe-area-inset-bottom, 0px));
+    padding-right: calc(var(--bar-pad) + env(safe-area-inset-right, 0px));
+    padding-left: calc(var(--bar-pad) + env(safe-area-inset-left, 0px));
+  }
+  /* On a phone the chat window spans the width above the footer. */
+  .chat-pop {
+    left: 8px;
+    right: 8px;
+    width: auto;
+    bottom: calc(var(--dock-h) + var(--foot-h) + env(safe-area-inset-bottom, 0px) + 6px);
+    height: min(440px, calc(100dvh - var(--bar-h) - var(--dock-h) - var(--foot-h) - 24px));
+  }
+  /* A host page has no conversation dock, so the footer takes the bottom edge itself. */
+  body.host-page .layout,
+  body.host-page.has-threads-footer .layout {
+    grid-template-rows: minmax(0, 1fr) calc(var(--foot-h) + env(safe-area-inset-bottom, 0px));
+  }
+  body.host-page .threads-footer {
+    bottom: env(safe-area-inset-bottom, 0px);
+  }
+  body.host-page .chat-pop {
+    bottom: calc(var(--foot-h) + env(safe-area-inset-bottom, 0px) + 6px);
+  }
+  /* No room for tabs on a phone: the count and the full list stay. */
+  .threads-tabs,
+  .threads-more {
+    display: none;
+  }
+  .threads-footer.has-tabs .threads-summary {
+    display: inline;
+  }
+  body.has-threads-footer .layout {
+    height: calc(100dvh - var(--bar-h));
+    grid-template-rows: minmax(0, 1fr) calc(var(--dock-h) + var(--foot-h) + env(safe-area-inset-bottom, 0px));
+  }
   .thread-modal {
     padding: 0;
   }

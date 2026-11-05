@@ -20,6 +20,7 @@ import {
   queryPages,
   readLinkRecords,
   searchEverything,
+  threadsOf,
 } from "../src/page-graph.js";
 import { createChromeHtml, serve } from "../src/server.js";
 
@@ -169,6 +170,7 @@ test("the page query filters by parent, depth, state, text, and replaced-or-not"
     replaces: ["r1"],
     derived_from: [],
     thread_of: null,
+    thread_pages: [],
     threads: [],
   });
 
@@ -341,18 +343,18 @@ test("a page is unseen until a browser loads the version the agent last wrote", 
 });
 
 // Study threads (2026-10-23): a side conversation about a page is its own session, linked
-// `thread-of` that page. The page's chrome lists its threads behind a bell, counts replies it has
-// not seen, and opens one in a thread window over the page.
-test("a thread belongs to exactly one page and has no threads of its own", async () => {
+// `thread-of` that page. Message threads (2026-11-03): the same conversation can continue onto
+// other pages - "a thread can continue onto other pages" - so a thread may be linked to several
+// pages, the first being where it started. It still has no threads of its own.
+test("a thread can continue onto other pages but has no threads of its own", async () => {
   const { dir, store } = await linkStore();
   try {
     const first = await store.record(SESSIONS, { type: "thread-of", from: "eeee", to: "aaaa" });
     assert.equal(first.status, "recorded");
     assert.equal((await store.record(SESSIONS, { type: "thread-of", from: "eeee", to: "aaaa" })).status, "unchanged");
-    await assert.rejects(
-      store.record(SESSIONS, { type: "thread-of", from: "eeee", to: "bbbb" }),
-      /already a thread of another page/,
-    );
+    const second = await store.record(SESSIONS, { type: "thread-of", from: "eeee", to: "bbbb" });
+    assert.equal(second.status, "recorded", "continuing onto a second page is recorded, not refused");
+    assert.equal((await store.record(SESSIONS, { type: "thread-of", from: "eeee", to: "bbbb" })).status, "unchanged");
     await assert.rejects(
       store.record(SESSIONS, { type: "thread-of", from: "cccc", to: "eeee" }),
       /cannot have threads of its own/,
@@ -362,10 +364,15 @@ test("a thread belongs to exactly one page and has no threads of its own", async
       /cannot have threads of its own/,
       "a page that already has threads cannot become a thread",
     );
-    const pages = queryPages({ sessions: SESSIONS, records: await store.read(), titles: new Map(), now: Date.now() });
+    const records = await store.read();
+    assert.deepEqual(threadsOf(records, "aaaa"), ["eeee"]);
+    assert.deepEqual(threadsOf(records, "bbbb"), ["eeee"]);
+    const pages = queryPages({ sessions: SESSIONS, records, titles: new Map(), now: Date.now() });
     const byKey = Object.fromEntries(pages.map((p) => [p.key, p.links]));
     assert.deepEqual(byKey.aaaa.threads, ["eeee"]);
-    assert.equal(byKey.eeee.thread_of, "aaaa");
+    assert.deepEqual(byKey.bbbb.threads, ["eeee"]);
+    assert.equal(byKey.eeee.thread_of, "aaaa", "thread_of stays the page it started on");
+    assert.deepEqual(byKey.eeee.thread_pages, ["aaaa", "bbbb"], "every page it continued onto, in order");
     assert.equal(byKey.eeee.parent, null, "a thread is not filed under the page by itself");
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -424,6 +431,110 @@ test("a page lists its threads with their unseen-reply facts, live, and only to 
     const crossOrigin = { headers: { origin: "http://evil.test" } };
     assert.equal((await fetch(`${base}/api/${parentKey}/threads`, crossOrigin)).status, 403);
     assert.equal((await fetch(`${base}/events/${parentKey}/threads`, crossOrigin)).status, 403);
+  } finally {
+    controller.abort();
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+// The footer follows the reader across pages: every page's thread list carries every live
+// thread, each marked whether it is on this page, with the pages it is on.
+test("the thread list carries every live thread, marked for this page, and continuing one moves it here", async () => {
+  const { dir, server, base, post, page } = await served();
+  try {
+    const review = await page("review.html");
+    const other = await page("other.html");
+    const study = await page("study.html");
+    const old = await page("old-study.html");
+    const reviewKey = (await (await post("/api/sessions", { file: review })).json()).key;
+    const otherKey = (await (await post("/api/sessions", { file: other })).json()).key;
+    const studyKey = (await (await post("/api/sessions", { file: study })).json()).key;
+    const oldKey = (await (await post("/api/sessions", { file: old })).json()).key;
+    await post("/api/links", { type: "thread-of", from: study, to: review });
+    await post("/api/links", { type: "thread-of", from: old, to: review });
+    await post("/api/end", { file: old });
+    const list = async (key) => (await (await fetch(`${base}/api/${key}/threads`)).json()).threads;
+
+    const onReview = await list(reviewKey);
+    assert.deepEqual(
+      onReview.map((thread) => [thread.key, thread.here]),
+      [
+        [oldKey, true],
+        [studyKey, true],
+      ],
+      "its own page lists ended threads too, most recently active first",
+    );
+    assert.deepEqual(onReview[1].pages, [{ key: reviewKey, title: "review.html" }]);
+
+    const onOther = await list(otherKey);
+    assert.deepEqual(
+      onOther.map((thread) => [thread.key, thread.here]),
+      [[studyKey, false]],
+      "another page sees the live thread, not the ended one",
+    );
+
+    // "continue here": the same thread is now on both pages, started on the first
+    const moved = await post("/api/links", { type: "thread-of", from: studyKey, to: otherKey });
+    assert.equal((await moved.json()).status, "recorded");
+    const [continued] = await list(otherKey);
+    assert.equal(continued.here, true);
+    assert.deepEqual(
+      continued.pages.map((entry) => entry.key),
+      [reviewKey, otherKey],
+    );
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+// The bell (round 2): other pages that moved, one row each, thread pages and this page left out.
+test("the bell lists other pages that moved, and only to its own origin", async () => {
+  const { dir, server, base, post, page } = await served();
+  try {
+    const review = await page("review.html");
+    const other = await page("other.html");
+    const study = await page("study.html");
+    const reviewKey = (await (await post("/api/sessions", { file: review })).json()).key;
+    const otherKey = (await (await post("/api/sessions", { file: other })).json()).key;
+    const studyKey = (await (await post("/api/sessions", { file: study })).json()).key;
+    await post("/api/links", { type: "thread-of", from: study, to: review });
+    await post(`/api/${otherKey}/agent-reply`, { text: "Done." });
+    await post(`/api/${studyKey}/agent-reply`, { text: "A thread reply." });
+    const { notifications } = await (await fetch(`${base}/api/notifications?page=${reviewKey}`)).json();
+    assert.deepEqual(
+      notifications.map((row) => [row.key, row.label, row.title, row.url]),
+      [[otherKey, "Agent replied", "other.html", `/session/${otherKey}`]],
+    );
+    const crossOrigin = { headers: { origin: "http://evil.test" } };
+    assert.equal((await fetch(`${base}/api/notifications`, crossOrigin)).status, 403);
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("another page coming back pings this page's stream so the bell refetches", async () => {
+  const { dir, server, base, post, page } = await served();
+  const controller = new AbortController();
+  try {
+    const review = await page("review.html");
+    const other = await page("other.html");
+    const reviewKey = (await (await post("/api/sessions", { file: review })).json()).key;
+    const otherKey = (await (await post("/api/sessions", { file: other })).json()).key;
+    const stream = await fetch(`${base}/events/${reviewKey}`, { signal: controller.signal });
+    const reader = stream.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    await post(`/api/${reviewKey}/agent-reply`, { text: "own news" });
+    await post(`/api/${otherKey}/agent-reply`, { text: "Done." });
+    while (!/^event: activity$/m.test(buffer)) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error("page stream closed");
+      buffer += decoder.decode(value, { stream: true });
+    }
+    assert.equal((buffer.match(/^event: activity$/gm) || []).length, 1, "its own reply is not a ping");
   } finally {
     controller.abort();
     await server.close();

@@ -759,22 +759,22 @@ test("annotation card shadow styles use Review Surface design-system variables",
   assert.match(js, /:focus-visible\{outline:2px solid var\(--accent\);outline-offset:2px/);
 });
 
-test("chrome top bar uses an Annotate switch instead of a labeled toggle button", () => {
+test("chrome top bar uses an Annotate icon toggle with a tooltip", () => {
   const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
 
-  assert.match(html, /class="annotate-switch" id="annotation"[^>]*aria-pressed="true"/);
-  assert.match(html, /class="switch-track"/);
-  assert.match(html, />Annotate</);
+  // Round 10 (2026-11-05): an icon toggle with a hover tooltip, not a labelled switch.
+  assert.match(html, /class="annotate-toggle" id="annotation"[^>]*aria-pressed="true"/);
+  assert.doesNotMatch(html, /class="annotate-switch" id="panelCollapse"/, "the Chat switch left the toolbar");
+  assert.match(html, /id="annotation"[^>]*aria-label="Annotate"[^>]*title="[^"]+"/);
   assert.doesNotMatch(html, /Annotation: On/);
   assert.doesNotMatch(html, /Inspect/);
 });
 
-test("annotate switch shows a brass track and ink knob when enabled", async () => {
+test("the annotate toggle shows the accent when enabled", async () => {
   const js = await chromeClientSource();
   const css = await chromeCssSource();
 
-  assert.match(css, /\.annotate-switch\[aria-pressed="true"\] \.switch-track\{background:var\(--accent\)/);
-  assert.match(css, /\.annotate-switch\[aria-pressed="true"\] \.switch-knob\{[^}]*background:var\(--accent-ink\)/);
+  assert.match(css, /\.annotate-toggle\[aria-pressed="true"\]\{[^}]*color:var\(--accent\)/);
   assert.match(js, /annotationSwitch\.setAttribute\("aria-pressed", String\(annotation\)\)/);
 });
 

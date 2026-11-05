@@ -107,6 +107,21 @@ export class EventLog {
     });
   }
 
+  /**
+   * The newest events, oldest first: the last `maxBytes` of the log, starting at a line boundary.
+   * For readers that summarize recent activity without replaying a log that only grows.
+   * @param {number} [maxBytes]
+   */
+  async readRecent(maxBytes = 256 * 1024) {
+    return this.#enqueue(async () => {
+      await this.#ensureSize();
+      const start = Math.max(0, this.size - maxBytes);
+      const entries = await this.#readRange(start, this.size);
+      // a start inside a line yields one torn line, which #readRange already skips
+      return entries.map((entry) => entry.event);
+    });
+  }
+
   async #readRange(start, end) {
     if (end <= start) return [];
     let handle;
