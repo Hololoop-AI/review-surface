@@ -2066,7 +2066,7 @@ body.host-page #annotation {
 .chat-pop {
   position: fixed;
   z-index: 60;
-  /* One fixed corner, bottom right, above "This page" - the button that opens the page's chat. */
+  /* "This page" opens here, bottom right above its own button; a side thread is moved above its tab. */
   right: var(--bar-pad);
   bottom: calc(var(--foot-h) + 6px);
   width: min(360px, calc(100vw - 24px));

@@ -51,6 +51,8 @@ async function createChromeHarness({
   initialThreads = [],
   // What `GET /api/notifications` answers, read on every request so a test can change it.
   notificationRows = () => [],
+  // Opt-in `window.innerWidth`: left off, the chat window keeps the CSS's own placement.
+  viewportWidth = undefined,
 } = {}) {
   const source = await readFile(sourceUrl, "utf8");
   // Seed sessionStorage before the client boots, to model a tab whose queue was
@@ -395,6 +397,7 @@ async function createChromeHarness({
       },
     },
   };
+  if (viewportWidth) context.window.innerWidth = viewportWidth;
   const notifications = [];
   if (notificationPermission) {
     context.window.Notification = class FakeNotification {
@@ -5959,6 +5962,27 @@ test("the footer shows a tab per thread, unread and newest first, and a tab open
   tabs[0].onclick();
   assert.equal(chrome.element("chatPop").hidden, false);
   assert.equal(chrome.element("chatPopTitle").textContent, "Answered");
+});
+
+test("a side thread's chat opens above its tab; This page's chat keeps the fixed bottom-right corner", async () => {
+  const chrome = await createChromeHarness({
+    viewportWidth: 1200,
+    initialThreads: [footerThread({ key: "t1", title: "Side thread" })],
+  });
+  await flushPromises();
+  const [sideTab] = chrome.element("threadsTabs").children;
+  sideTab.getBoundingClientRect = () => ({ left: 131, right: 251, width: 120 });
+  sideTab.onclick();
+  assert.equal(chrome.element("chatPop").style.left, "131px", "lined up with its tab's left edge");
+  assert.equal(chrome.element("chatPop").style.right, "auto");
+
+  chrome.element("chatPopClose").onclick();
+  const [pageTab] = chrome.element("threadsPageTab").children;
+  pageTab.getBoundingClientRect = () => ({ left: 1050, right: 1130, width: 80 });
+  pageTab.onclick();
+  assert.equal(chrome.element("chatPop").hidden, false);
+  assert.equal(chrome.element("chatPop").style.left, "", "This page: the CSS corner, not the tab");
+  assert.equal(chrome.element("chatPop").style.right, "");
 });
 
 test("the bell counts other pages that moved, clears on open, and refetches when a page moves", async () => {

@@ -3697,7 +3697,7 @@ function threadItem(thread) {
     snippet.textContent = thread.last_agent_reply.text;
     item.appendChild(snippet);
   }
-  item.onclick = () => openChat(thread.key);
+  item.onclick = () => openChat(thread.key, threadsButton);
   row.appendChild(item);
   if (!threadHere(thread) && !embeddedThread && !thread.feed) {
     const carry = document.createElement("button");
@@ -3733,7 +3733,7 @@ function threadTab(thread) {
   title.className = "thread-tab-title";
   title.textContent = thread.title;
   tab.appendChild(title);
-  tab.onclick = () => openChat(thread.key);
+  tab.onclick = () => openChat(thread.key, tab);
   return tab;
 }
 
@@ -4020,8 +4020,12 @@ const chatPopClose = /** @type {HTMLButtonElement} */ (document.getElementById("
 const chatPopFull = /** @type {HTMLButtonElement} */ (document.getElementById("chatPopFull"));
 const chatPopSendPage = /** @type {HTMLButtonElement} */ (document.getElementById("chatPopSendPage"));
 
-/** @param {string} threadKey */
-function openChat(threadKey) {
+/**
+ * @param {string} threadKey
+ * @param {HTMLElement | null} [anchor] the tab that was clicked: a side thread opens right above it
+ */
+function openChat(threadKey, anchor = null) {
+  placeChatAbove(threadKey === pageChatKey ? null : anchor || threadsButton);
   const thread = listedThreads().find((candidate) => candidate.key === threadKey);
   if (!thread) return;
   activeChat = threadKey;
@@ -4045,6 +4049,27 @@ function openChat(threadKey) {
   renderThreads();
   void refreshChat();
   chatPopInput.focus();
+}
+
+// "This page" keeps the CSS's fixed corner, bottom right above its own button; a side thread opens
+// right above its tab, on that side of the footer. Phones keep the full-width placement from the CSS.
+/** @param {HTMLElement | null} anchor */
+function placeChatAbove(anchor) {
+  const style = chatPop.style;
+  if (!style) return;
+  style.left = "";
+  style.right = "";
+  const rect = anchor?.getBoundingClientRect?.();
+  const width = window.innerWidth || 0;
+  if (!rect || !width || width <= 860) return;
+  const popWidth = Math.min(360, width - 24);
+  if (rect.left + rect.width / 2 > width / 2) {
+    style.right = Math.max(12, Math.round(width - rect.right)) + "px";
+    style.left = "auto";
+  } else {
+    style.left = Math.min(Math.max(12, Math.round(rect.left)), width - popWidth - 12) + "px";
+    style.right = "auto";
+  }
 }
 
 function closeChat() {
