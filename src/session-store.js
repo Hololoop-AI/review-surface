@@ -673,6 +673,27 @@ export class SessionStore {
     });
   }
 
+  /**
+   * The agent's thinking, shown in the page's chat window as it works. Stored in the chat with its
+   * own role, so it is never counted as a reply and never decides whose turn it is.
+   * @param {string} key
+   * @param {string} text
+   */
+  async addAgentThinking(key, text) {
+    return this.runExclusive(async () => {
+      const state = await this.readState();
+      const session = state.sessions[key];
+      if (!session) return null;
+      session.chat = [
+        ...(session.chat || []),
+        { role: "thinking", text: String(text || ""), at: new Date().toISOString() },
+      ];
+      session.updated_at = new Date().toISOString();
+      await this.writeState(state);
+      return session;
+    });
+  }
+
   async addAgentReply(key, text) {
     return this.runExclusive(async () => {
       const state = await this.readState();
@@ -769,6 +790,12 @@ function normalizePrompt(prompt) {
     tag: String(prompt.tag || ""),
     text: String(prompt.text || ""),
   };
+  // How fast the reader wants an answer; the host decides what that changes (a model, an
+  // instruction). Only the one non-default value is carried.
+  if (prompt.speed === "quick") normalized.speed = "quick";
+  // Enter in the page's own chat: a direct conversation with the agent, not a page round. The host
+  // decides what that means; only the one non-default value is carried.
+  if (prompt.channel === "chat") normalized.channel = "chat";
   const target = normalizeTarget(prompt.target);
   if (target) normalized.target = target;
   const { refs, malformed } = normalizeAttachmentRefs(prompt.attachments);

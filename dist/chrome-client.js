@@ -105,6 +105,17 @@ function isModeToggleHotkeyEvent(event) {
 const frame = /** @type {HTMLIFrameElement} */ (document.getElementById("artifact"));
 const panelScroll = /** @type {HTMLDivElement} */ (document.getElementById("panelScroll"));
 const annotationPills = /** @type {HTMLDivElement} */ (document.getElementById("annotationPills"));
+// The queue in the footer: how many notes are queued for this page's agent, a one-click Send, and
+// a drop-up to check them. Declared up here because render() keeps it in step with the queue.
+const queueDock = /** @type {HTMLDivElement} */ (document.getElementById("queueDock"));
+const queueOpen = /** @type {HTMLButtonElement} */ (document.getElementById("queueOpen"));
+const queueCount = /** @type {HTMLSpanElement} */ (document.getElementById("queueCount"));
+const queueSend = /** @type {HTMLButtonElement} */ (document.getElementById("queueSend"));
+const queueMenu = /** @type {HTMLDivElement} */ (document.getElementById("queueMenu"));
+const queueList = /** @type {HTMLDivElement} */ (document.getElementById("queueList"));
+const queueMenuSend = /** @type {HTMLButtonElement} */ (document.getElementById("queueMenuSend"));
+// Set once the threads footer has been wired, so render() can ask it to re-show itself.
+let footerReady = false;
 const chatLog = /** @type {HTMLDivElement} */ (document.getElementById("chatLog"));
 const chatComposer = /** @type {HTMLDivElement} */ (document.getElementById("chatComposer"));
 const chatInput = /** @type {HTMLTextAreaElement} */ (document.getElementById("chatInput"));
@@ -169,7 +180,11 @@ const whiteboardOverlay = /** @type {HTMLDivElement} */ (document.getElementById
 const whiteboardFrame = /** @type {HTMLIFrameElement} */ (document.getElementById("whiteboardFrame"));
 const whiteboardCloseButton = /** @type {HTMLButtonElement} */ (document.getElementById("whiteboardClose"));
 const whiteboardError = /** @type {HTMLDivElement} */ (document.getElementById("whiteboardError"));
-const artifactSrc = frame.dataset.artifactSrc || frame.getAttribute?.("data-artifact-src") || frame.src || "";
+// A host page (the host's own live page, such as Cadre's fleet) loads straight from its address:
+// no artifact load handshake, so no artifact source to drive one.
+const artifactSrc = sessionData.hostUrl
+  ? ""
+  : frame.dataset.artifactSrc || frame.getAttribute?.("data-artifact-src") || frame.src || "";
 
 const queued = loadQueuedPrompts();
 let annotation = true;
@@ -410,6 +425,43 @@ function render() {
   updateSendState();
   scrollPanelToBottom();
   renderSheetSummary();
+  renderQueueDock();
+}
+
+function renderQueueDock() {
+  if (!queueDock) return;
+  const count = queued.length;
+  queueDock.hidden = count === 0 || ended;
+  queueCount.textContent = String(count);
+  queueSend.disabled = ended;
+  queueSend.setAttribute("aria-label", `Send ${count} queued ${count === 1 ? "note" : "notes"} to this page's agent`);
+  queueList.replaceChildren(
+    ...queued.map((prompt, index) => {
+      const row = document.createElement("div");
+      row.className = "queue-item";
+      const text = document.createElement("span");
+      text.className = "queue-item-text";
+      text.textContent = prompt.prompt || (attachmentCount(prompt) ? "Image annotation" : "");
+      // What the note is on, in the page's own words when the annotation carried them.
+      const target = prompt.tag !== "message" && prompt.text ? prompt.text : promptTargetLabel(prompt);
+      if (target) {
+        const on = document.createElement("span");
+        on.className = "queue-item-target";
+        on.textContent = target;
+        row.appendChild(on);
+      }
+      row.appendChild(text);
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "queue-item-remove";
+      remove.textContent = "Remove";
+      remove.onclick = (event) => removeQueuedPrompt(index, event);
+      row.appendChild(remove);
+      return row;
+    }),
+  );
+  if (count === 0) setMenuOpen(queueOpen, queueMenu, false);
+  if (footerReady) renderThreads();
 }
 
 function updateSendState() {
@@ -521,7 +573,8 @@ async function copyText(text) {
 }
 
 function addChat(role, text, shouldScroll = true) {
-  if (!text) return;
+  // The agent's thinking belongs to the chat window, not the sidebar's transcript.
+  if (!text || role === "thinking") return;
 
   const el = document.createElement("div");
   el.className = "bubble " + role;
@@ -726,15 +779,21 @@ function applyPanelHidden(hidden) {
   document.body.classList.toggle("panel-collapsed", hidden);
   if (panelCollapse) panelCollapse.setAttribute("aria-pressed", String(!hidden));
 }
-let panelHidden = false;
+// Collapsed unless you opened it: the page's conversation lives in the footer's "This page" tab
+// now. A thread shown inside another page's window keeps its panel - it is the whole point there.
+const panelDefaultHidden = !new URLSearchParams(location.search || "").has("embed");
+let panelHidden = panelDefaultHidden;
 try {
-  panelHidden = sessionStorage.getItem(panelHiddenKey) === "1";
+  const stored = sessionStorage.getItem(panelHiddenKey);
+  panelHidden = stored === null ? panelDefaultHidden : stored === "1";
 } catch {
-  panelHidden = false;
+  panelHidden = panelDefaultHidden;
 }
 applyPanelHidden(panelHidden);
 if (panelCollapse) {
   panelCollapse.addEventListener("click", () => {
+    // Now a More-menu item (the toolbar's Chat switch gave way to the footer's This page chat).
+    closeMenus();
     panelHidden = !panelHidden;
     try {
       sessionStorage.setItem(panelHiddenKey, panelHidden ? "1" : "0");
@@ -1189,7 +1248,7 @@ function createChatAttachmentsController() {
 const chatAttachmentController = createChatAttachmentsController();
 
 function sendQueued(endAfter) {
-  if (ended) return;
+  if (ended) return false;
   closeMenus();
 
   // A pending or failed chip holds back only the COMPOSER message (and an
@@ -1217,12 +1276,13 @@ function sendQueued(endAfter) {
   }
   if (!queued.length) {
     if (!chipsBlocked) showSendHint();
-    return;
+    return false;
   }
   hideSendHint();
 
   if (endAfter && !chipsBlocked) endAfterSubmit = true;
   requestSnapshot("submit");
+  return true;
 }
 
 // One prompt from an annotation action that asked to go now (a "Study" button): posted
@@ -1954,6 +2014,9 @@ function markSessionEnded() {
   }
   postToFrame({ type: "review-surface:setAnnotationMode", enabled: false });
   endedOverlay.hidden = false;
+  // An ended page starts no new threads and sends no queue; its footer still lists its threads.
+  renderQueueDock();
+  renderThreads();
 }
 
 function copyFilePath() {
@@ -2130,6 +2193,16 @@ async function replaceArtifactFrame({ recoveryRetry = false } = {}) {
   // The iframe is sandboxed, so reload by resetting the iframe URL from chrome.
   if (!artifactSrc) {
     startLayoutGateCycle();
+    // A host page is same-origin: reload it in place, at the address the host gave it, rather
+    // than rewriting that address with a cache-busting query the host never asked to handle.
+    if (sessionData.hostUrl) {
+      try {
+        frame.contentWindow?.location.reload();
+      } catch {
+        frame.src = sessionData.hostUrl;
+      }
+      return true;
+    }
     const currentSrc = frame.src || "about:blank";
     frame.src = currentSrc + (currentSrc.includes("?") ? "&" : "?") + "reviewSurface_reload=" + Date.now();
     return true;
@@ -3294,8 +3367,14 @@ document.addEventListener("keydown", (event) => {
     } else if (!threadsMenu.hidden) {
       setThreadsMenuOpen(false);
       threadsButton.focus();
+    } else if (!notifyMenu.hidden) {
+      setMenuOpen(notifyButton, notifyMenu, false);
+      renderNotifications();
+      notifyButton.focus();
     } else if (!threadModal.hidden) {
       minimizeThread();
+    } else if (activeChat) {
+      closeChat();
     } else if (warningsDrawerOpen) {
       closeWarningsDrawer({ restoreFocus: true });
     } else if (!moreMenu.hidden) {
@@ -3358,7 +3437,7 @@ function reloadStateOf(event) {
 function chatEntries(chat) {
   return (Array.isArray(chat) ? chat : [])
     .map((item) => ({ role: String(item?.role || ""), text: String(item?.text || "") }))
-    .filter((item) => item.text);
+    .filter((item) => item.text && item.role !== "thinking");
 }
 
 function chatShowsAll(chat) {
@@ -3417,7 +3496,9 @@ function openLiveStream() {
     addChat("agent", text);
     if (text) renderedChat.push({ role: "agent", text: String(text) });
     noteAgentReply(text);
+    refreshPageChat();
   });
+  stream.addEventListener("agent-thinking", () => refreshPageChat());
   // Every reopen resends the whole chat. Rebuilding an unchanged one would scroll the reader to the
   // end and drop a message still being sent, so only a chat that changed is rebuilt.
   stream.addEventListener("chat-sync", (event) => {
@@ -3427,10 +3508,14 @@ function openLiveStream() {
     renderedChat = entries;
     syncChat(chat);
   });
-  stream.addEventListener("agent-presence", (event) => setAgentPresence(JSON.parse(event.data).state));
+  stream.addEventListener("agent-presence", (event) => {
+    setAgentPresence(JSON.parse(event.data).state);
+    refreshPageChat();
+  });
   stream.addEventListener("layout-warnings", (event) => setLayoutWarnings(JSON.parse(event.data).warnings || []));
   stream.addEventListener("ended", () => markSessionEnded());
   stream.addEventListener("thread-linked", () => openThreadsStream());
+  stream.addEventListener("activity", () => scheduleNotificationsRefresh());
   // A reconnecting stream means this chrome may have missed updates while it was away.
   let checkedOutage = false;
   stream.addEventListener("open", () => {
@@ -3452,8 +3537,10 @@ function closeLiveStream() {
 document.addEventListener("visibilitychange", () => (document.hidden ? closeLiveStream() : openLiveStream()));
 if (!document.hidden) openLiveStream();
 
-// Study threads: side conversations about this page, each its own session. The bell lists them
-// and counts the ones with a reply you have not seen; clicking one opens it in the thread window,
+// Threads: conversations beside the pages, each its own session. The footer lists every live one -
+// this page's first, then those on other pages, which can continue here - and counts the ones with
+// a reply you have not seen (seen counts live in localStorage, so the count follows you from page
+// to page); clicking one opens it in the thread window,
 // a central window over this page that keeps running when minimized. The list arrives on its own
 // stream, opened only once the page has a thread: every stream is one of the six connections a
 // browser allows per host. While the tab is hidden it stays open only while a thread is live, so a
@@ -3464,6 +3551,19 @@ const threadsCount = /** @type {HTMLSpanElement} */ (document.getElementById("th
 const threadsMenu = /** @type {HTMLDivElement} */ (document.getElementById("threadsMenu"));
 const threadsList = /** @type {HTMLDivElement} */ (document.getElementById("threadsList"));
 const threadsNotify = /** @type {HTMLButtonElement} */ (document.getElementById("threadsNotify"));
+const threadsSummary = /** @type {HTMLSpanElement} */ (document.getElementById("threadsSummary"));
+const threadsHereLabel = /** @type {HTMLDivElement} */ (document.getElementById("threadsHereLabel"));
+const threadsOtherLabel = /** @type {HTMLDivElement} */ (document.getElementById("threadsOtherLabel"));
+const threadsOtherList = /** @type {HTMLDivElement} */ (document.getElementById("threadsOtherList"));
+const threadsNew = /** @type {HTMLFormElement} */ (document.getElementById("threadsNew"));
+const threadsNewText = /** @type {HTMLTextAreaElement} */ (document.getElementById("threadsNewText"));
+const threadsNewAgents = /** @type {HTMLDivElement} */ (document.getElementById("threadsNewAgents"));
+const threadsTabs = /** @type {HTMLDivElement} */ (document.getElementById("threadsTabs"));
+const threadsMore = /** @type {HTMLButtonElement} */ (document.getElementById("threadsMore"));
+// The right-hand end of the footer: "This page" beside the queue and its Send.
+const threadsPageTab = /** @type {HTMLDivElement} */ (document.getElementById("threadsPageTab"));
+/** @type {{ id: string, label: string, title: string, prefix: string }[]} */
+const threadAgents = Array.isArray(sessionData.threadAgents) ? sessionData.threadAgents : [];
 const threadModal = /** @type {HTMLDivElement} */ (document.getElementById("threadModal"));
 const threadScrim = /** @type {HTMLDivElement} */ (document.getElementById("threadScrim"));
 const threadModalTitle = /** @type {HTMLHeadingElement} */ (document.getElementById("threadModalTitle"));
@@ -3474,11 +3574,24 @@ const threadFrames = /** @type {HTMLDivElement} */ (document.getElementById("thr
 const embeddedThread = Boolean(sessionData.embedded);
 /** @type {any[]} */
 let threads = [];
+// The footer's "This page" tab (see pageChatThread): declared here because the footer's first
+// render runs before that section.
+const pageChatKey = "page:" + key;
+// The host's message-feed conversations, shown beside the threads (see refreshFeed).
+/** @type {any[]} */
+let feedThreads = [];
+// Conversations you opened stay listed after you read them, until the page reloads.
+/** @type {Map<string, any>} */
+const feedKeep = new Map();
+
 /** @type {Map<string, number> | null} */
 let threadReplyCounts = null;
 /** @type {Map<string, HTMLIFrameElement>} */
 const threadFrameByKey = new Map();
 let activeThread = "";
+// The thread shown in the chat window, and the update it was last fetched at.
+let activeChat = "";
+let chatSeenUpdate = "";
 let threadsStream = /** @type {EventSource | null} */ (null);
 
 /** @param {string} threadKey */
@@ -3499,6 +3612,10 @@ function markThreadSeen(thread) {
   }
 }
 
+function chatShowing() {
+  return activeChat !== "" && !document.hidden;
+}
+
 function threadWindowShowing() {
   return !threadModal.hidden && !document.hidden;
 }
@@ -3506,17 +3623,43 @@ function threadWindowShowing() {
 /** @param {any} thread */
 function threadUnread(thread) {
   if (thread.key === activeThread && threadWindowShowing()) return false;
+  if (thread.key === activeChat && chatShowing()) return false;
+  if (thread.feed) return Boolean(thread.feedUnread);
   return (thread.agent_replies || 0) > threadSeenCount(thread.key);
 }
 
 /** @param {any} thread */
 function threadPresenceLabel(thread) {
+  if (thread.pageChat) {
+    if (thread.status === "ended") return "Ended";
+    if (thread.presence === "working") return "Thinking…";
+    if (thread.presence === "listening") return "Listening";
+    if (thread.presence === "push") return "Main thread";
+    return "Agent not listening";
+  }
+  if (thread.feed) return thread.asks?.length ? "Asks you" : thread.feedUnread ? "New message" : "Read";
   if (thread.status === "ended") return "Ended";
   if (thread.presence === "working") return "Thinking…";
   if (thread.presence === "listening") return "Listening";
   // Its engine is still writing the first answer, and only polls once that is sent.
   if (!thread.agent_replies) return "Starting…";
-  return "Asleep · your next message wakes it";
+  // Whose turn it is, from what the thread recorded: true for a kept-awake Study agent and for an
+  // agent that asked mid-run and reads the answer when it next checks.
+  if (thread.state === "agent-working") return "Sent · waiting for the agent";
+  return "Your turn";
+}
+
+/** A thread from an older server carries no `here`; it was always this page's own.
+ * @param {any} thread */
+function threadHere(thread) {
+  return thread.here !== false;
+}
+
+// A hidden tab holds the threads stream only for a live thread on its own page: held for every
+// thread anywhere, every hidden tab would hold one and the sixth tab would hang again.
+/** @param {any} thread */
+function threadHeldWhileHidden(thread) {
+  return threadHere(thread) && threadLive(thread);
 }
 
 /** @param {any} thread */
@@ -3530,47 +3673,190 @@ function setThreadsMenuOpen(open) {
   setMenuOpen(threadsButton, threadsMenu, open);
 }
 
+/** @param {any} thread */
+function threadItem(thread) {
+  const row = document.createElement("div");
+  row.className = "thread-row";
+  const item = document.createElement("button");
+  item.type = "button";
+  item.className = "menu-item thread-item" + (threadUnread(thread) ? " unread" : "");
+  item.setAttribute("role", "menuitem");
+  item.dataset.threadKey = thread.key;
+  const title = document.createElement("span");
+  title.className = "thread-item-title";
+  title.textContent = thread.title;
+  const meta = document.createElement("span");
+  meta.className = "thread-item-meta";
+  const started = Array.isArray(thread.pages) ? thread.pages[0] : null;
+  meta.textContent =
+    threadPresenceLabel(thread) + (!threadHere(thread) && started ? " · started on " + started.title : "");
+  item.appendChild(title);
+  item.appendChild(meta);
+  if (thread.last_agent_reply?.text) {
+    const snippet = document.createElement("span");
+    snippet.className = "thread-item-snippet";
+    snippet.textContent = thread.last_agent_reply.text;
+    item.appendChild(snippet);
+  }
+  item.onclick = () => openChat(thread.key, threadsButton);
+  row.appendChild(item);
+  if (!threadHere(thread) && !embeddedThread && !thread.feed) {
+    const carry = document.createElement("button");
+    carry.type = "button";
+    carry.className = "thread-continue";
+    carry.textContent = "Continue here";
+    carry.title = "List this thread on this page too and open it; it stays on the pages it is already on";
+    carry.onclick = () => void continueThreadHere(thread.key, carry);
+    row.appendChild(carry);
+  }
+  return row;
+}
+
+// The footer's tabs, like a chat dock: one per thread, unread and most recent first, as many as
+// the footer has room for; the rest are behind "+N", which opens the full list.
+/** @param {any} thread */
+function threadTab(thread) {
+  const tab = document.createElement("button");
+  tab.type = "button";
+  tab.className =
+    "thread-tab" +
+    (thread.pageChat ? " page-tab" : "") +
+    (threadUnread(thread) ? " unread" : "") +
+    (thread.key === activeThread || thread.key === activeChat ? " active" : "");
+  tab.dataset.threadKey = thread.key;
+  const started = Array.isArray(thread.pages) ? thread.pages[0] : null;
+  tab.title =
+    thread.title +
+    (threadHere(thread) || !started ? "" : " - started on " + started.title) +
+    " - " +
+    threadPresenceLabel(thread);
+  const title = document.createElement("span");
+  title.className = "thread-tab-title";
+  title.textContent = thread.title;
+  tab.appendChild(title);
+  tab.onclick = () => openChat(thread.key, tab);
+  return tab;
+}
+
+function layoutThreadTabs() {
+  const tabs = /** @type {HTMLElement[]} */ ([...threadsTabs.children]);
+  for (const tab of tabs) tab.hidden = false;
+  const room = threadsTabs.clientWidth;
+  let hidden = 0;
+  if (room > 0) {
+    for (const tab of tabs) {
+      if (tab.offsetLeft + tab.offsetWidth > room) {
+        tab.hidden = true;
+        hidden += 1;
+      }
+    }
+  }
+  threadsMore.hidden = hidden === 0;
+  threadsMore.textContent = "+" + hidden;
+  threadsMore.setAttribute("aria-label", hidden + " more threads");
+  threadsWrap.classList.toggle("has-tabs", tabs.length > 0);
+}
+
 function renderThreads() {
-  threadsWrap.hidden = embeddedThread || threads.length === 0;
-  const unread = threads.filter(threadUnread);
+  const offerNew = threadAgents.length > 0 && !ended;
+  const listed = listedThreads();
+  threadsWrap.hidden = embeddedThread || (listed.length === 0 && !offerNew && (queued.length === 0 || ended));
+  document.body.classList.toggle("has-threads-footer", !threadsWrap.hidden);
+  const unread = listed.filter(threadUnread);
   threadsCount.hidden = unread.length === 0;
   threadsCount.textContent = String(unread.length);
   threadsButton.classList.toggle("has-unread", unread.length > 0);
-  threadsButton.setAttribute("aria-label", unread.length ? `Study threads, ${unread.length} new` : "Study threads");
-  const ordered = [...threads].sort(
+  threadsButton.setAttribute("aria-label", unread.length ? `Threads, ${unread.length} new` : "Threads");
+  // This page's threads lead (the reader is here to talk about this page), then unread, then newest.
+  const ordered = [...listed].sort(
     (a, b) =>
-      Number(threadUnread(b)) - Number(threadUnread(a)) || String(b.updated_at).localeCompare(String(a.updated_at)),
+      Number(Boolean(b.pageChat)) - Number(Boolean(a.pageChat)) ||
+      Number(threadHere(b)) - Number(threadHere(a)) ||
+      Number(threadUnread(b)) - Number(threadUnread(a)) ||
+      String(b.updated_at).localeCompare(String(a.updated_at)),
   );
-  threadsList.replaceChildren(
-    ...ordered.map((thread) => {
-      const item = document.createElement("button");
-      item.type = "button";
-      item.className = "menu-item thread-item" + (threadUnread(thread) ? " unread" : "");
-      item.setAttribute("role", "menuitem");
-      item.dataset.threadKey = thread.key;
-      const title = document.createElement("span");
-      title.className = "thread-item-title";
-      title.textContent = thread.title;
-      const meta = document.createElement("span");
-      meta.className = "thread-item-meta";
-      meta.textContent = threadPresenceLabel(thread);
-      item.appendChild(title);
-      item.appendChild(meta);
-      if (thread.last_agent_reply?.text) {
-        const snippet = document.createElement("span");
-        snippet.className = "thread-item-snippet";
-        snippet.textContent = thread.last_agent_reply.text;
-        item.appendChild(snippet);
-      }
-      item.onclick = () => openThread(thread.key);
-      return item;
-    }),
-  );
+  const here = ordered.filter(threadHere);
+  const elsewhere = ordered.filter((thread) => !threadHere(thread));
+  // The summary counts side conversations; "This page" is always there and is not one.
+  const hereThreads = here.filter((thread) => !thread.pageChat);
+  threadsHereLabel.hidden = here.length === 0;
+  threadsList.replaceChildren(...here.map(threadItem));
+  threadsOtherLabel.hidden = elsewhere.length === 0;
+  threadsOtherList.replaceChildren(...elsewhere.map(threadItem));
+  threadsTabs.replaceChildren(...ordered.filter((thread) => !thread.pageChat).map(threadTab));
+  threadsPageTab.replaceChildren(...ordered.filter((thread) => thread.pageChat).map(threadTab));
+  layoutThreadTabs();
+  threadsSummary.textContent =
+    hereThreads.length + elsewhere.length === 0
+      ? "No threads yet"
+      : [
+          hereThreads.length ? `${hereThreads.length} on this page` : "",
+          elsewhere.length ? `${elsewhere.length} on other pages` : "",
+        ]
+          .filter(Boolean)
+          .join(" · ");
+  threadsNew.hidden = !offerNew;
+  if (threadsNewAgents.children.length !== threadAgents.length) {
+    threadsNewAgents.replaceChildren(
+      ...threadAgents.map((agent) => {
+        const start = document.createElement("button");
+        start.type = "button";
+        start.className = "button thread-agent";
+        start.textContent = agent.label;
+        start.title = agent.title || `Ask ${agent.label}`;
+        start.dataset.agent = agent.id;
+        start.onclick = () => void startThread(agent);
+        return start;
+      }),
+    );
+  }
   threadsNotify.hidden = !("Notification" in window) || Notification.permission !== "default";
   const active = threads.find((thread) => thread.key === activeThread);
   if (active) {
     threadModalTitle.textContent = active.title;
     threadModalPresence.textContent = threadPresenceLabel(active);
+  }
+}
+
+// "Continue here": the thread is linked to this page too (a further `thread-of`), so this page's
+// footer lists it as its own and its agent can see it was carried here. The stream's next snapshot
+// moves it into "On this page"; the window opens on it straight away.
+/** @param {string} threadKey @param {HTMLButtonElement} control */
+async function continueThreadHere(threadKey, control) {
+  control.disabled = true;
+  try {
+    const response = await fetch("/api/links", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ type: "thread-of", from: threadKey, to: key }),
+    });
+    if (!response.ok) throw new Error("refused");
+    threads = threads.map((thread) => (thread.key === threadKey ? { ...thread, here: true } : thread));
+    openChat(threadKey);
+  } catch {
+    control.disabled = false;
+    control.textContent = "Not linked - try again";
+  }
+}
+
+// A thread started from the footer is about the page as a whole: the host's agent gets
+// `prefix + question` through the same send-now path as the annotation card's Study button, so the
+// review's own queue is untouched and the page keeps its round. Whatever the host starts arrives
+// back as a thread linked to this page, which pops up in the thread window.
+/** @param {{ id: string, label: string, prefix: string }} agent */
+async function startThread(agent) {
+  const question = threadsNewText.value.trim();
+  if (!question) {
+    threadsNewText.focus();
+    return;
+  }
+  const sent = await deliverPromptNow(
+    { uid: "", prompt: (agent.prefix || "") + question, selector: "", tag: "thread", text: "" },
+    null,
+  );
+  if (sent) {
+    threadsNewText.value = "";
+    setThreadsMenuOpen(false);
   }
 }
 
@@ -3604,7 +3890,7 @@ function openThread(threadKey) {
 }
 
 // Minimized, not closed: the thread's frame stays loaded so its conversation keeps streaming, and
-// the bell takes over telling you when it answers.
+// the footer takes over telling you when it answers.
 function minimizeThread() {
   if (threadModal.hidden) return;
   threadModal.hidden = true;
@@ -3622,7 +3908,7 @@ function notifyThreadReply(thread) {
   });
   note.onclick = () => {
     window.focus();
-    openThread(thread.key);
+    openChat(thread.key);
     note.close();
   };
 }
@@ -3634,19 +3920,33 @@ function receiveThreads(next) {
   threadReplyCounts = new Map(next.map((thread) => [thread.key, thread.agent_replies || 0]));
   if (previous) {
     for (const thread of next) {
-      // A thread that appears while this page is open was just started from it (the Study
-      // button): it pops up rather than waiting behind the bell.
+      // A thread that appears on this page while it is open was just started from it (the Study
+      // button, or the footer): it pops up rather than waiting in the footer. One that appears on
+      // another page only joins the list.
+      // An agent's message arrives with its first line already written: it waits in the footer,
+      // unread, and raises a notification, rather than taking over the screen.
       if (!previous.has(thread.key)) {
-        if (thread.status !== "ended") openThread(thread.key);
+        if (thread.status === "ended" || !threadHere(thread)) continue;
+        if (thread.agent_replies) notifyThreadReply(thread);
+        else openChat(thread.key);
         continue;
       }
-      if ((thread.agent_replies || 0) > (previous.get(thread.key) || 0)) notifyThreadReply(thread);
+      // Desktop notifications come from the pages a thread is on; every other open page would
+      // otherwise raise the same one again.
+      if (threadHere(thread) && (thread.agent_replies || 0) > (previous.get(thread.key) || 0)) {
+        notifyThreadReply(thread);
+      }
     }
   }
   const active = next.find((thread) => thread.key === activeThread);
   if (active && threadWindowShowing()) markThreadSeen(active);
+  const chatting = next.find((thread) => thread.key === activeChat);
+  if (chatting) {
+    if (chatShowing()) markThreadSeen(chatting);
+    if (chatting.updated_at !== chatSeenUpdate) void refreshChat();
+  }
   renderThreads();
-  if (next.length === 0 || (document.hidden && !next.some(threadLive))) closeThreadsStream();
+  if (next.length === 0 || (document.hidden && !next.some(threadHeldWhileHidden))) closeThreadsStream();
 }
 
 function openThreadsStream() {
@@ -3669,14 +3969,19 @@ async function checkForThreads() {
   } catch {
     return;
   }
-  if (threads.length > 0 && (!document.hidden || threads.some(threadLive))) openThreadsStream();
+  if (threads.length > 0 && (!document.hidden || threads.some(threadHeldWhileHidden))) openThreadsStream();
 }
 
-threadsButton.onclick = () => {
+function toggleThreadsMenu() {
   const open = threadsMenu.hidden;
   closeMenus();
   setThreadsMenuOpen(open);
-};
+}
+threadsButton.onclick = toggleThreadsMenu;
+threadsMore.onclick = toggleThreadsMenu;
+window.addEventListener("resize", () => {
+  if (!threadsWrap.hidden) layoutThreadTabs();
+});
 threadsNotify.onclick = () => {
   Notification.requestPermission().then(() => renderThreads());
 };
@@ -3688,7 +3993,7 @@ document.addEventListener("mousedown", (event) => {
 // Coming back to the tab is when the open thread's replies are actually read.
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
-    if (!threads.some(threadLive)) closeThreadsStream();
+    if (!threads.some(threadHeldWhileHidden)) closeThreadsStream();
     return;
   }
   if (threads.length > 0) openThreadsStream();
@@ -3697,7 +4002,495 @@ document.addEventListener("visibilitychange", () => {
   if (active && !threadModal.hidden) markThreadSeen(active);
   renderThreads();
 });
+// The chat window: a thread as a conversation, the way a message app shows one - a small window
+// above the footer with the messages and a reply box. Most threads are messages, not reports, so
+// this is where a tab opens; "open with its page" moves to the big thread window for a thread whose
+// page matters. It holds no stream: the threads stream already says when this thread moved, and
+// the conversation is then fetched once.
+const chatPop = /** @type {HTMLDivElement} */ (document.getElementById("chatPop"));
+const chatPopTitle = /** @type {HTMLSpanElement} */ (document.getElementById("chatPopTitle"));
+const chatPopPresence = /** @type {HTMLSpanElement} */ (document.getElementById("chatPopPresence"));
+const chatPopLog = /** @type {HTMLDivElement} */ (document.getElementById("chatPopLog"));
+const chatPopForm = /** @type {HTMLFormElement} */ (document.getElementById("chatPopForm"));
+const chatPopInput = /** @type {HTMLTextAreaElement} */ (document.getElementById("chatPopInput"));
+const chatPopQuick = /** @type {HTMLInputElement} */ (document.getElementById("chatPopQuick"));
+const chatPopHint = /** @type {HTMLSpanElement} */ (document.getElementById("chatPopHint"));
+const chatPopSend = /** @type {HTMLButtonElement} */ (document.getElementById("chatPopSend"));
+const chatPopExpand = /** @type {HTMLButtonElement} */ (document.getElementById("chatPopExpand"));
+const chatPopClose = /** @type {HTMLButtonElement} */ (document.getElementById("chatPopClose"));
+const chatPopFull = /** @type {HTMLButtonElement} */ (document.getElementById("chatPopFull"));
+const chatPopSendPage = /** @type {HTMLButtonElement} */ (document.getElementById("chatPopSendPage"));
+
+/**
+ * @param {string} threadKey
+ * @param {HTMLElement | null} [anchor] the tab that was clicked: a side thread opens right above it
+ */
+function openChat(threadKey, anchor = null) {
+  placeChatAbove(threadKey === pageChatKey ? null : anchor || threadsButton);
+  const thread = listedThreads().find((candidate) => candidate.key === threadKey);
+  if (!thread) return;
+  activeChat = threadKey;
+  chatSeenUpdate = "";
+  chatPopTitle.textContent = thread.title;
+  chatPopPresence.textContent = threadPresenceLabel(thread);
+  chatPopHint.textContent = "";
+  chatPopLog.replaceChildren();
+  // The host's conversations carry no speed and have no page of their own to open.
+  chatPopQuick.closest?.("label")?.toggleAttribute("hidden", Boolean(thread.feed));
+  chatPopExpand.hidden = Boolean(thread.feed || thread.pageChat);
+  chatPopSendPage.hidden = !thread.pageChat;
+  chatPop.classList.toggle("page-chat", Boolean(thread.pageChat));
+  chatPopInput.placeholder = thread.pageChat
+    ? "Talk to this page's agent. Enter sends; Send page sends the review."
+    : "Reply…";
+  if (thread.feed) feedKeep.set(thread.key, thread);
+  chatPop.hidden = false;
+  setThreadsMenuOpen(false);
+  markThreadSeen(thread);
+  renderThreads();
+  void refreshChat();
+  chatPopInput.focus();
+}
+
+// "This page" keeps the CSS's fixed corner, bottom right above its own button; a side thread opens
+// right above its tab, on that side of the footer. Phones keep the full-width placement from the CSS.
+/** @param {HTMLElement | null} anchor */
+function placeChatAbove(anchor) {
+  const style = chatPop.style;
+  if (!style) return;
+  style.left = "";
+  style.right = "";
+  const rect = anchor?.getBoundingClientRect?.();
+  const width = window.innerWidth || 0;
+  if (!rect || !width || width <= 860) return;
+  const popWidth = Math.min(360, width - 24);
+  if (rect.left + rect.width / 2 > width / 2) {
+    style.right = Math.max(12, Math.round(width - rect.right)) + "px";
+    style.left = "auto";
+  } else {
+    style.left = Math.min(Math.max(12, Math.round(rect.left)), width - popWidth - 12) + "px";
+    style.right = "auto";
+  }
+}
+
+function closeChat() {
+  if (chatPop.hidden) return;
+  chatPop.hidden = true;
+  setChatFull(false);
+  activeChat = "";
+  renderThreads();
+}
+
+async function refreshChat() {
+  const threadKey = activeChat;
+  if (!threadKey) return;
+  if (threadKey.startsWith("feed:")) {
+    await refreshFeedChat(threadKey);
+    return;
+  }
+  let conversation;
+  try {
+    const response = await fetch("/api/" + chatSessionKey(threadKey) + "/conversation");
+    if (!response.ok) return;
+    conversation = await response.json();
+  } catch {
+    return;
+  }
+  if (threadKey !== activeChat) return;
+  if (threadKey === pageChatKey) chatPopPresence.textContent = threadPresenceLabel(pageChatThread());
+  const thread = threads.find((candidate) => candidate.key === threadKey);
+  chatSeenUpdate = thread?.updated_at || "";
+  chatPopTitle.textContent = conversation.title || thread?.title || "";
+  chatPopLog.replaceChildren(
+    ...(conversation.chat || []).map((/** @type {{ role: string, text: string }} */ entry) => {
+      const line = document.createElement("div");
+      // Thinking shows as the agent works, dimmed, so you can see where it is going.
+      line.className =
+        "chat-pop-line " +
+        (entry.role === "thinking" ? "from-thinking" : entry.role === "agent" ? "from-agent" : "from-you");
+      line.textContent = entry.text;
+      return line;
+    }),
+  );
+  chatPopLog.scrollTop = chatPopLog.scrollHeight;
+  const ended = conversation.status === "ended";
+  chatPopInput.disabled = ended;
+  chatPopSend.disabled = ended;
+  chatPopSendPage.disabled = ended;
+  chatPopSendPage.textContent = queued.length ? `Send page (${queued.length})` : "Send page";
+  if (ended) chatPopHint.textContent = "This thread has ended.";
+}
+
+async function sendChat() {
+  const text = chatPopInput.value.trim();
+  const threadKey = activeChat;
+  if (!text || !threadKey) return;
+  if (threadKey.startsWith("feed:")) {
+    await sendFeedChat(threadKey, text);
+    return;
+  }
+  /** @type {Record<string, string>} */
+  const prompt = { uid: "", prompt: text, selector: "", tag: "message", text: "Freeform message" };
+  if (chatPopQuick.checked) prompt.speed = "quick";
+  // Enter in "This page" talks to the agent without handing it the page; Send page does that.
+  if (threadKey === pageChatKey) prompt.channel = "chat";
+  chatPopSend.disabled = true;
+  try {
+    const response = await fetch("/api/" + chatSessionKey(threadKey) + "/prompts", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prompts: [prompt] }),
+    });
+    if (!response.ok) throw new Error("refused");
+  } catch {
+    chatPopHint.textContent = "That didn't send. Your text is still here.";
+    chatPopSend.disabled = false;
+    return;
+  }
+  chatPopSend.disabled = false;
+  chatPopInput.value = "";
+  chatPopHint.textContent = chatPopQuick.checked ? "Sent - asked for a quick answer." : "Sent.";
+  if (threadKey === pageChatKey) {
+    // The sidebar shows the same conversation; keep its transcript in step.
+    addChat("user", text);
+    renderedChat.push({ role: "user", text });
+  }
+  void refreshChat();
+}
+
+// The host's message feed (REVIEW_SURFACE_MESSAGE_FEED; Cadre's runner serves it): agents' questions
+// and notes from runs, kept in the host's own store. The footer is their messenger: each
+// conversation waiting on you is a tab beside this page's threads, opened in the same chat window.
+// The feed has no push, so it is re-read on a slow timer while the tab is visible, when the tab is
+// shown again, and after you send - a plain GET, never a held connection.
+const messageFeed = typeof sessionData.messageFeed === "string" ? sessionData.messageFeed : "";
+const FEED_REFRESH_MS = 20000;
+let feedTimer = /** @type {ReturnType<typeof setTimeout> | null} */ (null);
+let chatOpenQuestion = "";
+
+function listedThreads() {
+  const listed = [...threads, ...feedThreads];
+  if (pageChatOffered()) listed.unshift(pageChatThread());
+  for (const [feedKey, kept] of feedKeep) {
+    if (!feedThreads.some((thread) => thread.key === feedKey)) listed.push({ ...kept, feedUnread: false, asks: [] });
+  }
+  return listed;
+}
+
+// "This page": the page's own conversation with its agent - the main thread, whose context lasts
+// across rounds. Always the first tab, marked apart from side threads. Enter there is a direct chat
+// (`channel: "chat"`); only "Send page" hands the agent the full page review.
+function pageChatOffered() {
+  return !embeddedThread && !sessionData.hostUrl;
+}
+function pageChatThread() {
+  return {
+    key: pageChatKey,
+    pageChat: true,
+    title: "This page",
+    here: true,
+    pages: [],
+    status: ended ? "ended" : "open",
+    presence: agentPresence,
+    agent_replies: renderedChat.filter((entry) => entry.role === "agent").length,
+    updated_at: "",
+    last_agent_reply: null,
+  };
+}
+/** The session a chat window reads and writes: the page's own for "This page". @param {string} threadKey */
+function chatSessionKey(threadKey) {
+  return threadKey === pageChatKey ? key : threadKey;
+}
+function refreshPageChat() {
+  if (activeChat === pageChatKey && !chatPop.hidden) void refreshChat();
+  if (footerReady) renderThreads();
+}
+
+/** @param {any} entry one conversation from the host's feed */
+function feedThread(entry) {
+  const last = entry.latest_unread || entry.last || null;
+  const at = Number(last?.at || 0);
+  return {
+    key: "feed:" + entry.conv,
+    feed: true,
+    conv: entry.conv,
+    title: entry.title || entry.conv,
+    here: Boolean(entry.page) && entry.page === sessionData.file,
+    pages: [],
+    status: "open",
+    updated_at: at ? new Date(at * 1000).toISOString() : "",
+    feedUnread: Number(entry.unread || 0) > 0 || (entry.asks || []).length > 0,
+    asks: entry.asks || [],
+    page: entry.page || "",
+    last_agent_reply: last ? { text: String(last.text || "").slice(0, 240) } : null,
+  };
+}
+
+async function refreshFeed() {
+  feedTimer = null;
+  if (!messageFeed || embeddedThread) return;
+  try {
+    const response = await fetch(messageFeed);
+    if (response.ok) {
+      const data = await response.json();
+      feedThreads = (Array.isArray(data.conversations) ? data.conversations : []).map(feedThread);
+      renderThreads();
+    }
+  } catch {
+    // the host may not serve a feed on this address (a page opened without its proxy)
+  }
+  if (!document.hidden) feedTimer = setTimeout(() => void refreshFeed(), FEED_REFRESH_MS);
+}
+
+/** @param {string} threadKey */
+async function refreshFeedChat(threadKey) {
+  const conv = threadKey.slice("feed:".length);
+  let conversation;
+  try {
+    const response = await fetch(messageFeed + "/" + encodeURIComponent(conv));
+    if (!response.ok) return;
+    conversation = await response.json();
+  } catch {
+    return;
+  }
+  if (threadKey !== activeChat) return;
+  const lines = (Array.isArray(conversation.lines) ? conversation.lines : []).filter((/** @type {any} */ line) =>
+    ["question", "answer", "note", "message", "forward"].includes(line.kind),
+  );
+  const asks = conversation.summary?.asks || [];
+  // A reply answers the oldest open question; with none open it is a message in the conversation.
+  chatOpenQuestion = asks[0]?.ticket || "";
+  chatPopTitle.textContent = conversation.title || conv;
+  chatPopPresence.textContent = asks.length ? "Asks you" : "Your turn";
+  chatPopLog.replaceChildren(
+    ...lines.map((/** @type {any} */ entry) => {
+      const line = document.createElement("div");
+      line.className = "chat-pop-line " + (entry.from === "driver" ? "from-you" : "from-agent");
+      const suggestion =
+        entry.kind === "question" && entry.recommendation ? "\nSuggested: " + entry.recommendation : "";
+      line.textContent = (entry.kind === "question" ? "Question: " : "") + String(entry.text || "") + suggestion;
+      return line;
+    }),
+  );
+  chatPopLog.scrollTop = chatPopLog.scrollHeight;
+  chatPopInput.disabled = false;
+  chatPopSend.disabled = false;
+  chatPopHint.textContent = chatOpenQuestion ? "Your reply answers the question." : "";
+  if (Number(conversation.summary?.unread || 0) > 0) {
+    // Opening it is reading it; open questions stay open until answered.
+    void fetch(messageFeed + "/" + encodeURIComponent(conv), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ kind: "seen" }),
+    }).catch(() => {});
+  }
+}
+
+/** @param {string} threadKey @param {string} text */
+async function sendFeedChat(threadKey, text) {
+  const conv = threadKey.slice("feed:".length);
+  const body = chatOpenQuestion
+    ? { kind: "answer", refers_to: chatOpenQuestion, text, via: "footer" }
+    : { kind: "message", text, page: sessionData.file, via: "footer" };
+  chatPopSend.disabled = true;
+  try {
+    const response = await fetch(messageFeed + "/" + encodeURIComponent(conv), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) throw new Error("refused");
+  } catch {
+    chatPopHint.textContent = "That didn't send. Your text is still here.";
+    chatPopSend.disabled = false;
+    return;
+  }
+  chatPopSend.disabled = false;
+  chatPopInput.value = "";
+  await refreshFeedChat(threadKey);
+  // After the refresh, which would otherwise overwrite it with the next open question's hint.
+  chatPopHint.textContent = body.kind === "answer" ? "Answered - the run picks it up between steps." : "Sent.";
+  void refreshFeed();
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    if (feedTimer) clearTimeout(feedTimer);
+    feedTimer = null;
+  } else if (!feedTimer) {
+    void refreshFeed();
+  }
+});
+void refreshFeed();
+
+chatPopForm.onsubmit = (event) => {
+  event.preventDefault();
+  void sendChat();
+};
+chatPopInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+    event.preventDefault();
+    void sendChat();
+  }
+});
+chatPopClose.onclick = closeChat;
+// Full screen: the chat as a terminal session - the whole window, monospace, every line in order.
+/** @param {boolean} full */
+function setChatFull(full) {
+  chatPop.classList.toggle("full", full);
+  chatPopFull.setAttribute("aria-pressed", String(full));
+  chatPopFull.title = full ? "Back to the small window" : "Full screen, like a terminal";
+  chatPopLog.scrollTop = chatPopLog.scrollHeight;
+}
+chatPopFull.onclick = () => setChatFull(!chatPop.classList.contains("full"));
+chatPopSendPage.onclick = () => {
+  chatPopHint.textContent = sendQueued(false) ? "Page review sent." : "Nothing queued to send yet.";
+  chatPopSendPage.textContent = "Send page";
+};
+chatPopExpand.onclick = () => {
+  const threadKey = activeChat;
+  closeChat();
+  openThread(threadKey);
+};
+
+threadsNew.onsubmit = (event) => event.preventDefault();
 void checkForThreads();
+footerReady = true;
+renderThreads();
+
+queueSend.onclick = () => {
+  setMenuOpen(queueOpen, queueMenu, false);
+  sendQueued(false);
+};
+queueMenuSend.onclick = queueSend.onclick;
+queueOpen.onclick = () => {
+  const open = queueMenu.hidden;
+  closeMenus();
+  setThreadsMenuOpen(false);
+  setMenuOpen(queueOpen, queueMenu, open);
+};
+document.addEventListener("mousedown", (event) => {
+  if (!queueMenu.hidden && !queueDock.contains(/** @type {Node} */ (event.target))) {
+    setMenuOpen(queueOpen, queueMenu, false);
+  }
+});
+
+// The bell: other pages that moved since you last opened it - a page that came back with a new
+// version, an agent reply, a new page. The server keeps no read state; the newest time you have
+// seen lives in localStorage, so it is one count across every page in this browser. The page's
+// own stream says when something moved; the list itself is fetched, so a hidden tab costs nothing.
+const notifyWrap = /** @type {HTMLDivElement} */ (document.getElementById("notifyWrap"));
+const notifyButton = /** @type {HTMLButtonElement} */ (document.getElementById("notifyButton"));
+const notifyCount = /** @type {HTMLSpanElement} */ (document.getElementById("notifyCount"));
+const notifyMenu = /** @type {HTMLDivElement} */ (document.getElementById("notifyMenu"));
+const notifyList = /** @type {HTMLDivElement} */ (document.getElementById("notifyList"));
+const notifyEmpty = /** @type {HTMLParagraphElement} */ (document.getElementById("notifyEmpty"));
+const NOTIFY_SEEN_KEY = "review-surface:notifications-seen-at";
+/** @type {any[]} */
+let notifications = [];
+let notifyTimer = /** @type {ReturnType<typeof setTimeout> | null} */ (null);
+
+function notificationsSeenAt() {
+  try {
+    return window.localStorage.getItem(NOTIFY_SEEN_KEY);
+  } catch {
+    return "";
+  }
+}
+
+/** @param {string} at */
+function markNotificationsSeen(at) {
+  try {
+    window.localStorage.setItem(NOTIFY_SEEN_KEY, at);
+  } catch {
+    // storage unavailable: the count simply forgets across reloads
+  }
+}
+
+/** @param {string} at */
+function relativeTime(at) {
+  const ms = Date.now() - Date.parse(at);
+  if (!Number.isFinite(ms)) return "";
+  const minutes = Math.round(ms / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return minutes + " min ago";
+  const hours = Math.round(minutes / 60);
+  return hours < 24 ? hours + " h ago" : Math.round(hours / 24) + " d ago";
+}
+
+function renderNotifications() {
+  notifyWrap.hidden = embeddedThread;
+  const seen = notificationsSeenAt() || "";
+  const unread = notifications.filter((item) => item.at > seen);
+  notifyCount.hidden = unread.length === 0;
+  notifyCount.textContent = String(unread.length);
+  notifyButton.classList.toggle("has-unread", unread.length > 0);
+  notifyButton.setAttribute("aria-label", unread.length ? `Notifications, ${unread.length} new` : "Notifications");
+  notifyEmpty.hidden = notifications.length > 0;
+  notifyList.replaceChildren(
+    ...notifications.map((item) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "menu-item notify-item" + (item.at > seen ? " unread" : "");
+      row.setAttribute("role", "menuitem");
+      const title = document.createElement("span");
+      title.className = "thread-item-title";
+      title.textContent = item.title;
+      const meta = document.createElement("span");
+      meta.className = "thread-item-meta";
+      meta.textContent = item.label + " · " + relativeTime(item.at);
+      row.appendChild(title);
+      row.appendChild(meta);
+      row.onclick = () => location.assign(item.url);
+      return row;
+    }),
+  );
+}
+
+async function refreshNotifications() {
+  notifyTimer = null;
+  if (embeddedThread) return;
+  try {
+    const response = await fetch("/api/notifications?page=" + encodeURIComponent(key));
+    if (!response.ok) return;
+    notifications = (await response.json()).notifications || [];
+  } catch {
+    return;
+  }
+  // First visit in this browser: everything already logged is history, not news.
+  if (notificationsSeenAt() === null) markNotificationsSeen(notifications[0]?.at || "1970-01-01T00:00:00.000Z");
+  renderNotifications();
+}
+
+function scheduleNotificationsRefresh() {
+  if (!notifyTimer) notifyTimer = setTimeout(() => void refreshNotifications(), 400);
+}
+
+notifyButton.onclick = () => {
+  const open = notifyMenu.hidden;
+  closeMenus();
+  setThreadsMenuOpen(false);
+  setMenuOpen(notifyButton, notifyMenu, open);
+  if (open && notifications[0]) {
+    markNotificationsSeen(notifications[0].at);
+    // the rows keep their unread mark while the menu is open; the badge clears
+    notifyCount.hidden = true;
+    notifyButton.classList.remove("has-unread");
+  } else if (!open) {
+    renderNotifications();
+  }
+};
+document.addEventListener("mousedown", (event) => {
+  if (!notifyMenu.hidden && !notifyWrap.contains(/** @type {Node} */ (event.target))) {
+    setMenuOpen(notifyButton, notifyMenu, false);
+    renderNotifications();
+  }
+});
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) scheduleNotificationsRefresh();
+});
+renderNotifications();
+void refreshNotifications();
 
 applySheetState();
 render();

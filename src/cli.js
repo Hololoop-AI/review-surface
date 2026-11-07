@@ -15,7 +15,15 @@ import {
   splitExportWarnings,
 } from "./export-bundle.js";
 import { publishToHtmlApp } from "./html-app.js";
-import { clientHost, defaultPort, ensureStateDir, hostForUrl, serverLogFile, stateFile } from "./paths.js";
+import {
+  clientHost,
+  defaultPort,
+  ensureStateDir,
+  hostForUrl,
+  serverLogFile,
+  stateDir as stateDirectory,
+  stateFile,
+} from "./paths.js";
 import {
   computeVsCodePluginLocationsUpdate,
   linkCursorLocalPlugin,
@@ -49,6 +57,7 @@ const COMMANDS = new Set([
   "poll",
   "journal",
   "link",
+  "message",
   "pages",
   "search",
   "end",
@@ -141,6 +150,7 @@ export async function run(argv) {
         poll: pollCommand,
         journal: journalCommand,
         link: linkCommand,
+        message: messageCommand,
         pages: pagesCommand,
         search: searchCommand,
         end: endCommand,
@@ -394,6 +404,47 @@ async function linkCommand(args) {
   return pageGraphOutput(args, body);
 }
 
+// An agent's quick message to the reader: a chat line in a thread on a page, not a page of its
+// own. `--thread` adds to a thread it already started; the answer comes back through an ordinary
+// `review-surface poll <thread file>`.
+async function messageCommand(args) {
+  const valueFlags = ["--title", "--thread"];
+  const positional = positionalArgs(args, valueFlags);
+  const thread = flagValue(args, "--thread");
+  const [page, text] = thread ? [null, positional[0]] : positional;
+  if (!text || (!thread && !page)) {
+    throw new AxiError("A page and a message are required", "VALIDATION_ERROR", [
+      'Run `review-surface message <page> "question" [--title <t>]`',
+      'or `review-surface message --thread <thread> "more"`',
+    ]);
+  }
+  const baseUrl = await ensureServer();
+  let response;
+  try {
+    response = await fetch(`${baseUrl}/api/conversations`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(
+        thread
+          ? { thread: await canonicalPageRef(thread), text }
+          : { page: await canonicalPageRef(page), title: flagValue(args, "--title") || "", text },
+      ),
+    });
+  } catch {
+    throw serverConnectionError();
+  }
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new AxiError(body.error || `Review Surface request failed: ${response.status}`, "VALIDATION_ERROR", [
+      "Run `review-surface pages` to see the pages a message can go to",
+    ]);
+  }
+  return pageGraphOutput(args, {
+    thread: body,
+    next_step: `The reader sees this in the threads footer of the page. Their answer arrives through \`review-surface poll ${body.file}\`; add to the thread with \`review-surface message --thread ${body.key} "..."\`.`,
+  });
+}
+
 // TOON by default like every other command; `--json` prints raw JSON for machine consumers.
 function pageGraphOutput(args, value) {
   if (!args.includes("--json")) return value;
@@ -616,9 +667,29 @@ function createFeedbackNextStep(file, artifactFailures, sessionEnded, endedBy, p
     }
     return `${failureNote}${layoutNote}${whiteboardNote}${attachmentNote}This was the last feedback before the Review Surface session ended. Stop polling ${file}. Deliver any remaining updates directly in this conversation, or run \`review-surface ${file}\` to open a fresh session if the user needs further visual review.`;
   }
+  const speedNote = prompts.some((prompt) => prompt?.speed === "quick")
+    ? `The reader asked for a quick answer on at least one message (speed "quick"): answer promptly and briefly, and say so if a full answer needs longer. `
+    : "";
+  // A message thread's file is only its placeholder (see \`review-surface message\`): there is
+  // nothing to change in it, and an agent mid-run answers in the thread without blocking on a poll.
+  if (count === 0 && isMessageThreadFile(file)) {
+    return `The reader answered your message in thread ${file}. Use their answer in your work; there is nothing to change in that file, which is only the thread's placeholder. ${speedNote}${attachmentNote}To reply, run \`review-surface message --thread ${file} "<reply>"\`; poll the thread again only when you need their next answer.`;
+  }
+  // Enter in the page's own chat window: the reader is talking with the agent, not handing back
+  // the page. A batch with any page feedback in it is a review as before.
+  const directChat = count === 0 && prompts.length > 0 && prompts.every((prompt) => prompt?.channel === "chat");
   const prefix =
-    count > 0 ? artifactFailuresPrefix(file, artifactFailures) : `Apply the requested changes to ${file}. `;
-  return `${prefix}${layoutNote}${whiteboardNote}${attachmentNote}Do not respond to the user just yet. Now you must run \`review-surface poll ${file} --agent-reply "<message for the user>"\` without --timeout-ms unless the user ended the session. The poll waits silently until the user sends more feedback or ends the session - never kill it. ${pollExecutionGuidance({ agent })}`;
+    count > 0
+      ? artifactFailuresPrefix(file, artifactFailures)
+      : directChat
+        ? `The reader is chatting with you directly in the page's chat window. Answer them in the conversation and do not rewrite ${file} unless they ask you to; the full page review arrives separately, when they press Send page. `
+        : `Apply the requested changes to ${file}. `;
+  return `${prefix}${speedNote}${layoutNote}${whiteboardNote}${attachmentNote}Do not respond to the user just yet. Now you must run \`review-surface poll ${file} --agent-reply "<message for the user>"\` without --timeout-ms unless the user ended the session. The poll waits silently until the user sends more feedback or ends the session - never kill it. ${pollExecutionGuidance({ agent })}`;
+}
+
+/** @param {string} file */
+function isMessageThreadFile(file) {
+  return sameResolvedPath(path.dirname(path.resolve(file)), path.join(stateDirectory(), "conversations"));
 }
 
 // The narrow fatal path. Ordinary layout findings never reach the poll: they wait in the user's
@@ -1605,7 +1676,7 @@ export function getCommandHelp(command, { agent = "generic" } = {}) {
 }
 
 function createTopLevelHelp({ agent = "generic" } = {}) {
-  return `review-surface - Review Surface AXI\n\nUsage:\n  review-surface\n  review-surface <html-file> [--no-open] [--no-gate] [--reopen]\n  review-surface poll <html-file> [--agent-reply "..."]\n  review-surface journal <html-file> [--limit <n>]\n  review-surface link <child-of|supersedes|derived-from|thread-of> <page> <page> [--json]\n  review-surface pages [--under <page>] [--depth <n>] [--state <states>] [--text <t>] [--replaced no|yes|any] [--json]\n  review-surface search <text> [--kind <kinds>] [--json]\n  review-surface end <html-file>\n  review-surface export <html-file> [--out <path>]\n  review-surface share <html-file> [--password <pw>] [--token <t>]\n  review-surface stop\n  review-surface playbook [playbook_id]\n  review-surface design\n  review-surface setup hooks\n  review-surface setup plugin\n\n${DESIGN_SYSTEM_HINT}\n\nNote: poll long-polls indefinitely by default until the user sends feedback or ends the session, staying silent while it waits - never kill it. Layout issues the browser detects are passive: they collect in the user's Layout issues inbox in the Review Surface top bar and reach the agent only when the user selects them and queues the fixes, as an ordinary tag "layout-warnings" prompt. Do not pass --timeout-ms during normal agent use; it is for tests and debugging only. ${pollExecutionGuidance({ agent })} ${POLL_SEND_AND_END_RULE}\n\n`;
+  return `review-surface - Review Surface AXI\n\nUsage:\n  review-surface\n  review-surface <html-file> [--no-open] [--no-gate] [--reopen]\n  review-surface poll <html-file> [--agent-reply "..."]\n  review-surface journal <html-file> [--limit <n>]\n  review-surface link <child-of|supersedes|derived-from|thread-of> <page> <page> [--json]\n  review-surface message <page> "text" [--title <t>] [--thread <thread>]\n  review-surface pages [--under <page>] [--depth <n>] [--state <states>] [--text <t>] [--replaced no|yes|any] [--json]\n  review-surface search <text> [--kind <kinds>] [--json]\n  review-surface end <html-file>\n  review-surface export <html-file> [--out <path>]\n  review-surface share <html-file> [--password <pw>] [--token <t>]\n  review-surface stop\n  review-surface playbook [playbook_id]\n  review-surface design\n  review-surface setup hooks\n  review-surface setup plugin\n\n${DESIGN_SYSTEM_HINT}\n\nNote: poll long-polls indefinitely by default until the user sends feedback or ends the session, staying silent while it waits - never kill it. Layout issues the browser detects are passive: they collect in the user's Layout issues inbox in the Review Surface top bar and reach the agent only when the user selects them and queues the fixes, as an ordinary tag "layout-warnings" prompt. Do not pass --timeout-ms during normal agent use; it is for tests and debugging only. ${pollExecutionGuidance({ agent })} ${POLL_SEND_AND_END_RULE}\n\n`;
 }
 
 function createCommandHelp({ agent = "generic" } = {}) {
@@ -1613,7 +1684,8 @@ function createCommandHelp({ agent = "generic" } = {}) {
     open: `Usage: review-surface <html-file> [--no-open] [--no-gate] [--reopen] [--frame-ancestor <origin>] [--supersedes <page>]\n\nOpen or resume a Review Surface review session for an HTML artifact. Use --no-open when you need to ensure the server/session exists without opening another browser window. Use --no-gate to skip the open-time layout curtain for this browser open. If the user explicitly ended the session from the browser, this refuses to reopen it and returns guidance instead - pass --reopen to force it open when the user asks for further review or something important needs their visual attention. Sessions ended by the agent (\`review-surface end\`) reopen normally without the flag. Use --frame-ancestor to let one named local origin embed the review chrome in an iframe (see \`review-surface server\` help for what it changes and why it belongs to the server, not the session). Pass --supersedes <page> when this page continues a thread that already has a page (a new round of the same discussion): the open records that this page supersedes that one, so the older page drops out of \`review-surface pages\` and this page takes its place in the tree. A refused link is reported in the output's link field and never fails the open.\n`,
     poll: `Usage: review-surface poll <html-file> [--agent-reply "..."]\n\nThis command long-polls indefinitely for queued user prompts. It stays silent while it waits - that is normal, never kill it. Browser-detected layout issues do NOT return this poll: they are filed passively in the user's Layout issues inbox and arrive as an ordinary tag "layout-warnings" prompt only after the user selects them and queues the fixes. Warning lifecycle: an issue stays unresolved and counted while queued, becomes recurring if a newer artifact revision still shows it, and is resolved only after a newer artifact load plus a complete diagnostic pass at the same viewport no longer detects it. A failed or incomplete pass preserves it as unverified rather than clearing it. The only response that arrives without user action is artifact_failures - a fatal failure that made the review surface itself unusable. Do not pass --timeout-ms during normal agent use; it is for tests and debugging only. ${pollExecutionGuidance({ agent })} Use --agent-reply after applying prior feedback to display your response in Review Surface before waiting again. ${POLL_SEND_AND_END_RULE}\n`,
     journal: `Usage: review-surface journal <html-file> [--limit <n>]\n\nPrint the session's accepted feedback batches from the append-only journal as JSON, oldest first. Every batch the user ever sent is journaled at accept time and never removed by delivery, so this is the recovery path when a delivered poll response was lost or mangled downstream - re-read the most recent batch here instead of asking the user to resubmit. --limit keeps only the newest <n> batches.\n`,
-    link: `Usage: review-surface link <child-of|supersedes|derived-from|thread-of> <page> <page> [--json]\n\nRecord one typed link between two pages already opened with review-surface: \`child-of <page> <parent>\` files a page under a parent (a later child-of moves it), \`supersedes <new> <old>\` marks the old page replaced, \`derived-from <page> <source>\` records where a page came from. \`thread-of <thread> <page>\` makes a page a side conversation about another: that page's bell lists it and opens it in a window over the page. A page is a session key, a file path, or a unique path suffix. Refused, with nothing written: an unknown type, a self-link, a nesting cycle, a supersede cycle, a page already replaced by another page, a thread of a second page or of a thread, and a page name that matches more than one page. Prints the result as TOON, or as raw JSON with --json.\n`,
+    link: `Usage: review-surface link <child-of|supersedes|derived-from|thread-of> <page> <page> [--json]\n\nRecord one typed link between two pages already opened with review-surface: \`child-of <page> <parent>\` files a page under a parent (a later child-of moves it), \`supersedes <new> <old>\` marks the old page replaced, \`derived-from <page> <source>\` records where a page came from. \`thread-of <thread> <page>\` makes a page a conversation thread on another page: the threads footer on that page lists it and opens it in a window over the page, and every other page's footer lists it while it is live. Linking the same thread to a further page continues it there; the first page stays the one it started on. A page is a session key, a file path, or a unique path suffix. Refused, with nothing written: an unknown type, a self-link, a nesting cycle, a supersede cycle, a page already replaced by another page, a thread of a thread (or a page with threads becoming one), and a page name that matches more than one page. Prints the result as TOON, or as raw JSON with --json.\n`,
+    message: `Usage: review-surface message <page> "text" [--title <t>] [--json]\n       review-surface message --thread <thread> "text" [--json]\n\nSend the reader a quick message - a question, an FYI - without writing a page. It starts a message thread on <page> (shown in that page's threads footer, unread until opened, and in every other page's footer while it is live) with your text as its first line, or adds to a thread you started with --thread. The reader answers in the thread; read the answer with \`review-surface poll <thread file>\`, the file this command prints. An answer may carry speed "quick" when the reader asked for a fast reply. A page is a session key, a file path, or a unique path suffix.\n`,
     pages: `Usage: review-surface pages [--under <page>] [--depth <n>] [--state <states>] [--text <t>] [--replaced no|yes|any] [--json]\n\nPrint every review page with its links (TOON, or raw JSON with --json) (parent, children, replaced_by, replaces, derived_from). --under keeps pages inside one page, --depth limits how deep (1 = direct children; without --under, 0 = top level), --state filters by comma-separated state, --text matches title or path, --replaced defaults to no, hiding replaced pages. States come from what the session recorded, never from a page's title: ended (the session ended), agent-working (feedback queued or the user spoke last), needs-you (the agent replied last), new (nothing exchanged yet), quiet (no activity for 7 days).\n`,
     search: `Usage: review-surface search <text> [--kind page,feedback,reply,event] [--json]\n\nOne raw search across everything Review Surface records, ignoring the page tree: every page (replaced ones included), every feedback batch in the journal, every agent reply, and every event in the event log. Prints the hits newest first, as TOON or as raw JSON with --json.\n`,
     end: `Usage: review-surface end <html-file>\n\nEnd a Review Surface session as the agent. A session ended this way still reopens normally on the next \`review-surface <html-file>\`, unlike a user ending it from the browser, which requires --reopen.\n`,

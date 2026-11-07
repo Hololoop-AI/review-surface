@@ -61,24 +61,35 @@ export function buildGraph(records) {
   const parent = new Map();
   const replacedBy = new Map();
   const derived = [];
-  // thread page -> the page it is a side conversation about
+  // thread page -> the pages it is a conversation on, the page it started on first
   const threadOf = new Map();
   for (const record of records) {
     if (record.type === "child-of") parent.set(record.from, record.to);
     else if (record.type === "supersedes") replacedBy.set(record.to, record.from);
-    else if (record.type === "thread-of") threadOf.set(record.from, record.to);
-    else derived.push([record.from, record.to]);
+    else if (record.type === "thread-of") {
+      const pages = threadOf.get(record.from) || [];
+      if (!pages.includes(record.to)) threadOf.set(record.from, [...pages, record.to]);
+    } else derived.push([record.from, record.to]);
   }
   return { parent, replacedBy, derived, threadOf };
 }
 
 /**
- * The side conversations about one page, oldest first: what its chrome lists behind the bell.
+ * The threads on one page, oldest first: the ones its footer lists as "this page".
  * @param {any[]} records
  * @param {string} key
  */
 export function threadsOf(records, key) {
-  return [...buildGraph(records).threadOf].filter(([, page]) => page === key).map(([thread]) => thread);
+  return [...buildGraph(records).threadOf].filter(([, pages]) => pages.includes(key)).map(([thread]) => thread);
+}
+
+/**
+ * Every thread with the pages it is on, the page it started on first: what the footer lists.
+ * @param {any[]} records
+ * @returns {[string, string[]][]}
+ */
+export function allThreads(records) {
+  return [...buildGraph(records).threadOf];
 }
 
 /** How many `supersedes` hops newestReplacement follows before it stops looking further. */
@@ -170,12 +181,10 @@ export function checkLink(graph, type, from, to) {
     return "new";
   }
   if (type === "thread-of") {
-    // A thread is a conversation about one page; listing it behind a second page's bell would
-    // show the same conversation twice with no way to tell which page it was about.
-    const page = graph.threadOf.get(from);
-    if (page === to) return "unchanged";
-    if (page) throw new LinkError("That page is already a thread of another page", "REFUSED");
-    if (graph.threadOf.has(to) || [...graph.threadOf.values()].includes(from)) {
+    // A thread may continue onto other pages (each link adds one; the first stays where it
+    // started), but it stays one level deep: a thread is never a page that threads hang off.
+    if ((graph.threadOf.get(from) || []).includes(to)) return "unchanged";
+    if (graph.threadOf.has(to) || [...graph.threadOf.values()].some((pages) => pages.includes(from))) {
       throw new LinkError("A thread cannot have threads of its own", "REFUSED");
     }
     return "new";
@@ -246,7 +255,8 @@ export class LinkStore {
 export function derivePageState(session, now) {
   if (session.status === "ended") return "ended";
   if ((session.prompts || []).length > 0) return "agent-working";
-  const chat = session.chat || [];
+  // Thinking is the agent at work, not a turn: whose turn it is comes from the last real line.
+  const chat = (session.chat || []).filter((entry) => entry.role !== "thinking");
   const last = chat.length > 0 ? chat[chat.length - 1].role : null;
   if (last === "user") return "agent-working";
   const updated = Date.parse(session.updated_at || "");
@@ -369,8 +379,9 @@ export function queryPages({ sessions, records, titles, now }, options = {}) {
         replaced_by: graph.replacedBy.get(session.key) || null,
         replaces: [...graph.replacedBy].filter(([, next]) => next === session.key).map(([old]) => old),
         derived_from: graph.derived.filter(([from]) => from === session.key).map(([, to]) => to),
-        thread_of: graph.threadOf.get(session.key) || null,
-        threads: [...graph.threadOf].filter(([, page]) => page === session.key).map(([thread]) => thread),
+        thread_of: graph.threadOf.get(session.key)?.[0] || null,
+        thread_pages: graph.threadOf.get(session.key) || [],
+        threads: [...graph.threadOf].filter(([, pages]) => pages.includes(session.key)).map(([thread]) => thread),
       },
     });
   }

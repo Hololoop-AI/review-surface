@@ -8,7 +8,7 @@ var __export = (target, all) => {
 // src/cli.js
 import { spawn, spawnSync } from "node:child_process";
 import { closeSync, existsSync as existsSync3, mkdirSync as mkdirSync2, openSync, readFileSync as readFileSync3, realpathSync, writeFileSync as writeFileSync2 } from "node:fs";
-import { access, readFile as readFile7, writeFile as writeFile4 } from "node:fs/promises";
+import { access, readFile as readFile7, writeFile as writeFile5 } from "node:fs/promises";
 import os3 from "node:os";
 import path10 from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
@@ -4523,7 +4523,7 @@ function attrValue(attrs, name) {
 import crypto6 from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync as existsSync2 } from "node:fs";
-import { appendFile as appendFile4, mkdir as mkdir6, readFile as readFile6, realpath as realpath4, stat as stat4 } from "node:fs/promises";
+import { appendFile as appendFile4, mkdir as mkdir6, readFile as readFile6, realpath as realpath4, stat as stat4, writeFile as writeFile4 } from "node:fs/promises";
 import { isIP } from "node:net";
 import { homedir } from "node:os";
 import path9 from "node:path";
@@ -7614,6 +7614,19 @@ var EventLog = class {
       };
     });
   }
+  /**
+   * The newest events, oldest first: the last `maxBytes` of the log, starting at a line boundary.
+   * For readers that summarize recent activity without replaying a log that only grows.
+   * @param {number} [maxBytes]
+   */
+  async readRecent(maxBytes = 256 * 1024) {
+    return this.#enqueue(async () => {
+      await this.#ensureSize();
+      const start = Math.max(0, this.size - maxBytes);
+      const entries = await this.#readRange(start, this.size);
+      return entries.map((entry) => entry.event);
+    });
+  }
   async #readRange(start, end) {
     if (end <= start) return [];
     let handle;
@@ -7708,13 +7721,15 @@ function buildGraph(records) {
   for (const record of records) {
     if (record.type === "child-of") parent2.set(record.from, record.to);
     else if (record.type === "supersedes") replacedBy.set(record.to, record.from);
-    else if (record.type === "thread-of") threadOf.set(record.from, record.to);
-    else derived.push([record.from, record.to]);
+    else if (record.type === "thread-of") {
+      const pages = threadOf.get(record.from) || [];
+      if (!pages.includes(record.to)) threadOf.set(record.from, [...pages, record.to]);
+    } else derived.push([record.from, record.to]);
   }
   return { parent: parent2, replacedBy, derived, threadOf };
 }
-function threadsOf(records, key) {
-  return [...buildGraph(records).threadOf].filter(([, page]) => page === key).map(([thread]) => thread);
+function allThreads(records) {
+  return [...buildGraph(records).threadOf];
 }
 var REPLACEMENT_DEPTH_LIMIT = 64;
 function newestReplacement(replacedBy, key, depthLimit = REPLACEMENT_DEPTH_LIMIT) {
@@ -7783,10 +7798,8 @@ function checkLink(graph, type, from, to) {
     return "new";
   }
   if (type === "thread-of") {
-    const page = graph.threadOf.get(from);
-    if (page === to) return "unchanged";
-    if (page) throw new LinkError("That page is already a thread of another page", "REFUSED");
-    if (graph.threadOf.has(to) || [...graph.threadOf.values()].includes(from)) {
+    if ((graph.threadOf.get(from) || []).includes(to)) return "unchanged";
+    if (graph.threadOf.has(to) || [...graph.threadOf.values()].some((pages) => pages.includes(from))) {
       throw new LinkError("A thread cannot have threads of its own", "REFUSED");
     }
     return "new";
@@ -7846,7 +7859,7 @@ var LinkStore = class {
 function derivePageState(session, now) {
   if (session.status === "ended") return "ended";
   if ((session.prompts || []).length > 0) return "agent-working";
-  const chat = session.chat || [];
+  const chat = (session.chat || []).filter((entry) => entry.role !== "thinking");
   const last = chat.length > 0 ? chat[chat.length - 1].role : null;
   if (last === "user") return "agent-working";
   const updated = Date.parse(session.updated_at || "");
@@ -7943,8 +7956,9 @@ function queryPages({ sessions, records, titles, now }, options = {}) {
         replaced_by: graph.replacedBy.get(session.key) || null,
         replaces: [...graph.replacedBy].filter(([, next]) => next === session.key).map(([old]) => old),
         derived_from: graph.derived.filter(([from]) => from === session.key).map(([, to]) => to),
-        thread_of: graph.threadOf.get(session.key) || null,
-        threads: [...graph.threadOf].filter(([, page]) => page === session.key).map(([thread]) => thread)
+        thread_of: graph.threadOf.get(session.key)?.[0] || null,
+        thread_pages: graph.threadOf.get(session.key) || [],
+        threads: [...graph.threadOf].filter(([, pages]) => pages.includes(session.key)).map(([thread]) => thread)
       }
     });
   }
@@ -8049,6 +8063,28 @@ async function canonicalPageRef(ref) {
   } catch {
     return ref;
   }
+}
+
+// src/notifications.js
+var NOTIFICATION_LABELS = Object.freeze({
+  "page.version": "New version",
+  "page.agent_reply": "Agent replied",
+  "page.opened": "New page"
+});
+function isNotificationEvent(event) {
+  if (!event || !(event.type in NOTIFICATION_LABELS)) return false;
+  return event.type !== "page.opened" || event.data?.new === true;
+}
+function summarizeActivity(events, { exclude = "", threadKeys = /* @__PURE__ */ new Set(), limit = 30 } = {}) {
+  const latest = /* @__PURE__ */ new Map();
+  for (const event of events) {
+    if (!isNotificationEvent(event)) continue;
+    const key = String(event.subject || "");
+    if (!key || key === exclude || threadKeys.has(key)) continue;
+    latest.delete(key);
+    latest.set(key, { key, type: event.type, label: NOTIFICATION_LABELS[event.type], at: String(event.ts || "") });
+  }
+  return [...latest.values()].reverse().slice(0, limit);
 }
 
 // src/hololoop-ring.js
@@ -8611,6 +8647,26 @@ var SessionStore = class {
       return session;
     });
   }
+  /**
+   * The agent's thinking, shown in the page's chat window as it works. Stored in the chat with its
+   * own role, so it is never counted as a reply and never decides whose turn it is.
+   * @param {string} key
+   * @param {string} text
+   */
+  async addAgentThinking(key, text) {
+    return this.runExclusive(async () => {
+      const state = await this.readState();
+      const session = state.sessions[key];
+      if (!session) return null;
+      session.chat = [
+        ...session.chat || [],
+        { role: "thinking", text: String(text || ""), at: (/* @__PURE__ */ new Date()).toISOString() }
+      ];
+      session.updated_at = (/* @__PURE__ */ new Date()).toISOString();
+      await this.writeState(state);
+      return session;
+    });
+  }
   async addAgentReply(key, text) {
     return this.runExclusive(async () => {
       const state = await this.readState();
@@ -8697,6 +8753,8 @@ function normalizePrompt(prompt) {
     tag: String(prompt.tag || ""),
     text: String(prompt.text || "")
   };
+  if (prompt.speed === "quick") normalized.speed = "quick";
+  if (prompt.channel === "chat") normalized.channel = "chat";
   const target = normalizeTarget(prompt.target);
   if (target) normalized.target = target;
   const { refs, malformed } = normalizeAttachmentRefs(prompt.attachments);
@@ -9475,6 +9533,58 @@ function resolveAnnotationActions(env = process.env, log = void 0) {
     return [];
   }
 }
+var HOST_PAGE_RESERVED = [
+  "/api",
+  "/artifact",
+  "/chrome-client.js",
+  "/chrome.css",
+  "/design",
+  "/events",
+  "/favicon.ico",
+  "/health",
+  "/hololoop-ring.svg",
+  "/host",
+  "/open",
+  "/sdk.js",
+  "/session",
+  "/shutdown",
+  "/whiteboard"
+];
+function resolveHostPages(env = process.env, log = void 0) {
+  const raw = String(env.REVIEW_SURFACE_HOST_PAGES || "").trim();
+  if (!raw) return [];
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    log?.("REVIEW_SURFACE_HOST_PAGES is not valid JSON; no host pages added");
+    return [];
+  }
+  const pages = [];
+  for (const entry of Array.isArray(parsed) ? parsed : []) {
+    const id = String(entry?.id || "");
+    const url = String(entry?.url || "");
+    const pathPart = url.split(/[?#]/)[0];
+    const reserved = HOST_PAGE_RESERVED.some((prefix) => pathPart === prefix || pathPart.startsWith(prefix + "/"));
+    if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(id) || !/^\/(?![/\\])/.test(url) || reserved) {
+      log?.(
+        `REVIEW_SURFACE_HOST_PAGES: ignored ${JSON.stringify(entry)} - needs a lowercase id and a root-relative address this server does not route itself`
+      );
+      continue;
+    }
+    pages.push({ id, url, title: String(entry?.title || id).slice(0, 80) });
+  }
+  return pages;
+}
+function resolveMessageFeed(env = process.env, log = void 0) {
+  const raw = String(env.REVIEW_SURFACE_MESSAGE_FEED || "").trim();
+  if (!raw) return "";
+  if (!/^\/(?![/\\])[A-Za-z0-9/_.-]*$/.test(raw)) {
+    log?.(`REVIEW_SURFACE_MESSAGE_FEED: ignored ${JSON.stringify(raw)} - needs a root-relative address on this origin`);
+    return "";
+  }
+  return raw.replace(/\/+$/, "");
+}
 function resolveIdleTimeoutMs(env = process.env) {
   const value = Number(env.REVIEW_SURFACE_IDLE_TIMEOUT_MS?.trim() || NaN);
   return Number.isFinite(value) && value > 0 ? value : null;
@@ -9510,6 +9620,13 @@ async function serve({
   const serverBoot = crypto6.randomUUID();
   const reloadState = (key) => ({ boot: serverBoot, version, count: reloadCounts.get(key) || 0 });
   const eventLog = new EventLog(eventLogPath);
+  void eventLog.subscribe((event) => {
+    if (isNotificationEvent(event)) events.emit(
+      "activity",
+      /** @type {any} */
+      event.subject
+    );
+  });
   const linkStore = new LinkStore(linksPath);
   const watchers = /* @__PURE__ */ new Map();
   const activePolls = /* @__PURE__ */ new Map();
@@ -9643,7 +9760,7 @@ async function serve({
     });
   }
   app.use((req, res, next) => {
-    const guardedGet = req.method === "GET" && (req.path === "/api/poll" || req.path === "/api/events" || req.path === "/api/pages" || req.path === "/api/search" || /^\/api\/[^/]+\/(export|threads)$/.test(req.path) || /^\/events\/[^/]+\/threads$/.test(req.path));
+    const guardedGet = req.method === "GET" && (req.path === "/api/poll" || req.path === "/api/events" || req.path === "/api/pages" || req.path === "/api/search" || req.path === "/api/notifications" || /^\/api\/[^/]+\/(export|threads|conversation)$/.test(req.path) || /^\/events\/[^/]+\/threads$/.test(req.path));
     if (!guardedGet && (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS")) {
       next();
       return;
@@ -9656,6 +9773,12 @@ async function serve({
   });
   const attachmentConfig = resolveAttachmentConfig();
   const annotationActions = resolveAnnotationActions(process.env, (line) => writeLog(`[review-surface] ${line}`));
+  const hostPages = resolveHostPages(process.env, (line) => writeLog(`[review-surface] ${line}`));
+  const messageFeed = resolveMessageFeed(process.env, (line) => writeLog(`[review-surface] ${line}`));
+  await mkdir6(path9.dirname(stateFile2), { recursive: true });
+  const stateRoot = await realpath4(path9.dirname(stateFile2));
+  const hostPagesDir = path9.join(stateRoot, "host-pages");
+  const hostPageOf = (session) => path9.dirname(session?.file || "") === hostPagesDir ? hostPages.find((page) => `${page.id}.html` === path9.basename(session.file)) || null : null;
   const attachmentStateRoot = path9.dirname(stateFile2);
   const defaultJsonParser = express.json({ limit: "2mb" });
   const whiteboardJsonParser = express.json({ limit: "20mb" });
@@ -9934,21 +10057,35 @@ async function serve({
     }
   });
   async function threadSummaries(pageKey) {
-    const keys = threadsOf(await linkStore.read(), pageKey);
-    if (keys.length === 0) return [];
+    const threadPages = allThreads(await linkStore.read());
+    if (threadPages.length === 0) return [];
     const sessions = await store.listSessions();
     const now = Date.now();
+    const titles = /* @__PURE__ */ new Map();
+    const titleOf = async (key, file) => {
+      if (!titles.has(key)) titles.set(key, (await readPageTitle(file)).title);
+      return titles.get(key);
+    };
     const out = [];
-    for (const threadKey of keys) {
+    for (const [threadKey, pageKeys] of threadPages) {
       const session = sessions.find((candidate) => candidate.key === threadKey);
       if (!session) continue;
+      const here = pageKeys.includes(pageKey);
+      if (!here && session.status === "ended") continue;
+      const pages = [];
+      for (const key of pageKeys) {
+        const pageSession = sessions.find((candidate) => candidate.key === key);
+        if (pageSession) pages.push({ key, title: await titleOf(key, pageSession.file) });
+      }
       const chat = session.chat || [];
       const agentReplies = chat.filter((message) => message.role === "agent");
       const last = agentReplies[agentReplies.length - 1];
       out.push({
         key: threadKey,
-        title: (await readPageTitle(session.file)).title,
+        title: await titleOf(threadKey, session.file),
         url: `/session/${threadKey}`,
+        here,
+        pages,
         status: session.status,
         state: derivePageState(session, now),
         presence: computePresence(threadKey, activePolls, deliveredFeedback),
@@ -9957,8 +10094,27 @@ async function serve({
         updated_at: session.updated_at || null
       });
     }
-    return out;
+    return out.sort(
+      (a, b) => Number(b.here) - Number(a.here) || String(b.updated_at).localeCompare(String(a.updated_at))
+    );
   }
+  app.get("/api/notifications", async (req, res, next) => {
+    try {
+      const page = typeof req.query.page === "string" ? req.query.page : "";
+      const threadKeys = new Set(allThreads(await linkStore.read()).map(([thread]) => thread));
+      const rows = summarizeActivity(await eventLog.readRecent(), { exclude: page, threadKeys });
+      const sessions = await store.listSessions();
+      const notifications = [];
+      for (const row of rows) {
+        const session = sessions.find((candidate) => candidate.key === row.key);
+        if (!session) continue;
+        notifications.push({ ...row, title: (await readPageTitle(session.file)).title, url: `/session/${row.key}` });
+      }
+      res.json({ notifications });
+    } catch (error) {
+      next(error);
+    }
+  });
   app.get("/api/:key/threads", async (req, res, next) => {
     try {
       res.json({ threads: await threadSummaries(req.params.key) });
@@ -9992,9 +10148,17 @@ data: ${JSON.stringify({ threads })}
       if (known.has(changed)) schedule();
     };
     const onLinks = (records) => {
-      if (records.some((record) => record.type === "thread-of" && record.to === pageKey)) schedule();
+      if (records.some((record) => record.type === "thread-of")) schedule();
     };
-    const sessionEvents = ["agent-reply", "agent-presence", "ended", "chat-sync", "feedback", "reload"];
+    const sessionEvents = [
+      "agent-reply",
+      "agent-thinking",
+      "agent-presence",
+      "ended",
+      "chat-sync",
+      "feedback",
+      "reload"
+    ];
     const cleanup = () => {
       closed = true;
       if (timer) clearTimeout(timer);
@@ -10077,6 +10241,24 @@ data: ${JSON.stringify({ threads })}
       next(error);
     }
   });
+  app.post("/api/:key/agent-thinking", async (req, res, next) => {
+    try {
+      const text = String(req.body?.text || "").trim();
+      if (!text) {
+        res.status(400).json({ error: "thinking needs text" });
+        return;
+      }
+      const session = await store.addAgentThinking(req.params.key, text.slice(0, 2e4));
+      if (!session) {
+        res.status(404).json({ error: "session not found" });
+        return;
+      }
+      events.emit("agent-thinking", req.params.key);
+      res.json({ status: "sent" });
+    } catch (error) {
+      next(error);
+    }
+  });
   app.post("/api/:key/agent-reply", async (req, res, next) => {
     try {
       const text = String(req.body?.text || "");
@@ -10089,6 +10271,71 @@ data: ${JSON.stringify({ threads })}
       logPageEvent("page.agent_reply", session, { chars: text.length });
       clearFeedbackDelivery(req.params.key, activePolls, deliveredFeedback, events);
       res.json({ status: "sent" });
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.post("/api/conversations", async (req, res, next) => {
+    try {
+      const text = String(req.body?.text || "").trim();
+      if (!text) {
+        res.status(400).json({ error: "a message needs text" });
+        return;
+      }
+      let threadKey = typeof req.body?.thread === "string" ? req.body.thread.trim() : "";
+      if (threadKey) {
+        threadKey = resolvePageRef(await store.listSessions(), threadKey);
+      } else {
+        const pageKey = resolvePageRef(await store.listSessions(), String(req.body?.page || ""));
+        const title = String(req.body?.title || "").trim().slice(0, 120) || text.slice(0, 80);
+        const dir = path9.join(stateRoot, "conversations");
+        const name = `${(/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-")}-${crypto6.randomBytes(3).toString("hex")}.html`;
+        checkLink(buildGraph(await readLinkRecords(linksPath)), "thread-of", sessionKey(path9.join(dir, name)), pageKey);
+        await mkdir6(dir, { recursive: true });
+        await writeFile4(
+          path9.join(dir, name),
+          `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title></head><body><main><h1>${escapeHtml(title)}</h1><p>A message thread. The conversation is the thread; this page is only its placeholder.</p></main></body></html>
+`
+        );
+        const file = await canonicalFile(path9.join(dir, name));
+        threadKey = sessionKey(file);
+        const sessionUrl = `http://${hostForUrl(linkHostName)}:${publicPort}/session/${threadKey}`;
+        const session2 = await store.upsertSession(file, sessionUrl);
+        logPageEvent("page.opened", session2, { via: "message", new: true });
+        await recordLink({ type: "thread-of", from: threadKey, to: pageKey });
+      }
+      const session = await store.addAgentReply(threadKey, text);
+      if (!session) {
+        res.status(404).json({ error: "no such thread" });
+        return;
+      }
+      events.emit("agent-reply", threadKey, text);
+      logPageEvent("page.agent_reply", session, { chars: text.length });
+      clearFeedbackDelivery(threadKey, activePolls, deliveredFeedback, events);
+      res.json({ key: threadKey, file: session.file, url: `/session/${threadKey}` });
+    } catch (error) {
+      if (error instanceof LinkError) {
+        res.status(linkErrorStatus(error)).json({ error: error.message });
+        return;
+      }
+      next(error);
+    }
+  });
+  app.get("/api/:key/conversation", async (req, res, next) => {
+    try {
+      const session = await store.findByKey(req.params.key);
+      if (!session) {
+        res.status(404).json({ error: "session not found" });
+        return;
+      }
+      res.json({
+        key: session.key,
+        title: (await readPageTitle(session.file)).title,
+        status: session.status,
+        state: derivePageState(session, Date.now()),
+        presence: computePresence(session.key, activePolls, deliveredFeedback),
+        chat: (session.chat || []).map((entry) => ({ role: entry.role, text: entry.text, at: entry.at || null }))
+      });
     } catch (error) {
       next(error);
     }
@@ -10203,6 +10450,38 @@ data: ${JSON.stringify({ threads })}
       next(error);
     }
   });
+  app.get("/host/:id", async (req, res, next) => {
+    try {
+      const page = hostPages.find((candidate) => candidate.id === req.params.id);
+      if (!page) {
+        res.status(404).send("No such host page");
+        return;
+      }
+      await mkdir6(hostPagesDir, { recursive: true });
+      const placeholder = path9.join(hostPagesDir, `${page.id}.html`);
+      await writeFile4(
+        placeholder,
+        `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(page.title)}</title></head><body><p>Host page placeholder for ${escapeHtml(page.url)}.</p></body></html>
+`,
+        { flag: "wx" }
+      ).catch((error) => {
+        if (
+          /** @type {NodeJS.ErrnoException} */
+          error.code !== "EEXIST"
+        ) throw error;
+      });
+      const file = await canonicalFile(placeholder);
+      const key = sessionKey(file);
+      const existing = await store.findByKey(key);
+      if (!existing || existing.status === "ended") {
+        const sessionUrl = `http://${hostForUrl(linkHostName)}:${publicPort}/session/${key}`;
+        await store.upsertSession(file, sessionUrl, { delivery: "push" });
+      }
+      res.redirect(302, `/session/${key}`);
+    } catch (error) {
+      next(error);
+    }
+  });
   app.get("/session/:key", async (req, res, next) => {
     try {
       const chromeLoad = await store.issueReviewerHandoff(req.params.key);
@@ -10227,7 +10506,7 @@ data: ${JSON.stringify({ threads })}
       }
       res.type("html").send(
         createChromeHtml(session, {
-          layoutGateEnabled: shouldEnableLayoutGate(req.query || {}),
+          layoutGateEnabled: shouldEnableLayoutGate(req.query || {}) && !hostPageOf(session),
           faviconTag,
           title: title ? `${title} \xB7 Review Surface` : "Review Surface",
           artifactRevision: chromeLoad.artifact_revision,
@@ -10238,7 +10517,10 @@ data: ${JSON.stringify({ threads })}
           attachmentMaxCount: attachmentConfig.maxPerPrompt,
           reloadState: reloadState(session.key),
           embedded,
-          newerPage
+          newerPage,
+          threadAgents: annotationActions,
+          hostPage: hostPageOf(session),
+          messageFeed
         })
       );
     } catch (error) {
@@ -10461,14 +10743,30 @@ data: ${JSON.stringify({ ended_by: endedBy || null })}
         }
       };
       const sendThreadLinked = (records) => {
-        if (records.some((record) => record.type === "thread-of" && record.to === req.params.key)) {
+        const linked = records.filter((record) => record.type === "thread-of");
+        if (linked.length > 0) {
+          const here = linked.some((record) => record.to === req.params.key);
           res.write(`event: thread-linked
-data: {}
+data: ${JSON.stringify({ here })}
 
 `);
         }
       };
       events.on("reload", sendReload);
+      const sendActivity = (key) => {
+        if (key !== req.params.key) res.write(`event: activity
+data: {}
+
+`);
+      };
+      events.on("activity", sendActivity);
+      const sendThinking = (key) => {
+        if (key === req.params.key) res.write(`event: agent-thinking
+data: {}
+
+`);
+      };
+      events.on("agent-thinking", sendThinking);
       events.on("links", sendThreadLinked);
       events.on("agent-reply", sendAgentReply);
       events.on("agent-presence", sendPresence);
@@ -10481,6 +10779,8 @@ data: {}
         req.off("close", cleanup);
         sseClients.delete(res);
         events.off("reload", sendReload);
+        events.off("activity", sendActivity);
+        events.off("agent-thinking", sendThinking);
         events.off("links", sendThreadLinked);
         events.off("agent-reply", sendAgentReply);
         events.off("agent-presence", sendPresence);
@@ -11153,6 +11453,12 @@ var chromeIcons = {
     '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
     16
   ),
+  chat: chromeIcon('<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>', 13),
+  annotate: chromeIcon('<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>', 16),
+  fullscreen: chromeIcon(
+    '<polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>',
+    14
+  ),
   minimize: chromeIcon('<line x1="5" y1="12" x2="19" y2="12"/>', 14),
   external: chromeIcon(
     '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
@@ -11317,7 +11623,10 @@ function createChromeHtml(session, {
   attachmentAcceptedMime = ACCEPTED_IMAGE_MIME,
   reloadState = null,
   embedded = false,
-  newerPage = null
+  newerPage = null,
+  threadAgents = [],
+  hostPage = null,
+  messageFeed = ""
 } = {}) {
   const newerPageHref = newerPage ? `/session/${encodeURIComponent(newerPage.key)}` : "";
   const newerPageLink = newerPage ? `<a class="newer-page-link" href="${escapeHtml(newerPageHref)}">${escapeHtml(newerPage.title || newerPage.key)} <span aria-hidden="true">\u2192</span></a>` : "";
@@ -11349,11 +11658,20 @@ function createChromeHtml(session, {
     attachmentMaxBytes,
     attachmentMaxCount,
     attachmentAcceptedMime: acceptedMime,
-    // Shown inside another page's thread window: that page owns the bell and the notifications.
-    embedded
+    // Shown inside another page's thread window: that page owns the footer and the notifications.
+    embedded,
+    // Who can answer a thread started from the footer: the host's declared annotation actions
+    // that deliver now (Cadre's Study). The chrome sends `prefix + question` through the same
+    // send-now path the annotation card uses; the host decides what that starts.
+    // A host page: the host's own live page under this frame, not an agent's artifact.
+    hostUrl: hostPage ? hostPage.url : null,
+    // Where the host keeps agent messages (see resolveMessageFeed); "" when it keeps none.
+    messageFeed,
+    threadAgents: normalizeAnnotationActions(threadAgents).filter((action) => action.deliver === "now").map(({ id, label, title: title2, prefix }) => ({ id, label, title: title2, prefix }))
   });
   const { head: pathHead, tail: pathTail } = displayPathParts(session.file);
-  const bodyClass = (layoutGateEnabled ? "review-surface layout-gate-active" : "review-surface") + (embedded ? " embedded-thread" : "");
+  const bodyClass = (layoutGateEnabled ? "review-surface layout-gate-active" : "review-surface") + (embedded ? " embedded-thread" : "") + (hostPage ? " host-page" : "");
+  const artifactFrame = hostPage ? `<iframe id="artifact" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads" allow="fullscreen" src="${escapeHtml(hostPage.url)}" title="${escapeHtml(hostPage.title)}"></iframe>` : `<iframe id="artifact" sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads" allow="fullscreen" data-artifact-src="/artifact/${session.key}/index.html"></iframe>`;
   const layoutGateHidden = layoutGateEnabled ? "" : " hidden";
   const modeHotkeyUpper = MODE_TOGGLE_HOTKEY_KEY.toUpperCase();
   const modeToggleHint = `Toggle annotate/explore mode (\u2318${modeHotkeyUpper} / Ctrl+${modeHotkeyUpper})`;
@@ -11367,9 +11685,11 @@ ${faviconTag}
 <link rel="stylesheet" href="/chrome.css">
 </head>
 <body class="${bodyClass}">
-<div class="bar"><div class="brand"><span class="brand-mark">Cadre</span></div><div class="spacer" aria-hidden="true"></div><div class="warnings-wrap" id="warningsWrap" hidden><button class="warnings-button" id="warningsButton" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="warningsDrawer">${chromeIcons.warning}<span class="warnings-count" id="warningsCount">0</span></button><div class="menu warnings-drawer" id="warningsDrawer" role="dialog" aria-labelledby="warningsTitle" aria-describedby="warningsSummary" hidden><div class="warnings-head"><h2 class="warnings-title" id="warningsTitle">Layout issues</h2><p class="warnings-summary" id="warningsSummary"></p></div><div class="warnings-toolbar"><label class="warnings-selectall"><input type="checkbox" id="warningsSelectAll"><span>Select all</span></label><span class="warnings-selected" id="warningsSelected" role="status" aria-live="polite"></span></div><div class="warnings-list" id="warningsList"></div><div class="warnings-foot"><p class="warnings-note">Queueing sends a repair request with your next feedback. An issue is marked resolved only after a newer artifact load and a complete check at the same viewport no longer finds it.</p><button class="button" id="warningsQueueButton" type="button" disabled>Queue selected fixes</button></div></div></div><div class="threads-wrap" id="threadsWrap" hidden><button class="threads-button" id="threadsButton" type="button" title="Study threads" aria-haspopup="menu" aria-expanded="false" aria-controls="threadsMenu">${chromeIcons.bell}<span class="threads-count" id="threadsCount" hidden>0</span></button><div class="menu threads-menu" id="threadsMenu" role="menu" aria-label="Study threads" hidden><div class="menu-label">Study threads</div><div class="threads-list" id="threadsList"></div><div class="menu-rule"></div><button class="menu-item" id="threadsNotify" type="button" hidden>${chromeIcons.bell}<span>Notify me when I am in another tab</span></button></div></div><button class="annotate-switch" id="panelCollapse" type="button" aria-pressed="true" title="Show or hide the conversation panel"><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span><span>Chat</span></button><button class="annotate-switch" id="annotation" type="button" aria-pressed="true" title="${escapeHtml(modeToggleHint)}"><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span><span>Annotate</span></button><div class="more-wrap" id="moreWrap"><button class="more-button" id="moreButton" type="button" title="More" aria-haspopup="menu" aria-expanded="false">${chromeIcons.more}</button><div class="menu more-menu" id="moreMenu" hidden><div class="menu-head"><div class="menu-label">Editing</div><button class="menu-file" id="copyPath" type="button" title="Copy path \xB7 ${escapeHtml(session.file)}">${chromeIcons.file}<span class="menu-file-text"><span class="path-head">${escapeHtml(pathHead)}</span><span class="path-tail">${escapeHtml(pathTail)}</span></span><span class="copy-hint" id="copyHint"><span class="icon-copy">${chromeIcons.copy}</span><span class="icon-check">${chromeIcons.check}</span><span id="copyHintText">Copy</span></span></button></div><div class="menu-rule"></div><button class="menu-item" id="reloadArtifact" type="button">${chromeIcons.refresh}<span>Reload artifact</span></button><button class="menu-item" id="copySnapshot" type="button">${chromeIcons.camera}<span>Copy DOM snapshot</span></button><button class="menu-item" id="exportArtifact" type="button">${chromeIcons.download}<span>Export standalone HTML</span></button><button class="menu-item" id="shareArtifact" type="button">${chromeIcons.globe}<span>Publish link</span></button><div class="menu-rule"></div><button class="menu-item danger" id="end" type="button">${chromeIcons.exit}<span>End session</span></button></div></div></div>
-<div class="layout"><div class="frame">${newerPageBar}<iframe id="artifact" sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads" allow="fullscreen" data-artifact-src="/artifact/${session.key}/index.html"></iframe></div><div class="panel-scrim" id="panelScrim"></div><aside class="panel" id="panel"><div class="panel-head" id="panelHead"><span class="panel-handle" aria-hidden="true"></span><div class="panel-head-row"><h2>Conversation</h2><span class="panel-summary" id="panelSummary" role="status" aria-live="polite"></span><button class="panel-toggle" id="panelToggle" type="button" aria-expanded="false" aria-controls="panel" aria-label="Show conversation">${chromeIcons.chevronUp}</button></div></div><div class="panel-scroll" id="panelScroll"><div class="chat" id="chatLog"></div><div class="annotation-pills" id="annotationPills"></div></div><div class="composer" id="chatComposer"><div class="presence-banner handoff-banner" id="handoffBanner" hidden><span>This review is open in another Review Surface tab.</span><button class="handoff-takeover" id="handoffTakeover" type="button">Take over here</button></div><div class="presence-banner handoff-banner" id="outdatedBanner" hidden><span id="outdatedText">The Review Surface server this page was connected to is no longer running. Reloading will work once it is running again.</span><span class="outdated-actions"><button class="handoff-takeover" id="outdatedReload" type="button">Check and reload</button><button class="handoff-takeover" id="outdatedDismiss" type="button">Dismiss</button></span></div><div class="presence-banner" id="presenceBanner" hidden>Your agent is not listening. If this persists, ask your agent to poll for updates from Review Surface.</div><textarea id="chatInput" placeholder="Write a message for the agent..."></textarea><div class="chat-attachments" id="chatAttachments"></div><div class="chat-attachment-toolbar"><button class="chat-attach" id="chatAttach" type="button">Attach images</button><input id="chatAttachInput" type="file" accept="${escapeHtml(acceptedMime.join(","))}" multiple hidden><span class="chat-attachment-notice" id="chatAttachmentNotice" role="status"></span></div><div class="send-hint" id="sendHint" hidden>Write a message or annotate an element first.</div><div class="actions" id="sendActions"><button class="button button-danger" id="sendAndEnd" type="button">${chromeIcons.exit}<span>Send &amp; End</span></button><button class="button" id="send">Send to Agent</button></div></div></aside></div>
-<div class="thread-modal" id="threadModal" role="dialog" aria-modal="false" aria-labelledby="threadModalTitle" hidden><div class="thread-scrim" id="threadScrim"></div><div class="thread-window"><div class="thread-head"><h2 class="thread-title" id="threadModalTitle"></h2><span class="thread-presence" id="threadModalPresence" role="status" aria-live="polite"></span><a class="thread-action" id="threadOpenTab" href="#" target="_blank" rel="noopener" title="Open in its own tab">${chromeIcons.external}</a><button class="thread-action" id="threadMinimize" type="button" title="Minimize - it keeps running, and the bell tells you when it answers" aria-label="Minimize thread">${chromeIcons.minimize}</button></div><div class="thread-frames" id="threadFrames"></div></div></div>
+<div class="bar"><div class="brand"><span class="brand-mark">Cadre</span></div><div class="spacer" aria-hidden="true"></div><div class="warnings-wrap" id="warningsWrap" hidden><button class="warnings-button" id="warningsButton" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="warningsDrawer">${chromeIcons.warning}<span class="warnings-count" id="warningsCount">0</span></button><div class="menu warnings-drawer" id="warningsDrawer" role="dialog" aria-labelledby="warningsTitle" aria-describedby="warningsSummary" hidden><div class="warnings-head"><h2 class="warnings-title" id="warningsTitle">Layout issues</h2><p class="warnings-summary" id="warningsSummary"></p></div><div class="warnings-toolbar"><label class="warnings-selectall"><input type="checkbox" id="warningsSelectAll"><span>Select all</span></label><span class="warnings-selected" id="warningsSelected" role="status" aria-live="polite"></span></div><div class="warnings-list" id="warningsList"></div><div class="warnings-foot"><p class="warnings-note">Queueing sends a repair request with your next feedback. An issue is marked resolved only after a newer artifact load and a complete check at the same viewport no longer finds it.</p><button class="button" id="warningsQueueButton" type="button" disabled>Queue selected fixes</button></div></div></div><div class="notify-wrap" id="notifyWrap" hidden><button class="notify-button" id="notifyButton" type="button" title="Notifications" aria-haspopup="menu" aria-expanded="false" aria-controls="notifyMenu">${chromeIcons.bell}<span class="notify-count" id="notifyCount" hidden>0</span></button><div class="menu notify-menu" id="notifyMenu" role="menu" aria-label="Notifications" hidden><div class="menu-label">On other pages</div><div class="notify-list" id="notifyList"></div><p class="notify-empty" id="notifyEmpty">Nothing has moved on other pages yet.</p></div></div><button class="annotate-toggle" id="annotation" type="button" aria-pressed="true" aria-label="Annotate" title="${escapeHtml(modeToggleHint)}">${chromeIcons.annotate}</button><div class="more-wrap" id="moreWrap"><button class="more-button" id="moreButton" type="button" title="More" aria-haspopup="menu" aria-expanded="false">${chromeIcons.more}</button><div class="menu more-menu" id="moreMenu" hidden><div class="menu-head"><div class="menu-label">Editing</div><button class="menu-file" id="copyPath" type="button" title="Copy path \xB7 ${escapeHtml(session.file)}">${chromeIcons.file}<span class="menu-file-text"><span class="path-head">${escapeHtml(pathHead)}</span><span class="path-tail">${escapeHtml(pathTail)}</span></span><span class="copy-hint" id="copyHint"><span class="icon-copy">${chromeIcons.copy}</span><span class="icon-check">${chromeIcons.check}</span><span id="copyHintText">Copy</span></span></button></div><div class="menu-rule"></div><button class="menu-item" id="panelCollapse" type="button" aria-pressed="false" title="The older conversation sidebar - the This page chat in the footer replaces it">${chromeIcons.chat}<span>Conversation sidebar</span></button><button class="menu-item" id="reloadArtifact" type="button">${chromeIcons.refresh}<span>Reload artifact</span></button><button class="menu-item" id="copySnapshot" type="button">${chromeIcons.camera}<span>Copy DOM snapshot</span></button><button class="menu-item" id="exportArtifact" type="button">${chromeIcons.download}<span>Export standalone HTML</span></button><button class="menu-item" id="shareArtifact" type="button">${chromeIcons.globe}<span>Publish link</span></button><div class="menu-rule"></div><button class="menu-item danger" id="end" type="button">${chromeIcons.exit}<span>End session</span></button></div></div></div>
+<div class="layout"><div class="frame">${newerPageBar}${artifactFrame}</div><div class="panel-scrim" id="panelScrim"></div><aside class="panel" id="panel"><div class="panel-head" id="panelHead"><span class="panel-handle" aria-hidden="true"></span><div class="panel-head-row"><h2>Conversation</h2><span class="panel-summary" id="panelSummary" role="status" aria-live="polite"></span><button class="panel-toggle" id="panelToggle" type="button" aria-expanded="false" aria-controls="panel" aria-label="Show conversation">${chromeIcons.chevronUp}</button></div></div><div class="panel-scroll" id="panelScroll"><div class="chat" id="chatLog"></div><div class="annotation-pills" id="annotationPills"></div></div><div class="composer" id="chatComposer"><div class="presence-banner handoff-banner" id="handoffBanner" hidden><span>This review is open in another Review Surface tab.</span><button class="handoff-takeover" id="handoffTakeover" type="button">Take over here</button></div><div class="presence-banner handoff-banner" id="outdatedBanner" hidden><span id="outdatedText">The Review Surface server this page was connected to is no longer running. Reloading will work once it is running again.</span><span class="outdated-actions"><button class="handoff-takeover" id="outdatedReload" type="button">Check and reload</button><button class="handoff-takeover" id="outdatedDismiss" type="button">Dismiss</button></span></div><div class="presence-banner" id="presenceBanner" hidden>Your agent is not listening. If this persists, ask your agent to poll for updates from Review Surface.</div><textarea id="chatInput" placeholder="Write a message for the agent..."></textarea><div class="chat-attachments" id="chatAttachments"></div><div class="chat-attachment-toolbar"><button class="chat-attach" id="chatAttach" type="button">Attach images</button><input id="chatAttachInput" type="file" accept="${escapeHtml(acceptedMime.join(","))}" multiple hidden><span class="chat-attachment-notice" id="chatAttachmentNotice" role="status"></span></div><div class="send-hint" id="sendHint" hidden>Write a message or annotate an element first.</div><div class="actions" id="sendActions"><button class="button button-danger" id="sendAndEnd" type="button">${chromeIcons.exit}<span>Send &amp; End</span></button><button class="button" id="send">Send to Agent</button></div></div></aside></div>
+<footer class="threads-footer" id="threadsWrap" hidden><button class="threads-button" id="threadsButton" type="button" title="Threads" aria-haspopup="menu" aria-expanded="false" aria-controls="threadsMenu">${chromeIcons.chat}<span>Threads</span><span class="threads-count" id="threadsCount" hidden>0</span></button><div class="threads-tabs" id="threadsTabs"></div><button class="threads-more" id="threadsMore" type="button" title="Every thread" hidden>+0</button><span class="threads-summary" id="threadsSummary"></span><div class="footer-home" id="footerHome"><div class="threads-page-tab" id="threadsPageTab"></div><div class="queue-dock" id="queueDock" hidden><button class="queue-open" id="queueOpen" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="queueMenu" title="See what is queued for this page&#39;s agent">Queued <span class="queue-count" id="queueCount">0</span></button><button class="queue-send" id="queueSend" type="button" title="Send everything queued to this page&#39;s agent now">Send</button><div class="menu queue-menu" id="queueMenu" role="menu" aria-label="Queued for this page" hidden><div class="menu-label">Queued for this page&#39;s agent</div><div class="queue-list" id="queueList"></div><div class="queue-menu-actions"><button class="button" id="queueMenuSend" type="button">Send now</button></div></div></div></div><div class="menu threads-menu" id="threadsMenu" role="menu" aria-label="Threads" hidden><div class="menu-label" id="threadsHereLabel">On this page</div><div class="threads-list" id="threadsList"></div><div class="menu-label" id="threadsOtherLabel" hidden>On other pages</div><div class="threads-list" id="threadsOtherList"></div><form class="threads-new" id="threadsNew" hidden><div class="menu-label">Start a thread on this page</div><textarea id="threadsNewText" rows="2" placeholder="Ask about this page. The page keeps its round."></textarea><div class="threads-new-agents" id="threadsNewAgents"></div></form><div class="menu-rule"></div><button class="menu-item" id="threadsNotify" type="button" hidden>${chromeIcons.bell}<span>Notify me when I am in another tab</span></button></div></footer>
+<div class="chat-pop" id="chatPop" role="dialog" aria-modal="false" aria-labelledby="chatPopTitle" hidden><div class="chat-pop-head"><span class="chat-pop-title" id="chatPopTitle"></span><span class="thread-presence" id="chatPopPresence" role="status" aria-live="polite"></span><button class="thread-action" id="chatPopFull" type="button" title="Full screen, like a terminal" aria-label="Full screen" aria-pressed="false">${chromeIcons.fullscreen}</button><button class="thread-action" id="chatPopExpand" type="button" title="Open the thread with its page" aria-label="Open the thread with its page">${chromeIcons.external}</button><button class="thread-action" id="chatPopClose" type="button" title="Minimize - its tab in the footer tells you when it answers" aria-label="Minimize">${chromeIcons.minimize}</button></div><div class="chat-pop-log" id="chatPopLog" role="log" aria-live="polite"></div><form class="chat-pop-compose" id="chatPopForm"><textarea id="chatPopInput" rows="2" placeholder="Reply\u2026"></textarea><div class="chat-pop-actions"><label class="chat-pop-speed" title="Ask for a fast answer: the agent may use a faster model or a shorter look"><input type="checkbox" id="chatPopQuick"><span>Quick answer</span></label><span class="chat-pop-hint" id="chatPopHint" role="status"></span><button class="button chat-pop-send-page" id="chatPopSendPage" type="button" title="Send the whole page review - your queued notes and the page itself - to this page&#39;s agent" hidden>Send page</button><button class="button" type="submit" id="chatPopSend">Send</button></div></form></div>
+<div class="thread-modal" id="threadModal" role="dialog" aria-modal="false" aria-labelledby="threadModalTitle" hidden><div class="thread-scrim" id="threadScrim"></div><div class="thread-window"><div class="thread-head"><h2 class="thread-title" id="threadModalTitle"></h2><span class="thread-presence" id="threadModalPresence" role="status" aria-live="polite"></span><a class="thread-action" id="threadOpenTab" href="#" target="_blank" rel="noopener" title="Open in its own tab">${chromeIcons.external}</a><button class="thread-action" id="threadMinimize" type="button" title="Minimize - it keeps running, and its tab in the footer tells you when it answers" aria-label="Minimize thread">${chromeIcons.minimize}</button></div><div class="thread-frames" id="threadFrames"></div></div></div>
 <div class="share-overlay" id="shareDialog" role="dialog" aria-modal="true" aria-labelledby="shareTitleText" hidden><form class="share-card" id="shareForm"><div class="share-head"><div><div class="share-kicker">Publish to <a class="share-link" href="https://ht-ml.app" target="_blank" rel="noopener noreferrer">ht-ml.app</a></div><h2 id="shareTitleText">Publish artifact</h2></div><button class="share-close" id="shareClose" type="button" aria-label="Close publish dialog"><svg width="14" height="14" viewBox="0 0 10 10" fill="none" aria-hidden="true" focusable="false"><path d="M1 1L9 9M9 1L1 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button></div><p class="share-note">ht-ml.app is a separate, third-party hosting service, not part of Review Surface. Publishing sends this artifact to its servers.</p><p class="share-copy">This uploads this artifact to ht-ml.app with local assets inlined. Without a password, the page is PUBLIC and anyone with the link can open it. With a password, the page is PRIVATE and viewers must supply the password to view.</p><p class="share-note">Do not publish secrets. The Review Surface annotation SDK is not included.</p><div class="share-grid"><label>Password (optional)<input id="sharePassword" name="password" type="password" autocomplete="new-password" placeholder="Leave blank for a public page"></label></div><div class="share-status" id="shareStatus" role="status"></div><div class="share-result" id="shareResult" hidden><label>Share URL<div class="share-copy-row"><input id="shareUrl" readonly><button class="share-copy-btn" id="copyShareUrl" type="button">Copy URL</button></div></label><label>Update key (secret)<div class="share-copy-row"><input id="shareUpdateKey" readonly><button class="share-copy-btn" id="copyUpdateKey" type="button">Copy key</button></div></label><p class="share-note">Keep the update key private. ht-ml.app returns it once and it is the only way to update or delete this page later.</p></div><div class="share-actions"><button class="share-cancel" id="shareCancel" type="button">Cancel</button><button class="button" id="sharePublish" type="submit">Publish</button></div></form></div>
 <div class="ended-overlay layout-gate-overlay" id="layoutGateOverlay"${layoutGateHidden} data-state="checking"><img class="layout-gate-ring" src="/hololoop-ring.svg" alt=""><div class="ended-card"><div class="ended-title" id="layoutGateTitle">Checking layout.<br>One moment.</div><p class="ended-copy" id="layoutGateCopy">Review Surface is waiting for fonts and final geometry before revealing this artifact.</p><button class="button ended-action" id="layoutGateAction" type="button">Show anyway</button></div></div>
 <div class="ended-overlay" id="endedOverlay" hidden><div class="ended-card"><div class="ended-title">Session ended. Read-only. <br>Return to your agent to continue.</div><p class="ended-copy">${escapeHtml(session.file)}</p>${endedNewerPage}</div></div>
@@ -11635,6 +11955,7 @@ var COMMANDS = /* @__PURE__ */ new Set([
   "poll",
   "journal",
   "link",
+  "message",
   "pages",
   "search",
   "end",
@@ -11708,6 +12029,7 @@ async function run(argv) {
         poll: pollCommand,
         journal: journalCommand,
         link: linkCommand,
+        message: messageCommand,
         pages: pagesCommand,
         search: searchCommand,
         end: endCommand,
@@ -11929,6 +12251,41 @@ async function linkCommand(args) {
   }
   return pageGraphOutput(args, body);
 }
+async function messageCommand(args) {
+  const valueFlags = ["--title", "--thread"];
+  const positional = positionalArgs(args, valueFlags);
+  const thread = flagValue(args, "--thread");
+  const [page, text] = thread ? [null, positional[0]] : positional;
+  if (!text || !thread && !page) {
+    throw new AxiError("A page and a message are required", "VALIDATION_ERROR", [
+      'Run `review-surface message <page> "question" [--title <t>]`',
+      'or `review-surface message --thread <thread> "more"`'
+    ]);
+  }
+  const baseUrl = await ensureServer();
+  let response;
+  try {
+    response = await fetch(`${baseUrl}/api/conversations`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(
+        thread ? { thread: await canonicalPageRef(thread), text } : { page: await canonicalPageRef(page), title: flagValue(args, "--title") || "", text }
+      )
+    });
+  } catch {
+    throw serverConnectionError();
+  }
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new AxiError(body.error || `Review Surface request failed: ${response.status}`, "VALIDATION_ERROR", [
+      "Run `review-surface pages` to see the pages a message can go to"
+    ]);
+  }
+  return pageGraphOutput(args, {
+    thread: body,
+    next_step: `The reader sees this in the threads footer of the page. Their answer arrives through \`review-surface poll ${body.file}\`; add to the thread with \`review-surface message --thread ${body.key} "..."\`.`
+  });
+}
 function pageGraphOutput(args, value) {
   if (!args.includes("--json")) return value;
   process.stdout.write(`${JSON.stringify(value)}
@@ -12103,8 +12460,16 @@ function createFeedbackNextStep(file, artifactFailures, sessionEnded, endedBy, p
     }
     return `${failureNote}${layoutNote}${whiteboardNote}${attachmentNote}This was the last feedback before the Review Surface session ended. Stop polling ${file}. Deliver any remaining updates directly in this conversation, or run \`review-surface ${file}\` to open a fresh session if the user needs further visual review.`;
   }
-  const prefix = count > 0 ? artifactFailuresPrefix(file, artifactFailures) : `Apply the requested changes to ${file}. `;
-  return `${prefix}${layoutNote}${whiteboardNote}${attachmentNote}Do not respond to the user just yet. Now you must run \`review-surface poll ${file} --agent-reply "<message for the user>"\` without --timeout-ms unless the user ended the session. The poll waits silently until the user sends more feedback or ends the session - never kill it. ${pollExecutionGuidance({ agent })}`;
+  const speedNote = prompts.some((prompt) => prompt?.speed === "quick") ? `The reader asked for a quick answer on at least one message (speed "quick"): answer promptly and briefly, and say so if a full answer needs longer. ` : "";
+  if (count === 0 && isMessageThreadFile(file)) {
+    return `The reader answered your message in thread ${file}. Use their answer in your work; there is nothing to change in that file, which is only the thread's placeholder. ${speedNote}${attachmentNote}To reply, run \`review-surface message --thread ${file} "<reply>"\`; poll the thread again only when you need their next answer.`;
+  }
+  const directChat = count === 0 && prompts.length > 0 && prompts.every((prompt) => prompt?.channel === "chat");
+  const prefix = count > 0 ? artifactFailuresPrefix(file, artifactFailures) : directChat ? `The reader is chatting with you directly in the page's chat window. Answer them in the conversation and do not rewrite ${file} unless they ask you to; the full page review arrives separately, when they press Send page. ` : `Apply the requested changes to ${file}. `;
+  return `${prefix}${speedNote}${layoutNote}${whiteboardNote}${attachmentNote}Do not respond to the user just yet. Now you must run \`review-surface poll ${file} --agent-reply "<message for the user>"\` without --timeout-ms unless the user ended the session. The poll waits silently until the user sends more feedback or ends the session - never kill it. ${pollExecutionGuidance({ agent })}`;
+}
+function isMessageThreadFile(file) {
+  return sameResolvedPath(path10.dirname(path10.resolve(file)), path10.join(stateDir(), "conversations"));
 }
 function artifactFailuresPrefix(file, artifactFailures) {
   const count = artifactFailures.length;
@@ -12143,7 +12508,7 @@ async function exportCommand(args) {
     confineDir: root,
     resolveAbsolute: resolveDesignAssetPath
   });
-  await writeFile4(output, html);
+  await writeFile5(output, html);
   return createExportOutput({
     source: absolute,
     output,
@@ -12896,6 +13261,7 @@ Usage:
   review-surface poll <html-file> [--agent-reply "..."]
   review-surface journal <html-file> [--limit <n>]
   review-surface link <child-of|supersedes|derived-from|thread-of> <page> <page> [--json]
+  review-surface message <page> "text" [--title <t>] [--thread <thread>]
   review-surface pages [--under <page>] [--depth <n>] [--state <states>] [--text <t>] [--replaced no|yes|any] [--json]
   review-surface search <text> [--kind <kinds>] [--json]
   review-surface end <html-file>
@@ -12929,7 +13295,12 @@ Print the session's accepted feedback batches from the append-only journal as JS
 `,
     link: `Usage: review-surface link <child-of|supersedes|derived-from|thread-of> <page> <page> [--json]
 
-Record one typed link between two pages already opened with review-surface: \`child-of <page> <parent>\` files a page under a parent (a later child-of moves it), \`supersedes <new> <old>\` marks the old page replaced, \`derived-from <page> <source>\` records where a page came from. \`thread-of <thread> <page>\` makes a page a side conversation about another: that page's bell lists it and opens it in a window over the page. A page is a session key, a file path, or a unique path suffix. Refused, with nothing written: an unknown type, a self-link, a nesting cycle, a supersede cycle, a page already replaced by another page, a thread of a second page or of a thread, and a page name that matches more than one page. Prints the result as TOON, or as raw JSON with --json.
+Record one typed link between two pages already opened with review-surface: \`child-of <page> <parent>\` files a page under a parent (a later child-of moves it), \`supersedes <new> <old>\` marks the old page replaced, \`derived-from <page> <source>\` records where a page came from. \`thread-of <thread> <page>\` makes a page a conversation thread on another page: the threads footer on that page lists it and opens it in a window over the page, and every other page's footer lists it while it is live. Linking the same thread to a further page continues it there; the first page stays the one it started on. A page is a session key, a file path, or a unique path suffix. Refused, with nothing written: an unknown type, a self-link, a nesting cycle, a supersede cycle, a page already replaced by another page, a thread of a thread (or a page with threads becoming one), and a page name that matches more than one page. Prints the result as TOON, or as raw JSON with --json.
+`,
+    message: `Usage: review-surface message <page> "text" [--title <t>] [--json]
+       review-surface message --thread <thread> "text" [--json]
+
+Send the reader a quick message - a question, an FYI - without writing a page. It starts a message thread on <page> (shown in that page's threads footer, unread until opened, and in every other page's footer while it is live) with your text as its first line, or adds to a thread you started with --thread. The reader answers in the thread; read the answer with \`review-surface poll <thread file>\`, the file this command prints. An answer may carry speed "quick" when the reader asked for a fast reply. A page is a session key, a file path, or a unique path suffix.
 `,
     pages: `Usage: review-surface pages [--under <page>] [--depth <n>] [--state <states>] [--text <t>] [--replaced no|yes|any] [--json]
 
