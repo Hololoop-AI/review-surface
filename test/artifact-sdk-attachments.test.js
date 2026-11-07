@@ -120,7 +120,7 @@ test("the count-cap notice reads as an error, not as the passive keyboard hint",
   // The cap notice replaces the card's gray hint line, so without its own error
   // styling it reads as passive help text and a rejected drop goes unnoticed.
   assert.match(sdk, /review-surface-hint-alert/);
-  assert.match(sdk, /\.review-surface-hint-alert\{[^}]*color:#ff9d7a/);
+  assert.match(sdk, /\.review-surface-hint-alert\{[^}]*color:var\(--danger-fg,#ff9d7a\)/);
   assert.match(sdk, /attachNotice\.classList\.add\("review-surface-hint-alert"\)/);
   // Clearing the notice restores the neutral hint instead of leaving stale red text.
   assert.match(sdk, /attachNotice\.classList\.remove\("review-surface-hint-alert"\)/);

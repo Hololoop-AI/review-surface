@@ -102,6 +102,25 @@ import {
 
 const chromeClientUrl = new URL("./chrome-client.js", import.meta.url);
 const chromeCssUrl = new URL("./chrome.css", import.meta.url);
+
+// A host app's theme: `theme.css` in the state directory, read on every page load so the host can
+// rewrite it without a restart. It restyles the chrome and the annotation card by overriding their
+// custom properties (selector `:root, :host`); a missing file means the built-in look. A theme
+// never breaks a page: an unreadable one is reported and the built-in look is served.
+export function hostThemeFile() {
+  return path.join(stateDir(), "theme.css");
+}
+
+export async function readHostTheme(file = hostThemeFile()) {
+  try {
+    return await readFile(file, "utf8");
+  } catch (error) {
+    if (/** @type {NodeJS.ErrnoException} */ (error).code !== "ENOENT") {
+      process.stderr.write(`review-surface: ignoring unreadable host theme ${file}: ${error}\n`);
+    }
+    return "";
+  }
+}
 const designAssetUrls = {
   "daisyui.css": {
     packaged: new URL("./design/daisyui.css", import.meta.url),
@@ -1572,6 +1591,7 @@ export async function serve({
           threadAgents: annotationActions,
           hostPage: hostPageOf(session),
           messageFeed,
+          hostTheme: await readHostTheme(),
         }),
       );
     } catch (error) {
@@ -1934,6 +1954,7 @@ export async function serve({
           maxAttachmentCount: attachmentConfig.maxPerPrompt,
           maxAttachmentBytes: attachmentConfig.maxBytes,
           annotationActions,
+          hostThemeCss: await readHostTheme(),
         }),
       );
     } catch (error) {
@@ -2966,8 +2987,13 @@ export function createChromeHtml(
     threadAgents = [],
     hostPage = null,
     messageFeed = "",
+    hostTheme = "",
   } = {},
 ) {
+  // Inline, after chrome.css, so it wins; `</style` is the one sequence that could end it early.
+  const hostThemeTag = hostTheme
+    ? `\n<style id="review-surface-host-theme">${String(hostTheme).replace(/<\/style/gi, "<\\/style")}</style>`
+    : "";
   const newerPageHref = newerPage ? `/session/${encodeURIComponent(newerPage.key)}` : "";
   const newerPageLink = newerPage
     ? `<a class="newer-page-link" href="${escapeHtml(newerPageHref)}">${escapeHtml(newerPage.title || newerPage.key)} <span aria-hidden="true">→</span></a>`
@@ -3036,7 +3062,7 @@ export function createChromeHtml(
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>${escapeHtml(title)}</title>
 ${faviconTag}
-<link rel="stylesheet" href="/chrome.css">
+<link rel="stylesheet" href="/chrome.css">${hostThemeTag}
 </head>
 <body class="${bodyClass}">
 <div class="bar"><div class="brand"><span class="brand-mark">Cadre</span></div><div class="spacer" aria-hidden="true"></div><div class="warnings-wrap" id="warningsWrap" hidden><button class="warnings-button" id="warningsButton" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="warningsDrawer">${chromeIcons.warning}<span class="warnings-count" id="warningsCount">0</span></button><div class="menu warnings-drawer" id="warningsDrawer" role="dialog" aria-labelledby="warningsTitle" aria-describedby="warningsSummary" hidden><div class="warnings-head"><h2 class="warnings-title" id="warningsTitle">Layout issues</h2><p class="warnings-summary" id="warningsSummary"></p></div><div class="warnings-toolbar"><label class="warnings-selectall"><input type="checkbox" id="warningsSelectAll"><span>Select all</span></label><span class="warnings-selected" id="warningsSelected" role="status" aria-live="polite"></span></div><div class="warnings-list" id="warningsList"></div><div class="warnings-foot"><p class="warnings-note">Queueing sends a repair request with your next feedback. An issue is marked resolved only after a newer artifact load and a complete check at the same viewport no longer finds it.</p><button class="button" id="warningsQueueButton" type="button" disabled>Queue selected fixes</button></div></div></div><div class="notify-wrap" id="notifyWrap" hidden><button class="notify-button" id="notifyButton" type="button" title="Notifications" aria-haspopup="menu" aria-expanded="false" aria-controls="notifyMenu">${chromeIcons.bell}<span class="notify-count" id="notifyCount" hidden>0</span></button><div class="menu notify-menu" id="notifyMenu" role="menu" aria-label="Notifications" hidden><div class="menu-label">On other pages</div><div class="notify-list" id="notifyList"></div><p class="notify-empty" id="notifyEmpty">Nothing has moved on other pages yet.</p></div></div><button class="annotate-toggle" id="annotation" type="button" aria-pressed="true" aria-label="Annotate" title="${escapeHtml(modeToggleHint)}">${chromeIcons.annotate}</button><div class="more-wrap" id="moreWrap"><button class="more-button" id="moreButton" type="button" title="More" aria-haspopup="menu" aria-expanded="false">${chromeIcons.more}</button><div class="menu more-menu" id="moreMenu" hidden><div class="menu-head"><div class="menu-label">Editing</div><button class="menu-file" id="copyPath" type="button" title="Copy path · ${escapeHtml(session.file)}">${chromeIcons.file}<span class="menu-file-text"><span class="path-head">${escapeHtml(pathHead)}</span><span class="path-tail">${escapeHtml(pathTail)}</span></span><span class="copy-hint" id="copyHint"><span class="icon-copy">${chromeIcons.copy}</span><span class="icon-check">${chromeIcons.check}</span><span id="copyHintText">Copy</span></span></button></div><div class="menu-rule"></div><button class="menu-item" id="panelCollapse" type="button" aria-pressed="false" title="The older conversation sidebar - the This page chat in the footer replaces it">${chromeIcons.chat}<span>Conversation sidebar</span></button><button class="menu-item" id="reloadArtifact" type="button">${chromeIcons.refresh}<span>Reload artifact</span></button><button class="menu-item" id="copySnapshot" type="button">${chromeIcons.camera}<span>Copy DOM snapshot</span></button><button class="menu-item" id="exportArtifact" type="button">${chromeIcons.download}<span>Export standalone HTML</span></button><button class="menu-item" id="shareArtifact" type="button">${chromeIcons.globe}<span>Publish link</span></button><div class="menu-rule"></div><button class="menu-item danger" id="end" type="button">${chromeIcons.exit}<span>End session</span></button></div></div></div>
@@ -3096,13 +3122,19 @@ function serializeModuleHelpers(module) {
  * @param {string} key
  * @param {number} [artifactRevision]
  * @param {string} [artifactLoadToken]
- * @param {{ maxAttachmentCount?: number, maxAttachmentBytes?: number, acceptedImageMime?: string[], annotationActions?: unknown[] }} [options]
+ * @param {{ maxAttachmentCount?: number, maxAttachmentBytes?: number, acceptedImageMime?: string[], annotationActions?: unknown[], hostThemeCss?: string }} [options]
  */
 export function createSdkJs(
   key,
   artifactRevision = 0,
   artifactLoadToken = "",
-  { maxAttachmentCount, maxAttachmentBytes, acceptedImageMime = ACCEPTED_IMAGE_MIME, annotationActions = [] } = {},
+  {
+    maxAttachmentCount,
+    maxAttachmentBytes,
+    acceptedImageMime = ACCEPTED_IMAGE_MIME,
+    annotationActions = [],
+    hostThemeCss = "",
+  } = {},
 ) {
   const mermaidHelperSource = serializeModuleHelpers(mermaidNode);
   const tableHelperSource = serializeModuleHelpers(tableCellHelpers);
@@ -3118,6 +3150,7 @@ export function createSdkJs(
     maxAttachmentBytes: Number.isFinite(maxAttachmentBytes) ? maxAttachmentBytes : undefined,
     acceptedImageMime: acceptedImageMime.map(String),
     annotationActions: normalizeAnnotationActions(annotationActions),
+    hostThemeCss: String(hostThemeCss || ""),
   };
   return `(() => {
 const key=${JSON.stringify(key)};
