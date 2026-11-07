@@ -518,23 +518,32 @@ test("the bell lists other pages that moved, and only to its own origin", async 
 test("another page coming back pings this page's stream so the bell refetches", async () => {
   const { dir, server, base, post, page } = await served();
   const controller = new AbortController();
+  const readUntil = async (reader, pattern, state) => {
+    const decoder = new TextDecoder();
+    while (!pattern.test(state.buffer)) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error("stream closed");
+      state.buffer += decoder.decode(value, { stream: true });
+    }
+  };
   try {
     const review = await page("review.html");
     const other = await page("other.html");
     const reviewKey = (await (await post("/api/sessions", { file: review })).json()).key;
     const otherKey = (await (await post("/api/sessions", { file: other })).json()).key;
-    const stream = await fetch(`${base}/events/${reviewKey}`, { signal: controller.signal });
-    const reader = stream.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
+    const pageStream = (await fetch(`${base}/events/${reviewKey}`, { signal: controller.signal })).body.getReader();
+    const logStream = (await fetch(`${base}/api/events`, { signal: controller.signal })).body.getReader();
+    const pageState = { buffer: "" };
+    await readUntil(pageStream, /^event: /m, pageState);
+
     await post(`/api/${reviewKey}/agent-reply`, { text: "own news" });
+    await readUntil(logStream, new RegExp(`"type":"page\\.agent_reply","subject":"${reviewKey}"`), { buffer: "" });
+    await post(`/api/${reviewKey}/agent-reply`, { text: "own marker" });
+    await readUntil(pageStream, /own marker/, pageState);
+    assert.doesNotMatch(pageState.buffer, /^event: activity$/m, "its own reply is not a ping");
+
     await post(`/api/${otherKey}/agent-reply`, { text: "Done." });
-    while (!/^event: activity$/m.test(buffer)) {
-      const { value, done } = await reader.read();
-      if (done) throw new Error("page stream closed");
-      buffer += decoder.decode(value, { stream: true });
-    }
-    assert.equal((buffer.match(/^event: activity$/gm) || []).length, 1, "its own reply is not a ping");
+    await readUntil(pageStream, /^event: activity$/m, pageState);
   } finally {
     controller.abort();
     await server.close();
