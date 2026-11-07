@@ -38,6 +38,7 @@
   --accent-hover: var(--brass-400);
   --accent-ink: var(--brass-ink);
   --danger: var(--rust-500);
+  --bg-frame: #fff;
   --font-serif: "EB Garamond", "Iowan Old Style", Georgia, serif;
   --font-sans: Geist, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -235,9 +236,9 @@ body.review-surface {
   gap: 6px;
   height: 34px;
   padding: 0 10px;
-  border: 1px solid rgba(244, 201, 93, 0.35);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
   border-radius: 9px;
-  background: rgba(37, 35, 15, 0.72);
+  background: color-mix(in srgb, var(--amber-900) 72%, transparent);
   color: var(--brass-400);
   font-family: inherit;
   font-size: var(--text-sm);
@@ -247,8 +248,8 @@ body.review-surface {
 }
 .warnings-button:hover:not(:disabled),
 .warnings-button[aria-expanded="true"] {
-  border-color: rgba(244, 201, 93, 0.6);
-  background: rgba(93, 77, 27, 0.5);
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  background: color-mix(in srgb, var(--amber-700) 50%, transparent);
   color: var(--accent-hover);
 }
 .warnings-button:disabled {
@@ -404,17 +405,17 @@ body.review-surface {
   white-space: nowrap;
 }
 .warning-chip.severity {
-  border-color: rgba(240, 100, 100, 0.4);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
   color: var(--danger);
 }
 .warning-chip.status-queued,
 .warning-chip.status-unverified {
-  border-color: rgba(244, 201, 93, 0.4);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
   color: var(--accent);
 }
 .warning-chip.status-recurring,
 .warning-chip.status-reopened {
-  border-color: rgba(240, 100, 100, 0.4);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
   color: var(--danger);
 }
 .warning-target {
@@ -633,7 +634,7 @@ body.review-surface {
   opacity: 1;
 }
 .menu-item.danger:hover:not(:disabled) {
-  background: rgba(240, 100, 100, 0.1);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
 .button {
   border: 0;
@@ -670,7 +671,7 @@ body.review-surface {
   color: var(--danger);
 }
 .button-danger:hover:not(:disabled) {
-  background: rgba(240, 100, 100, 0.1);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
 .button-danger > svg {
   flex-shrink: 0;
@@ -682,7 +683,7 @@ body.review-surface {
   display: grid;
   place-items: center;
   padding: var(--space-16);
-  background: rgba(15, 17, 21, 0.72);
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
 }
 .share-overlay[hidden] {
   display: none;
@@ -871,7 +872,7 @@ body.review-surface {
 .frame {
   min-width: 0;
   min-height: 0;
-  background: #fff;
+  background: var(--bg-frame);
   overflow: hidden;
   position: relative;
 }
@@ -1354,7 +1355,7 @@ body:has(#endedOverlay:not([hidden])) .newer-page-bar {
 .ended-overlay {
   position: fixed;
   inset: var(--bar-h) 0 0 0;
-  background: rgba(15, 17, 21, 0.86);
+  background: color-mix(in srgb, var(--bg) 86%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1671,7 +1672,7 @@ body.layout-gate-active iframe#artifact {
     position: fixed;
     inset: var(--bar-h) 0 0 0;
     z-index: 29;
-    background: rgba(15, 17, 21, 0.72);
+    background: color-mix(in srgb, var(--bg) 72%, transparent);
     opacity: 0;
     pointer-events: none;
     transition: opacity var(--dur-slow) var(--ease);
@@ -1719,10 +1720,10 @@ body.layout-gate-active iframe#artifact {
 }
 @keyframes dock-pulse {
   0% {
-    box-shadow: 0 0 0 0 rgba(244, 201, 93, 0.55);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
   }
   100% {
-    box-shadow: 0 0 0 10px rgba(244, 201, 93, 0);
+    box-shadow: 0 0 0 10px color-mix(in srgb, var(--accent) 0%, transparent);
   }
 }
 
@@ -1733,7 +1734,7 @@ body.layout-gate-active iframe#artifact {
 .whiteboard-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(15, 17, 21, 0.92);
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
   z-index: 80;
   display: flex;
 }
@@ -1854,7 +1855,7 @@ body.has-threads-footer .layout {
 }
 .threads-button.has-unread {
   color: var(--accent);
-  border-color: rgba(244, 201, 93, 0.45);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
 }
 /* Desktop: one tab per thread, as many as fit; the rest behind "+N". */
 .threads-tabs {
@@ -1963,8 +1964,8 @@ body.host-page #annotation {
   color: var(--fg);
 }
 .annotate-toggle[aria-pressed="true"] {
-  border-color: rgba(244, 201, 93, 0.55);
-  background: rgba(244, 201, 93, 0.12);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--accent);
 }
 .annotate-toggle:disabled {
@@ -2185,7 +2186,7 @@ body.host-page #annotation {
 /* "This page": the page's own conversation with its agent, first in the footer and marked apart
    from side threads - an accent edge and bolder text. */
 .thread-tab.page-tab {
-  border-color: rgba(244, 201, 93, 0.55);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
   color: var(--fg);
   font-weight: var(--w-semi);
   box-shadow: inset 3px 0 0 var(--accent);
@@ -2195,7 +2196,7 @@ body.host-page #annotation {
 }
 .chat-pop-send-page {
   background: transparent;
-  border: 1px solid rgba(244, 201, 93, 0.55);
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
   color: var(--accent);
 }
 .chat-pop-send-page[hidden] {
@@ -2224,7 +2225,7 @@ body.host-page #annotation {
   border-radius: 0;
   border: 0;
   z-index: 72;
-  background: #0b0d10;
+  background: var(--ink-900);
 }
 .chat-pop.full .chat-pop-log {
   padding: 16px 24px;
@@ -2247,7 +2248,7 @@ body.host-page #annotation {
 }
 .chat-pop-head .thread-action[aria-pressed="true"] {
   color: var(--accent);
-  border-color: rgba(244, 201, 93, 0.55);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
 }
 /* The bell: other pages that moved since you last looked. */
 .notify-wrap {
@@ -2278,7 +2279,7 @@ body.host-page #annotation {
 }
 .notify-button.has-unread {
   color: var(--accent);
-  border-color: rgba(244, 201, 93, 0.45);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
 }
 .notify-count {
   position: absolute;
@@ -2473,7 +2474,7 @@ body.host-page #annotation {
 .thread-scrim {
   position: absolute;
   inset: 0;
-  background: rgba(15, 17, 21, 0.6);
+  background: color-mix(in srgb, var(--bg) 60%, transparent);
 }
 .thread-window {
   position: relative;

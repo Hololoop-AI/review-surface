@@ -29,3 +29,12 @@ and a fleet of pipeline agents, with feedback as events on a shared board.
 Upstream's license and notices are preserved (LICENSE, THIRD-PARTY-NOTICES.md).
 
 Working name — expect a rename.
+
+## Theme
+
+A host app can restyle the page controls and the annotation card by writing
+`theme.css` in the state directory (`REVIEW_SURFACE_STATE_DIR`, default
+`~/.review-surface`). It is read on every page load, so no restart is needed,
+and it should override custom properties under `:root, :host` (the chrome's
+are the token block at the top of `src/chrome.css`). With no file, the
+built-in look is used.
