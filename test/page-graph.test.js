@@ -244,12 +244,19 @@ test("open with supersedes records the link, takes the parent, and logs it on th
       "the discussion appears once, as its newest round",
     );
 
-    const events = (await readFile(path.join(dir, "events.jsonl"), "utf8"))
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line))
-      .filter((event) => event.type === "link.recorded")
-      .map((event) => event.data.type);
+    // The event log is appended best-effort, after the route has answered, so wait for it.
+    const linkEvents = async () =>
+      (await readFile(path.join(dir, "events.jsonl"), "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line))
+        .filter((event) => event.type === "link.recorded")
+        .map((event) => event.data.type);
+    let events = await linkEvents();
+    for (const deadline = Date.now() + 5000; events.length < 3 && Date.now() < deadline; ) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      events = await linkEvents();
+    }
     assert.deepEqual(events, ["child-of", "supersedes", "child-of"]);
   } finally {
     await server.close();
