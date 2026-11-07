@@ -47,8 +47,13 @@ test("readHostTheme reads the file, and a missing one is the built-in look", asy
 test("chrome.css draws its colours from custom properties a host theme can override", async () => {
   const css = await readFile(new URL("../src/chrome.css", import.meta.url), "utf8");
   const rules = css.slice(css.indexOf("}") + 1); // everything after the :root token block
-  assert.doesNotMatch(rules, /\b(?:rgb|hsl|hwb|lab|lch|oklab|oklch)a?\((?!0, 0, 0,)/, "only neutral shadows may stay literal");
+  assert.doesNotMatch(
+    rules,
+    /\b(?:rgb|hsl|hwb|lab|lch|oklab|oklch)a?\((?!0, 0, 0,)/,
+    "only neutral shadows may stay literal",
+  );
   assert.doesNotMatch(rules, /#[0-9a-fA-F]{3,8}\b/);
-  const named = /:[^;{}]*(?<![-\w])(?:white|black|red|green|blue|gray|grey|silver|yellow|orange|purple|pink|navy|maroon|teal|olive|lime|aqua|cyan|magenta|fuchsia|brown|gold|ivory|beige)(?![-\w])/;
+  const named =
+    /:[^;{}]*(?<![-\w])(?:white|black|red|green|blue|gray|grey|silver|yellow|orange|purple|pink|navy|maroon|teal|olive|lime|aqua|cyan|magenta|fuchsia|brown|gold|ivory|beige)(?![-\w])/;
   assert.doesNotMatch(rules.replace(/\/\*[\s\S]*?\*\//g, ""), named, "named colours go through a custom property");
 });

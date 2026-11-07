@@ -37,4 +37,5 @@ A host app can restyle the page controls and the annotation card by writing
 `~/.review-surface`). It is read on every page load, so no restart is needed,
 and it should override custom properties under `:root, :host` (the chrome's
 are the token block at the top of `src/chrome.css`). With no file, the
-built-in look is used.
+built-in look is used; an unreadable file is reported on stderr and the
+built-in look is served.
