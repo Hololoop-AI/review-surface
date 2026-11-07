@@ -4398,10 +4398,10 @@ function writeTextFileAtomically(file, content, operations = {}) {
   const rename3 = operations.renameSync || renameSync;
   const remove = operations.rmSync || rmSync;
   const chmod2 = operations.chmodSync || chmodSync;
-  const stat5 = operations.statSync || statSync;
+  const stat6 = operations.statSync || statSync;
   let mode;
   try {
-    mode = stat5(file).mode & 511;
+    mode = stat6(file).mode & 511;
   } catch {
   }
   try {
@@ -4523,11 +4523,13 @@ function attrValue(attrs, name) {
 import crypto6 from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync as existsSync2 } from "node:fs";
-import { appendFile as appendFile4, mkdir as mkdir6, readFile as readFile6, realpath as realpath4, stat as stat4, writeFile as writeFile4 } from "node:fs/promises";
+import { appendFile as appendFile4, mkdir as mkdir6, readFile as readFile6, realpath as realpath4, stat as stat5, writeFile as writeFile4 } from "node:fs/promises";
 import { isIP } from "node:net";
 import { homedir } from "node:os";
 import path9 from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
+import { promisify } from "node:util";
+import { gzip } from "node:zlib";
 import chokidar from "chokidar";
 import express from "express";
 
@@ -8119,7 +8121,7 @@ ${script}`;
 
 // src/session-store.js
 import crypto4 from "node:crypto";
-import { appendFile as appendFile3, readFile as readFile4, realpath as realpath3, writeFile as writeFile2 } from "node:fs/promises";
+import { appendFile as appendFile3, readFile as readFile4, realpath as realpath3, stat as stat3, writeFile as writeFile2 } from "node:fs/promises";
 import path7 from "node:path";
 var LAYOUT_WARNINGS_TARGET_TYPE = "layout-warnings";
 var MAX_ARTIFACT_FAILURES = 20;
@@ -8134,22 +8136,28 @@ var SessionStore = class {
     this.artifactLoads = /* @__PURE__ */ new Map();
     this.chromeLoadContexts = /* @__PURE__ */ new Map();
   }
+  // The parsed state.json the read-only accessors share, kept until the file changes. Parsing it
+  // is what every read cost - about 4 ms at 700 KB, under the lock, so a fleet asking a hundred
+  // pages' agent status waited 0.4 s. Keyed by inode, size and mtime rather than by this store's
+  // own writes, because the CLI writes the same file from another process. Frozen, because it is
+  // shared: anything that changes a session does a read-modify-write, which reads afresh.
+  #snapshot = null;
   async listSessions() {
     return this.runExclusive(async () => {
-      const state = await this.readState();
+      const state = await this.readSnapshot();
       return Object.values(state.sessions).sort((a, b) => a.file.localeCompare(b.file));
     });
   }
   async findByFile(file) {
     const absolute = await canonicalFile(file);
     return this.runExclusive(async () => {
-      const state = await this.readState();
+      const state = await this.readSnapshot();
       return state.sessions[sessionKey(absolute)] || null;
     });
   }
   async findByKey(key) {
     return this.runExclusive(async () => {
-      const state = await this.readState();
+      const state = await this.readSnapshot();
       return state.sessions[key] || null;
     });
   }
@@ -8351,7 +8359,7 @@ var SessionStore = class {
   }
   async issueReviewerHandoff(key) {
     return this.runExclusive(async () => {
-      const state = await this.readState();
+      const state = await this.readSnapshot();
       const session = state.sessions[key];
       if (!session) {
         return null;
@@ -8423,7 +8431,7 @@ var SessionStore = class {
   }
   async verifyArtifactLoad(key, artifactLoadToken, artifactRevision) {
     return this.runExclusive(async () => {
-      const state = await this.readState();
+      const state = await this.readSnapshot();
       const session = state.sessions[key];
       if (!session) {
         return null;
@@ -8566,7 +8574,7 @@ var SessionStore = class {
   }
   async listLayoutWarnings(key) {
     return this.runExclusive(async () => {
-      const state = await this.readState();
+      const state = await this.readSnapshot();
       const session = state.sessions[key];
       if (!session) return null;
       return {
@@ -8577,7 +8585,7 @@ var SessionStore = class {
   }
   async hasOutstandingLayoutRepairs(key) {
     return this.runExclusive(async () => {
-      const state = await this.readState();
+      const state = await this.readSnapshot();
       const session = state.sessions[key];
       if (!session) return false;
       return normalizeStoredWarnings(session.layout_warnings).some(hasOutstandingRepairRequest);
@@ -8731,11 +8739,33 @@ var SessionStore = class {
       throw error;
     }
   }
+  async readSnapshot() {
+    let info;
+    try {
+      info = await stat3(this.file);
+    } catch (error) {
+      if (error && error.code === "ENOENT") return deepFreeze({ sessions: {} });
+      throw error;
+    }
+    const stamp = `${info.ino}:${info.size}:${info.mtimeMs}`;
+    if (this.#snapshot?.stamp === stamp) return this.#snapshot.state;
+    const state = deepFreeze(await this.readState());
+    this.#snapshot = { stamp, state };
+    return state;
+  }
   async writeState(state) {
+    this.#snapshot = null;
     await writeFile2(this.file, `${JSON.stringify(state, null, 2)}
 `);
   }
 };
+function deepFreeze(value) {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const child of Object.values(value)) deepFreeze(child);
+  }
+  return value;
+}
 async function canonicalFile(file) {
   const absolute = path7.resolve(file);
   return realpath3(absolute);
@@ -8907,7 +8937,7 @@ function normalizeTarget(target) {
 
 // src/attachment-store.js
 import crypto5 from "node:crypto";
-import { chmod, mkdir as mkdir5, readdir, readFile as readFile5, rename as rename2, rm as rm2, stat as stat3, utimes, writeFile as writeFile3 } from "node:fs/promises";
+import { chmod, mkdir as mkdir5, readdir, readFile as readFile5, rename as rename2, rm as rm2, stat as stat4, utimes, writeFile as writeFile3 } from "node:fs/promises";
 import path8 from "node:path";
 var KEY_RE2 = /^[0-9a-f]{16}$/;
 var ID_RE = /^[0-9a-f]{64}\.(png|jpg|webp)$/;
@@ -9074,7 +9104,7 @@ function buildMetadata(id, file, mime, bytes, dims) {
 }
 async function pathExists(file) {
   try {
-    await stat3(file);
+    await stat4(file);
     return true;
   } catch (error) {
     if (error && error.code === "ENOENT") return false;
@@ -9195,7 +9225,7 @@ async function resolveAttachment(stateDir2, key, id) {
   const file = attachmentFile(stateDir2, key, id);
   let info;
   try {
-    info = await stat3(file);
+    info = await stat4(file);
   } catch (error) {
     if (error && error.code === "ENOENT") return null;
     throw error;
@@ -9209,7 +9239,7 @@ async function statAttachmentForServe(stateDir2, key, id) {
   if (!isValidAttachmentKey(key) || !isValidAttachmentId(id)) return null;
   const file = attachmentFile(stateDir2, key, id);
   try {
-    const info = await stat3(file);
+    const info = await stat4(file);
     if (!info.isFile()) return null;
   } catch (error) {
     if (error && error.code === "ENOENT") return null;
@@ -9248,10 +9278,10 @@ async function listAttachments(stateDir2) {
       if (!entry.isFile() || !isValidAttachmentId(entry.name)) continue;
       const filePath = path8.join(dir, entry.name);
       try {
-        const info = await stat3(filePath);
+        const info = await stat4(filePath);
         let sidecarBytes = 0;
         try {
-          sidecarBytes = (await stat3(sidecarPath(filePath))).size;
+          sidecarBytes = (await stat4(sidecarPath(filePath))).size;
         } catch {
         }
         files.push({
@@ -9340,7 +9370,7 @@ async function committedChargedBytes(stateDir2) {
     for (const entry of await readdirSafe(dir)) {
       if (!entry.isFile()) continue;
       try {
-        total += allocatedBytes((await stat3(path8.join(dir, entry.name))).size);
+        total += allocatedBytes((await stat4(path8.join(dir, entry.name))).size);
       } catch {
       }
     }
@@ -9362,14 +9392,14 @@ async function reapOrphanFiles(stateDir2, now) {
       const sidecarMatch = SIDECAR_ORPHAN_RE.exec(entry.name);
       try {
         if (TEMP_FILE_RE.test(entry.name)) {
-          const info = await stat3(filePath);
+          const info = await stat4(filePath);
           if (now - info.mtimeMs <= ATTACHMENT_TEMP_GRACE_MS) continue;
           if (await removeFile(filePath)) {
             deleted += 1;
             freedBytes += info.size;
           }
         } else if (sidecarMatch && !present.has(sidecarMatch[1])) {
-          const info = await stat3(filePath);
+          const info = await stat4(filePath);
           if (await removeFile(filePath)) {
             deleted += 1;
             freedBytes += info.size;
@@ -9413,6 +9443,41 @@ async function pruneEmptyDirs(root) {
 // src/server.js
 var chromeClientUrl = new URL("./chrome-client.js", import.meta.url);
 var chromeCssUrl = new URL("./chrome.css", import.meta.url);
+var gzipAsync = promisify(gzip);
+var GZIP_MIN_BYTES = 1024;
+async function sendText(req, res, type, body, gz = null) {
+  const buffer = Buffer.isBuffer(body) ? body : Buffer.from(String(body));
+  res.type(type);
+  res.vary("Accept-Encoding");
+  if (buffer.length >= GZIP_MIN_BYTES && req.acceptsEncodings("gzip", "identity") === "gzip") {
+    res.set("Content-Encoding", "gzip");
+    res.send(gz || await gzipAsync(buffer));
+    return;
+  }
+  res.send(buffer);
+}
+var chromeAssets = /* @__PURE__ */ new Map();
+async function chromeAsset(url) {
+  const info = await stat5(url);
+  const hit = chromeAssets.get(url.href);
+  if (hit && hit.mtimeMs === info.mtimeMs && hit.size === info.size) return hit;
+  const body = await readFile6(url);
+  const asset = {
+    mtimeMs: info.mtimeMs,
+    size: info.size,
+    body,
+    gz: await gzipAsync(body, { level: 9 }),
+    version: crypto6.createHash("sha256").update(body).digest("hex").slice(0, 12)
+  };
+  chromeAssets.set(url.href, asset);
+  return asset;
+}
+async function sendChromeAsset(req, res, url, type) {
+  const asset = await chromeAsset(url);
+  const current = req.query?.v === asset.version;
+  res.set("Cache-Control", current ? "public, max-age=31536000, immutable" : "no-cache");
+  await sendText(req, res, type, asset.body, asset.gz);
+}
 function hostThemeFile() {
   return path9.join(stateDir(), "theme.css");
 }
@@ -9609,7 +9674,7 @@ function resolveIdleTimeoutMs(env = process.env) {
 }
 async function fileModifiedMs(file) {
   try {
-    return (await stat4(file)).mtimeMs;
+    return (await stat5(file)).mtimeMs;
   } catch {
     return null;
   }
@@ -10522,7 +10587,11 @@ data: ${JSON.stringify({ threads })}
         res.setHeader("x-frame-options", "DENY");
         res.setHeader("content-security-policy", "frame-ancestors 'none'");
       }
-      res.type("html").send(
+      const [client, css] = await Promise.all([chromeAsset(chromeClientUrl), chromeAsset(chromeCssUrl)]);
+      await sendText(
+        req,
+        res,
+        "html",
         createChromeHtml(session, {
           layoutGateEnabled: shouldEnableLayoutGate(req.query || {}) && !hostPageOf(session),
           faviconTag,
@@ -10539,7 +10608,8 @@ data: ${JSON.stringify({ threads })}
           threadAgents: annotationActions,
           hostPage: hostPageOf(session),
           messageFeed,
-          hostTheme: await readHostTheme()
+          hostTheme: await readHostTheme(),
+          assetVersions: { client: client.version, css: css.version }
         })
       );
     } catch (error) {
@@ -10615,7 +10685,12 @@ data: ${JSON.stringify({ threads })}
         );
         return;
       }
-      res.type("html").send(injectReviewSurfaceSdk(html, key, verified.artifact_revision, verified.artifact_load_token));
+      await sendText(
+        req,
+        res,
+        "html",
+        injectReviewSurfaceSdk(html, key, verified.artifact_revision, verified.artifact_load_token)
+      );
     } catch (error) {
       next(error);
     }
@@ -10836,14 +10911,14 @@ data: ${JSON.stringify({ state: displayPresence(computePresence(req.params.key, 
   });
   app.get("/chrome-client.js", async (req, res, next) => {
     try {
-      res.type("application/javascript").send(await readFile6(chromeClientUrl, "utf8"));
+      await sendChromeAsset(req, res, chromeClientUrl, "application/javascript");
     } catch (error) {
       next(error);
     }
   });
   app.get("/chrome.css", async (req, res, next) => {
     try {
-      res.type("text/css").send(await readFile6(chromeCssUrl, "utf8"));
+      await sendChromeAsset(req, res, chromeCssUrl, "text/css");
     } catch (error) {
       next(error);
     }
@@ -10861,7 +10936,7 @@ data: ${JSON.stringify({ state: displayPresence(computePresence(req.params.key, 
         res.status(404).send("Not found");
         return;
       }
-      res.type(asset.type).send(await readDesignAsset(asset));
+      await sendText(req, res, asset.type, await readDesignAsset(asset));
     } catch (error) {
       next(error);
     }
@@ -10881,7 +10956,10 @@ data: ${JSON.stringify({ state: displayPresence(computePresence(req.params.key, 
         res.status(409).json({ status: "stale" });
         return;
       }
-      res.type("application/javascript").send(
+      await sendText(
+        req,
+        res,
+        "application/javascript",
         createSdkJs(String(req.query.key || ""), verified.artifact_revision, verified.artifact_load_token, {
           maxAttachmentCount: attachmentConfig.maxPerPrompt,
           maxAttachmentBytes: attachmentConfig.maxBytes,
@@ -11647,8 +11725,10 @@ function createChromeHtml(session, {
   threadAgents = [],
   hostPage = null,
   messageFeed = "",
-  hostTheme = ""
+  hostTheme = "",
+  assetVersions = { client: "", css: "" }
 } = {}) {
+  const versioned = (file, version) => version ? `${file}?v=${encodeURIComponent(version)}` : file;
   const hostThemeTag = hostTheme ? `
 <style id="review-surface-host-theme">${String(hostTheme).replace(/<\/style/gi, "<\\/style")}</style>` : "";
   const newerPageHref = newerPage ? `/session/${encodeURIComponent(newerPage.key)}` : "";
@@ -11705,7 +11785,7 @@ function createChromeHtml(session, {
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>${escapeHtml(title)}</title>
 ${faviconTag}
-<link rel="stylesheet" href="/chrome.css">${hostThemeTag}
+<link rel="stylesheet" href="${versioned("/chrome.css", assetVersions.css)}">${hostThemeTag}
 </head>
 <body class="${bodyClass}">
 <div class="bar"><div class="brand"><span class="brand-mark">Cadre</span></div><div class="spacer" aria-hidden="true"></div><div class="warnings-wrap" id="warningsWrap" hidden><button class="warnings-button" id="warningsButton" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="warningsDrawer">${chromeIcons.warning}<span class="warnings-count" id="warningsCount">0</span></button><div class="menu warnings-drawer" id="warningsDrawer" role="dialog" aria-labelledby="warningsTitle" aria-describedby="warningsSummary" hidden><div class="warnings-head"><h2 class="warnings-title" id="warningsTitle">Layout issues</h2><p class="warnings-summary" id="warningsSummary"></p></div><div class="warnings-toolbar"><label class="warnings-selectall"><input type="checkbox" id="warningsSelectAll"><span>Select all</span></label><span class="warnings-selected" id="warningsSelected" role="status" aria-live="polite"></span></div><div class="warnings-list" id="warningsList"></div><div class="warnings-foot"><p class="warnings-note">Queueing sends a repair request with your next feedback. An issue is marked resolved only after a newer artifact load and a complete check at the same viewport no longer finds it.</p><button class="button" id="warningsQueueButton" type="button" disabled>Queue selected fixes</button></div></div></div><div class="notify-wrap" id="notifyWrap" hidden><button class="notify-button" id="notifyButton" type="button" title="Notifications" aria-haspopup="menu" aria-expanded="false" aria-controls="notifyMenu">${chromeIcons.bell}<span class="notify-count" id="notifyCount" hidden>0</span></button><div class="menu notify-menu" id="notifyMenu" role="menu" aria-label="Notifications" hidden><div class="menu-label">On other pages</div><div class="notify-list" id="notifyList"></div><p class="notify-empty" id="notifyEmpty">Nothing has moved on other pages yet.</p></div></div><button class="annotate-toggle" id="annotation" type="button" aria-pressed="true" aria-label="Annotate" title="${escapeHtml(modeToggleHint)}">${chromeIcons.annotate}</button><div class="more-wrap" id="moreWrap"><button class="more-button" id="moreButton" type="button" title="More" aria-haspopup="menu" aria-expanded="false">${chromeIcons.more}</button><div class="menu more-menu" id="moreMenu" hidden><div class="menu-head"><div class="menu-label">Editing</div><button class="menu-file" id="copyPath" type="button" title="Copy path \xB7 ${escapeHtml(session.file)}">${chromeIcons.file}<span class="menu-file-text"><span class="path-head">${escapeHtml(pathHead)}</span><span class="path-tail">${escapeHtml(pathTail)}</span></span><span class="copy-hint" id="copyHint"><span class="icon-copy">${chromeIcons.copy}</span><span class="icon-check">${chromeIcons.check}</span><span id="copyHintText">Copy</span></span></button></div><div class="menu-rule"></div><button class="menu-item" id="panelCollapse" type="button" aria-pressed="false" title="The older conversation sidebar - the This page chat in the footer replaces it">${chromeIcons.chat}<span>Conversation sidebar</span></button><button class="menu-item" id="reloadArtifact" type="button">${chromeIcons.refresh}<span>Reload artifact</span></button><button class="menu-item" id="copySnapshot" type="button">${chromeIcons.camera}<span>Copy DOM snapshot</span></button><button class="menu-item" id="exportArtifact" type="button">${chromeIcons.download}<span>Export standalone HTML</span></button><button class="menu-item" id="shareArtifact" type="button">${chromeIcons.globe}<span>Publish link</span></button><div class="menu-rule"></div><button class="menu-item danger" id="end" type="button">${chromeIcons.exit}<span>End session</span></button></div></div></div>
@@ -11719,7 +11799,7 @@ ${faviconTag}
 <div class="whiteboard-overlay" id="whiteboardOverlay" hidden><div class="whiteboard-shell"><div class="whiteboard-error" id="whiteboardError" hidden></div><button class="whiteboard-close" id="whiteboardClose" type="button" aria-label="Close whiteboard"><svg width="14" height="14" viewBox="0 0 10 10" fill="none" aria-hidden="true" focusable="false"><path d="M1 1L9 9M9 1L1 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button><iframe id="whiteboardFrame" title="Excalidraw whiteboard" sandbox="allow-scripts allow-popups"></iframe></div></div>
 <script id="review-surface-session" type="application/json">${sessionJson}</script>
 <script>${CHROME_BOOT_FAILSAFE_JS}</script>
-<script src="/chrome-client.js" onerror="window.__reviewSurfaceChromeBootFailed()"></script>
+<script src="${versioned("/chrome-client.js", assetVersions.client)}" onerror="window.__reviewSurfaceChromeBootFailed()"></script>
 </body>
 </html>`;
 }
