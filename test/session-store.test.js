@@ -68,6 +68,31 @@ test("queued prompts are returned with DOM snapshot context and then cleared", a
   }
 });
 
+test("reads share one parsed state until the file changes, from this store or another process", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "review-surface-store-"));
+  try {
+    const stateFile = path.join(dir, "state.json");
+    const artifact = path.join(dir, "artifact.html");
+    await writeFile(artifact, "<h1>Hello</h1>");
+    const store = new SessionStore(stateFile);
+    const session = await store.upsertSession(artifact, "http://localhost:4387/session/test");
+
+    const first = await store.findByKey(session.key);
+    assert.equal(await store.findByKey(session.key), first, "an unchanged file is not parsed again");
+    assert.ok(Object.isFrozen(first) && Object.isFrozen(first.prompts), "a shared read cannot be changed");
+
+    await store.queuePrompts(session.key, { prompts: [{ uid: "1", prompt: "Warmer", selector: "h1" }] });
+    assert.equal((await store.findByKey(session.key)).prompts.length, 1, "this store's own write is seen");
+
+    // the CLI writes the same file from another process
+    const other = new SessionStore(stateFile);
+    await other.endSession(session.key, "user");
+    assert.equal((await store.findByKey(session.key)).status, "ended", "another process's write is seen");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("queued text selection prompts preserve range anchors", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "review-surface-store-"));
   try {

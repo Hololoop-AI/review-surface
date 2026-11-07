@@ -3089,6 +3089,55 @@ test("/chrome.css serves the extracted chrome stylesheet", async () => {
   }
 });
 
+test("the chrome script and stylesheet go out gzipped, and kept for good under the hash the page names", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "review-surface-serve-"));
+  const artifact = path.join(dir, "artifact.html");
+  await writeFile(artifact, "<!doctype html><title>Gzip</title><h1>Hello</h1>");
+  const server = await serve({ port: 0, stateFile: path.join(dir, "state.json"), version: "9.9.9-test" });
+  try {
+    const base = `http://127.0.0.1:${server.port}`;
+    const { key } = await fetch(`${base}/api/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ file: artifact }),
+    }).then((res) => res.json());
+    const page = await fetch(`${base}/session/${key}`);
+    const html = await page.text();
+    assert.equal(page.headers.get("content-encoding"), "gzip", "fetch asks for gzip, so the page comes gzipped");
+    const script = /<script src="(\/chrome-client\.js\?v=[0-9a-f]{12})"/.exec(html)?.[1];
+    const sheet = /<link rel="stylesheet" href="(\/chrome\.css\?v=[0-9a-f]{12})">/.exec(html)?.[1];
+    assert.ok(script && sheet, "the page names both assets by their content hash");
+
+    /** @type {[string, RegExp][]} */
+    const assets = [
+      [script, /const sessionData/],
+      [sheet, /--ink-900/],
+    ];
+    for (const [url, text] of assets) {
+      const res = await fetch(base + url);
+      assert.equal(res.headers.get("content-encoding"), "gzip");
+      assert.equal(res.headers.get("cache-control"), "public, max-age=31536000, immutable");
+      assert.match(res.headers.get("vary") || "", /Accept-Encoding/);
+      assert.match(await res.text(), text, "fetch undoes the gzip, so this is the asset itself");
+    }
+    const stale = await fetch(`${base}/chrome-client.js?v=000000000000`);
+    assert.equal(stale.headers.get("cache-control"), "no-cache", "an old page's hash is not kept for good");
+    await stale.arrayBuffer();
+    const plain = await new Promise((resolve, reject) => {
+      httpRequest(`${base}/chrome-client.js`, { headers: { "accept-encoding": "identity" } }, (res) => {
+        res.resume();
+        resolve(res.headers);
+      })
+        .on("error", reject)
+        .end();
+    });
+    assert.equal(plain["content-encoding"], undefined, "a client that does not take gzip gets it as it is");
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("/design serves local Tailwind and DaisyUI artifact assets", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "review-surface-serve-"));
   const server = await serve({ port: 0, stateFile: path.join(dir, "state.json"), version: "9.9.9-test" });

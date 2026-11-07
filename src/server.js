@@ -6,6 +6,8 @@ import { isIP } from "node:net";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import { gzip } from "node:zlib";
 
 import chokidar from "chokidar";
 import express from "express";
@@ -102,6 +104,54 @@ import {
 
 const chromeClientUrl = new URL("./chrome-client.js", import.meta.url);
 const chromeCssUrl = new URL("./chrome.css", import.meta.url);
+const gzipAsync = promisify(gzip);
+
+// Text answers go out gzipped to a browser that takes it. A review page is often read over a slow
+// link (a phone on a tailnet), where the bytes are the cost: the chrome script alone is 190 KB as
+// text and about a quarter of that gzipped. `gz` is the body already compressed, when the caller
+// keeps one. Anything under GZIP_MIN_BYTES goes as it is; compressing it buys nothing.
+const GZIP_MIN_BYTES = 1024;
+
+async function sendText(req, res, type, body, gz = null) {
+  const buffer = Buffer.isBuffer(body) ? body : Buffer.from(String(body));
+  res.type(type);
+  res.vary("Accept-Encoding");
+  if (buffer.length >= GZIP_MIN_BYTES && req.acceptsEncodings("gzip", "identity") === "gzip") {
+    res.set("Content-Encoding", "gzip");
+    res.send(gz || (await gzipAsync(buffer)));
+    return;
+  }
+  res.send(buffer);
+}
+
+// The chrome's own script and stylesheet: read again only when the file changes, kept with their
+// gzip and a hash of their content. The chrome page names them by that hash
+// (`/chrome-client.js?v=<hash>`), so a browser keeps them for good and fetches again only after
+// they changed; a request without the current hash is answered no-cache, as before.
+const chromeAssets = new Map();
+
+async function chromeAsset(url) {
+  const info = await stat(url);
+  const hit = chromeAssets.get(url.href);
+  if (hit && hit.mtimeMs === info.mtimeMs && hit.size === info.size) return hit;
+  const body = await readFile(url);
+  const asset = {
+    mtimeMs: info.mtimeMs,
+    size: info.size,
+    body,
+    gz: await gzipAsync(body, { level: 9 }),
+    version: crypto.createHash("sha256").update(body).digest("hex").slice(0, 12),
+  };
+  chromeAssets.set(url.href, asset);
+  return asset;
+}
+
+async function sendChromeAsset(req, res, url, type) {
+  const asset = await chromeAsset(url);
+  const current = req.query?.v === asset.version;
+  res.set("Cache-Control", current ? "public, max-age=31536000, immutable" : "no-cache");
+  await sendText(req, res, type, asset.body, asset.gz);
+}
 
 // A host app's theme: `theme.css` in the state directory, read on every page load so the host can
 // rewrite it without a restart. It restyles the chrome and the annotation card by overriding their
@@ -1574,7 +1624,11 @@ export async function serve({
         res.setHeader("x-frame-options", "DENY");
         res.setHeader("content-security-policy", "frame-ancestors 'none'");
       }
-      res.type("html").send(
+      const [client, css] = await Promise.all([chromeAsset(chromeClientUrl), chromeAsset(chromeCssUrl)]);
+      await sendText(
+        req,
+        res,
+        "html",
         createChromeHtml(session, {
           layoutGateEnabled: shouldEnableLayoutGate(req.query || {}) && !hostPageOf(session),
           faviconTag,
@@ -1592,6 +1646,7 @@ export async function serve({
           hostPage: hostPageOf(session),
           messageFeed,
           hostTheme: await readHostTheme(),
+          assetVersions: { client: client.version, css: css.version },
         }),
       );
     } catch (error) {
@@ -1677,9 +1732,12 @@ export async function serve({
           );
         return;
       }
-      res
-        .type("html")
-        .send(injectReviewSurfaceSdk(html, key, verified.artifact_revision, verified.artifact_load_token));
+      await sendText(
+        req,
+        res,
+        "html",
+        injectReviewSurfaceSdk(html, key, verified.artifact_revision, verified.artifact_load_token),
+      );
     } catch (error) {
       next(error);
     }
@@ -1895,7 +1953,7 @@ export async function serve({
 
   app.get("/chrome-client.js", async (req, res, next) => {
     try {
-      res.type("application/javascript").send(await readFile(chromeClientUrl, "utf8"));
+      await sendChromeAsset(req, res, chromeClientUrl, "application/javascript");
     } catch (error) {
       next(error);
     }
@@ -1903,7 +1961,7 @@ export async function serve({
 
   app.get("/chrome.css", async (req, res, next) => {
     try {
-      res.type("text/css").send(await readFile(chromeCssUrl, "utf8"));
+      await sendChromeAsset(req, res, chromeCssUrl, "text/css");
     } catch (error) {
       next(error);
     }
@@ -1928,7 +1986,7 @@ export async function serve({
         res.status(404).send("Not found");
         return;
       }
-      res.type(asset.type).send(await readDesignAsset(asset));
+      await sendText(req, res, asset.type, await readDesignAsset(asset));
     } catch (error) {
       next(error);
     }
@@ -1949,7 +2007,10 @@ export async function serve({
         res.status(409).json({ status: "stale" });
         return;
       }
-      res.type("application/javascript").send(
+      await sendText(
+        req,
+        res,
+        "application/javascript",
         createSdkJs(String(req.query.key || ""), verified.artifact_revision, verified.artifact_load_token, {
           maxAttachmentCount: attachmentConfig.maxPerPrompt,
           maxAttachmentBytes: attachmentConfig.maxBytes,
@@ -2988,8 +3049,10 @@ export function createChromeHtml(
     hostPage = null,
     messageFeed = "",
     hostTheme = "",
+    assetVersions = { client: "", css: "" },
   } = {},
 ) {
+  const versioned = (file, version) => (version ? `${file}?v=${encodeURIComponent(version)}` : file);
   // Inline, after chrome.css, so it wins; `</style` is the one sequence that could end it early.
   const hostThemeTag = hostTheme
     ? `\n<style id="review-surface-host-theme">${String(hostTheme).replace(/<\/style/gi, "<\\/style")}</style>`
@@ -3062,7 +3125,7 @@ export function createChromeHtml(
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>${escapeHtml(title)}</title>
 ${faviconTag}
-<link rel="stylesheet" href="/chrome.css">${hostThemeTag}
+<link rel="stylesheet" href="${versioned("/chrome.css", assetVersions.css)}">${hostThemeTag}
 </head>
 <body class="${bodyClass}">
 <div class="bar"><div class="brand"><span class="brand-mark">Cadre</span></div><div class="spacer" aria-hidden="true"></div><div class="warnings-wrap" id="warningsWrap" hidden><button class="warnings-button" id="warningsButton" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="warningsDrawer">${chromeIcons.warning}<span class="warnings-count" id="warningsCount">0</span></button><div class="menu warnings-drawer" id="warningsDrawer" role="dialog" aria-labelledby="warningsTitle" aria-describedby="warningsSummary" hidden><div class="warnings-head"><h2 class="warnings-title" id="warningsTitle">Layout issues</h2><p class="warnings-summary" id="warningsSummary"></p></div><div class="warnings-toolbar"><label class="warnings-selectall"><input type="checkbox" id="warningsSelectAll"><span>Select all</span></label><span class="warnings-selected" id="warningsSelected" role="status" aria-live="polite"></span></div><div class="warnings-list" id="warningsList"></div><div class="warnings-foot"><p class="warnings-note">Queueing sends a repair request with your next feedback. An issue is marked resolved only after a newer artifact load and a complete check at the same viewport no longer finds it.</p><button class="button" id="warningsQueueButton" type="button" disabled>Queue selected fixes</button></div></div></div><div class="notify-wrap" id="notifyWrap" hidden><button class="notify-button" id="notifyButton" type="button" title="Notifications" aria-haspopup="menu" aria-expanded="false" aria-controls="notifyMenu">${chromeIcons.bell}<span class="notify-count" id="notifyCount" hidden>0</span></button><div class="menu notify-menu" id="notifyMenu" role="menu" aria-label="Notifications" hidden><div class="menu-label">On other pages</div><div class="notify-list" id="notifyList"></div><p class="notify-empty" id="notifyEmpty">Nothing has moved on other pages yet.</p></div></div><button class="annotate-toggle" id="annotation" type="button" aria-pressed="true" aria-label="Annotate" title="${escapeHtml(modeToggleHint)}">${chromeIcons.annotate}</button><div class="more-wrap" id="moreWrap"><button class="more-button" id="moreButton" type="button" title="More" aria-haspopup="menu" aria-expanded="false">${chromeIcons.more}</button><div class="menu more-menu" id="moreMenu" hidden><div class="menu-head"><div class="menu-label">Editing</div><button class="menu-file" id="copyPath" type="button" title="Copy path · ${escapeHtml(session.file)}">${chromeIcons.file}<span class="menu-file-text"><span class="path-head">${escapeHtml(pathHead)}</span><span class="path-tail">${escapeHtml(pathTail)}</span></span><span class="copy-hint" id="copyHint"><span class="icon-copy">${chromeIcons.copy}</span><span class="icon-check">${chromeIcons.check}</span><span id="copyHintText">Copy</span></span></button></div><div class="menu-rule"></div><button class="menu-item" id="panelCollapse" type="button" aria-pressed="false" title="The older conversation sidebar - the This page chat in the footer replaces it">${chromeIcons.chat}<span>Conversation sidebar</span></button><button class="menu-item" id="reloadArtifact" type="button">${chromeIcons.refresh}<span>Reload artifact</span></button><button class="menu-item" id="copySnapshot" type="button">${chromeIcons.camera}<span>Copy DOM snapshot</span></button><button class="menu-item" id="exportArtifact" type="button">${chromeIcons.download}<span>Export standalone HTML</span></button><button class="menu-item" id="shareArtifact" type="button">${chromeIcons.globe}<span>Publish link</span></button><div class="menu-rule"></div><button class="menu-item danger" id="end" type="button">${chromeIcons.exit}<span>End session</span></button></div></div></div>
@@ -3076,7 +3139,7 @@ ${faviconTag}
 <div class="whiteboard-overlay" id="whiteboardOverlay" hidden><div class="whiteboard-shell"><div class="whiteboard-error" id="whiteboardError" hidden></div><button class="whiteboard-close" id="whiteboardClose" type="button" aria-label="Close whiteboard"><svg width="14" height="14" viewBox="0 0 10 10" fill="none" aria-hidden="true" focusable="false"><path d="M1 1L9 9M9 1L1 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button><iframe id="whiteboardFrame" title="Excalidraw whiteboard" sandbox="allow-scripts allow-popups"></iframe></div></div>
 <script id="review-surface-session" type="application/json">${sessionJson}</script>
 <script>${CHROME_BOOT_FAILSAFE_JS}</script>
-<script src="/chrome-client.js" onerror="window.__reviewSurfaceChromeBootFailed()"></script>
+<script src="${versioned("/chrome-client.js", assetVersions.client)}" onerror="window.__reviewSurfaceChromeBootFailed()"></script>
 </body>
 </html>`;
 }

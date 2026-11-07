@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { appendFile, readFile, realpath, writeFile } from "node:fs/promises";
+import { appendFile, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -62,9 +62,16 @@ export class SessionStore {
     this.chromeLoadContexts = new Map();
   }
 
+  // The parsed state.json the read-only accessors share, kept until the file changes. Parsing it
+  // is what every read cost - about 4 ms at 700 KB, under the lock, so a fleet asking a hundred
+  // pages' agent status waited 0.4 s. Keyed by inode, size and mtime rather than by this store's
+  // own writes, because the CLI writes the same file from another process. Frozen, because it is
+  // shared: anything that changes a session does a read-modify-write, which reads afresh.
+  #snapshot = null;
+
   async listSessions() {
     return this.runExclusive(async () => {
-      const state = await this.readState();
+      const state = await this.readSnapshot();
       return Object.values(state.sessions).sort((a, b) => a.file.localeCompare(b.file));
     });
   }
@@ -72,14 +79,14 @@ export class SessionStore {
   async findByFile(file) {
     const absolute = await canonicalFile(file);
     return this.runExclusive(async () => {
-      const state = await this.readState();
+      const state = await this.readSnapshot();
       return state.sessions[sessionKey(absolute)] || null;
     });
   }
 
   async findByKey(key) {
     return this.runExclusive(async () => {
-      const state = await this.readState();
+      const state = await this.readSnapshot();
       return state.sessions[key] || null;
     });
   }
@@ -327,7 +334,7 @@ export class SessionStore {
 
   async issueReviewerHandoff(key) {
     return this.runExclusive(async () => {
-      const state = await this.readState();
+      const state = await this.readSnapshot();
       const session = state.sessions[key];
       if (!session) {
         return null;
@@ -411,7 +418,7 @@ export class SessionStore {
 
   async verifyArtifactLoad(key, artifactLoadToken, artifactRevision) {
     return this.runExclusive(async () => {
-      const state = await this.readState();
+      const state = await this.readSnapshot();
       const session = state.sessions[key];
       if (!session) {
         return null;
@@ -574,7 +581,7 @@ export class SessionStore {
 
   async listLayoutWarnings(key) {
     return this.runExclusive(async () => {
-      const state = await this.readState();
+      const state = await this.readSnapshot();
       const session = state.sessions[key];
       if (!session) return null;
       return {
@@ -586,7 +593,7 @@ export class SessionStore {
 
   async hasOutstandingLayoutRepairs(key) {
     return this.runExclusive(async () => {
-      const state = await this.readState();
+      const state = await this.readSnapshot();
       const session = state.sessions[key];
       if (!session) return false;
       return normalizeStoredWarnings(session.layout_warnings).some(hasOutstandingRepairRequest);
@@ -761,9 +768,33 @@ export class SessionStore {
     }
   }
 
+  async readSnapshot() {
+    let info;
+    try {
+      info = await stat(this.file);
+    } catch (error) {
+      if (error && error.code === "ENOENT") return deepFreeze({ sessions: {} });
+      throw error;
+    }
+    const stamp = `${info.ino}:${info.size}:${info.mtimeMs}`;
+    if (this.#snapshot?.stamp === stamp) return this.#snapshot.state;
+    const state = deepFreeze(await this.readState());
+    this.#snapshot = { stamp, state };
+    return state;
+  }
+
   async writeState(state) {
+    this.#snapshot = null;
     await writeFile(this.file, `${JSON.stringify(state, null, 2)}\n`);
   }
+}
+
+function deepFreeze(value) {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const child of Object.values(value)) deepFreeze(child);
+  }
+  return value;
 }
 
 export async function canonicalFile(file) {
