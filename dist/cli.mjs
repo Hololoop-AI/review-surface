@@ -9775,7 +9775,9 @@ async function serve({
   const annotationActions = resolveAnnotationActions(process.env, (line) => writeLog(`[review-surface] ${line}`));
   const hostPages = resolveHostPages(process.env, (line) => writeLog(`[review-surface] ${line}`));
   const messageFeed = resolveMessageFeed(process.env, (line) => writeLog(`[review-surface] ${line}`));
-  const hostPagesDir = path9.join(path9.dirname(stateFile2), "host-pages");
+  await mkdir6(path9.dirname(stateFile2), { recursive: true });
+  const stateRoot = await realpath4(path9.dirname(stateFile2));
+  const hostPagesDir = path9.join(stateRoot, "host-pages");
   const hostPageOf = (session) => path9.dirname(session?.file || "") === hostPagesDir ? hostPages.find((page) => `${page.id}.html` === path9.basename(session.file)) || null : null;
   const attachmentStateRoot = path9.dirname(stateFile2);
   const defaultJsonParser = express.json({ limit: "2mb" });
@@ -10286,9 +10288,10 @@ data: ${JSON.stringify({ threads })}
       } else {
         const pageKey = resolvePageRef(await store.listSessions(), String(req.body?.page || ""));
         const title = String(req.body?.title || "").trim().slice(0, 120) || text.slice(0, 80);
-        const dir = path9.join(path9.dirname(stateFile2), "conversations");
-        await mkdir6(dir, { recursive: true });
+        const dir = path9.join(stateRoot, "conversations");
         const name = `${(/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-")}-${crypto6.randomBytes(3).toString("hex")}.html`;
+        checkLink(buildGraph(await readLinkRecords(linksPath)), "thread-of", sessionKey(path9.join(dir, name)), pageKey);
+        await mkdir6(dir, { recursive: true });
         await writeFile4(
           path9.join(dir, name),
           `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title></head><body><main><h1>${escapeHtml(title)}</h1><p>A message thread. The conversation is the thread; this page is only its placeholder.</p></main></body></html>
@@ -12466,7 +12469,7 @@ function createFeedbackNextStep(file, artifactFailures, sessionEnded, endedBy, p
   return `${prefix}${speedNote}${layoutNote}${whiteboardNote}${attachmentNote}Do not respond to the user just yet. Now you must run \`review-surface poll ${file} --agent-reply "<message for the user>"\` without --timeout-ms unless the user ended the session. The poll waits silently until the user sends more feedback or ends the session - never kill it. ${pollExecutionGuidance({ agent })}`;
 }
 function isMessageThreadFile(file) {
-  return path10.dirname(path10.resolve(file)) === path10.join(path10.resolve(stateDir()), "conversations");
+  return sameResolvedPath(path10.dirname(path10.resolve(file)), path10.join(stateDir(), "conversations"));
 }
 function artifactFailuresPrefix(file, artifactFailures) {
   const count = artifactFailures.length;

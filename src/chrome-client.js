@@ -1248,7 +1248,7 @@ function createChatAttachmentsController() {
 const chatAttachmentController = createChatAttachmentsController();
 
 function sendQueued(endAfter) {
-  if (ended) return;
+  if (ended) return false;
   closeMenus();
 
   // A pending or failed chip holds back only the COMPOSER message (and an
@@ -1276,12 +1276,13 @@ function sendQueued(endAfter) {
   }
   if (!queued.length) {
     if (!chipsBlocked) showSendHint();
-    return;
+    return false;
   }
   hideSendHint();
 
   if (endAfter && !chipsBlocked) endAfterSubmit = true;
   requestSnapshot("submit");
+  return true;
 }
 
 // One prompt from an annotation action that asked to go now (a "Study" button): posted
@@ -4343,8 +4344,7 @@ function setChatFull(full) {
 }
 chatPopFull.onclick = () => setChatFull(!chatPop.classList.contains("full"));
 chatPopSendPage.onclick = () => {
-  sendQueued(false);
-  chatPopHint.textContent = "Page review sent.";
+  chatPopHint.textContent = sendQueued(false) ? "Page review sent." : "Nothing queued to send yet.";
   chatPopSendPage.textContent = "Send page";
 };
 chatPopExpand.onclick = () => {

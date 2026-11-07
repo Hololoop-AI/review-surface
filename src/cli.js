@@ -689,7 +689,7 @@ function createFeedbackNextStep(file, artifactFailures, sessionEnded, endedBy, p
 
 /** @param {string} file */
 function isMessageThreadFile(file) {
-  return path.dirname(path.resolve(file)) === path.join(path.resolve(stateDirectory()), "conversations");
+  return sameResolvedPath(path.dirname(path.resolve(file)), path.join(stateDirectory(), "conversations"));
 }
 
 // The narrow fatal path. Ordinary layout findings never reach the poll: they wait in the user's

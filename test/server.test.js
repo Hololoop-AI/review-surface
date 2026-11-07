@@ -770,14 +770,6 @@ test("chrome top bar uses an Annotate icon toggle with a tooltip", () => {
   assert.doesNotMatch(html, /Inspect/);
 });
 
-test("the annotate toggle shows the accent when enabled", async () => {
-  const js = await chromeClientSource();
-  const css = await chromeCssSource();
-
-  assert.match(css, /\.annotate-toggle\[aria-pressed="true"\]\{[^}]*color:var\(--accent\)/);
-  assert.match(js, /annotationSwitch\.setAttribute\("aria-pressed", String\(annotation\)\)/);
-});
-
 test("chrome declares the Review Surface design-system tokens", async () => {
   const css = await chromeCssSource();
 

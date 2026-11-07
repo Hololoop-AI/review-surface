@@ -6341,4 +6341,28 @@ test("This page: first tab, marked apart, a direct chat on Enter, Send page send
   assert.equal(chrome.element("chatPop").classList.contains("full"), true);
   chrome.element("chatPopSendPage").onclick();
   assert.equal(chrome.postedToFrame.at(-1).type, "review-surface:requestSnapshot", "Send page is the full review send");
+  assert.equal(chrome.element("chatPopHint").textContent, "Page review sent.");
+});
+
+test("This page: Send page with nothing queued says so instead of claiming a send", async () => {
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url) => {
+      if (String(url) === "/api/abc/conversation") {
+        return { ok: true, json: async () => ({ title: "artifact", status: "open", chat: [] }) };
+      }
+      return { ok: true, json: async () => ({ threads: [] }) };
+    },
+  });
+  await flushPromises();
+  chrome.element("threadsPageTab").children[0].onclick();
+  await flushPromises();
+  await flushPromises();
+  const framePosts = chrome.postedToFrame.length;
+
+  chrome.element("chatPopSendPage").onclick();
+  assert.equal(chrome.element("chatPopHint").textContent, "Nothing queued to send yet.");
+  assert.equal(
+    chrome.postedToFrame.slice(framePosts).some((message) => message.type === "review-surface:requestSnapshot"),
+    false,
+  );
 });

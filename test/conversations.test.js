@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -84,6 +84,24 @@ test("an agent message starts a thread on a page, unread in its footer, and the 
       403,
     );
     assert.equal((await post("/api/conversations", { page: review, text: "" })).status, 400);
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a message aimed at a thread instead of a page is refused and leaves nothing behind", async () => {
+  const { dir, server, base, post, page } = await served();
+  try {
+    const review = await page("review.html");
+    await post("/api/sessions", { file: review });
+    const thread = await (await post("/api/conversations", { page: review, text: "First question?" })).json();
+    const before = (await (await fetch(`${base}/api/pages`)).json()).pages.length;
+
+    const refused = await post("/api/conversations", { page: thread.file, text: "Second question?" });
+    assert.equal(refused.status, 409);
+    assert.equal((await (await fetch(`${base}/api/pages`)).json()).pages.length, before, "no orphan session");
+    assert.equal((await readdir(path.join(dir, "conversations"))).length, 1, "no orphan placeholder file");
   } finally {
     await server.close();
     await rm(dir, { recursive: true, force: true });

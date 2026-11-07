@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -75,6 +75,29 @@ test("a host page opens under the full frame: the host's own address, trusted, w
     else process.env.REVIEW_SURFACE_HOST_PAGES = previous;
     await server.close();
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a host page still opens as the host's page when the state directory is reached through a symlink", async () => {
+  const real = await realpath(await mkdtemp(path.join(tmpdir(), "rs-host-pages-real-")));
+  const linkParent = await realpath(await mkdtemp(path.join(tmpdir(), "rs-host-pages-link-")));
+  const linked = path.join(linkParent, "state");
+  await symlink(real, linked, "dir");
+  const previous = process.env.REVIEW_SURFACE_HOST_PAGES;
+  process.env.REVIEW_SURFACE_HOST_PAGES = JSON.stringify([{ id: "fleet", url: "/fleet", title: "Fleet" }]);
+  const server = await serve({ port: 0, stateFile: path.join(linked, "state.json"), version: "9.9.9-test" });
+  const base = `http://127.0.0.1:${server.port}`;
+  try {
+    const location = (await fetch(`${base}/host/fleet`, { redirect: "manual" })).headers.get("location");
+    const html = await (await fetch(`${base}${location}`)).text();
+    assert.match(html, /<iframe id="artifact"[^>]* src="\/fleet"/);
+    assert.match(html, /"layoutGateEnabled":false/);
+  } finally {
+    if (previous === undefined) delete process.env.REVIEW_SURFACE_HOST_PAGES;
+    else process.env.REVIEW_SURFACE_HOST_PAGES = previous;
+    await server.close();
+    await rm(linkParent, { recursive: true, force: true });
+    await rm(real, { recursive: true, force: true });
   }
 });
 

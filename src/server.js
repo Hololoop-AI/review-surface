@@ -56,6 +56,7 @@ import {
 import { EventLog, eventLogFile } from "./event-log.js";
 import {
   buildGraph,
+  checkLink,
   LinkError,
   isUnseen,
   LinkStore,
@@ -659,7 +660,9 @@ export async function serve({
   const annotationActions = resolveAnnotationActions(process.env, (line) => writeLog(`[review-surface] ${line}`));
   const hostPages = resolveHostPages(process.env, (line) => writeLog(`[review-surface] ${line}`));
   const messageFeed = resolveMessageFeed(process.env, (line) => writeLog(`[review-surface] ${line}`));
-  const hostPagesDir = path.join(path.dirname(stateFile), "host-pages");
+  await mkdir(path.dirname(stateFile), { recursive: true });
+  const stateRoot = await realpath(path.dirname(stateFile));
+  const hostPagesDir = path.join(stateRoot, "host-pages");
   /** The host page a session stands for, or null: its placeholder file names it. */
   const hostPageOf = (session) =>
     path.dirname(session?.file || "") === hostPagesDir
@@ -1279,9 +1282,10 @@ export async function serve({
           String(req.body?.title || "")
             .trim()
             .slice(0, 120) || text.slice(0, 80);
-        const dir = path.join(path.dirname(stateFile), "conversations");
-        await mkdir(dir, { recursive: true });
+        const dir = path.join(stateRoot, "conversations");
         const name = `${new Date().toISOString().replace(/[:.]/g, "-")}-${crypto.randomBytes(3).toString("hex")}.html`;
+        checkLink(buildGraph(await readLinkRecords(linksPath)), "thread-of", sessionKey(path.join(dir, name)), pageKey);
+        await mkdir(dir, { recursive: true });
         await writeFile(
           path.join(dir, name),
           `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title></head>` +
