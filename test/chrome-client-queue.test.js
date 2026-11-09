@@ -5775,6 +5775,12 @@ test("the bell counts unseen thread replies, pops up a new thread, and a notific
   assert.equal(chrome.element("chatPop").hidden, false);
   assert.equal(chrome.element("chatPopTitle").textContent, "Study: why the lock");
   assert.equal(chrome.element("chatPopPresence").textContent, "Starting…");
+  // the open window's status follows the thread, so the reader can see it is being worked on
+  sendLinked([thread({ presence: "working" })]);
+  assert.equal(chrome.element("chatPopPresence").textContent, "Thinking…");
+  sendLinked([thread({ presence: "listening", agent_replies: 1 })]);
+  assert.equal(chrome.element("chatPopPresence").textContent, "Listening");
+  sendLinked([thread({})]);
   chrome.element("chatPopExpand").onclick();
   assert.equal(chrome.element("threadModal").hidden, false, "open with its page: the big window");
   const [threadFrame] = chrome.element("threadFrames").children;

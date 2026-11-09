@@ -3943,6 +3943,9 @@ function receiveThreads(next) {
   const chatting = next.find((thread) => thread.key === activeChat);
   if (chatting) {
     if (chatShowing()) markThreadSeen(chatting);
+    // The open window's status follows the thread, so a reply being worked on reads "Thinking…"
+    // rather than whatever it said when the window opened.
+    chatPopPresence.textContent = threadPresenceLabel(chatting);
     if (chatting.updated_at !== chatSeenUpdate) void refreshChat();
   }
   renderThreads();
