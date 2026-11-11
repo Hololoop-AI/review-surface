@@ -1617,6 +1617,63 @@ test("proxied same-origin prompt submissions use only an allowlisted forwarded o
   }
 });
 
+test("attachments upload and delete through an allowlisted proxy, and refuse others with 403", async () => {
+  // A host app's proxy (Cadre's fleet) adds X-Forwarded-Host; these routes used to skip the
+  // allowlist argument and threw on it, so every proxied image upload answered 500.
+  const dir = await mkdtemp(path.join(tmpdir(), "review-surface-serve-"));
+  const artifact = path.join(dir, "artifact.html");
+  await writeFile(artifact, "<!doctype html><html><body><h1>hi</h1></body></html>");
+  const server = await serve({
+    port: 0,
+    stateFile: path.join(dir, "state.json"),
+    version: "9.9.9-test",
+    allowedHosts: ["review.example"],
+  });
+  const base = `http://127.0.0.1:${server.port}`;
+  const png = Buffer.from(
+    "89504e470d0a1a0a0000000d4948445200000001000000010806000000" +
+      "1f15c4890000000d49444154789c636060606000000005000164f5a2d60000000049454e44ae426082",
+    "hex",
+  );
+  const proxied = (host) => ({
+    origin: `https://${host}`,
+    "x-forwarded-host": host,
+    "x-forwarded-proto": "https",
+  });
+  try {
+    const { key } = await fetch(`${base}/api/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ file: artifact }),
+    }).then((res) => res.json());
+
+    const refused = await fetch(`${base}/api/${key}/attachments`, {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream", ...proxied("evil.example") },
+      body: png,
+    });
+    assert.equal(refused.status, 403);
+
+    const stored = await fetch(`${base}/api/${key}/attachments`, {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream", ...proxied("review.example") },
+      body: png,
+    });
+    assert.equal(stored.status, 200);
+    const { attachment } = await stored.json();
+    assert.equal(attachment.type, "image");
+
+    const removed = await fetch(`${base}/api/${key}/attachments/${attachment.id}`, {
+      method: "DELETE",
+      headers: proxied("review.example"),
+    });
+    assert.ok(removed.status < 300, `delete answered ${removed.status}`);
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("wildcard hosts accept proxied prompts but still reject malformed authorities", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "review-surface-serve-"));
   const artifact = path.join(dir, "artifact.html");
