@@ -11097,7 +11097,7 @@ data: ${JSON.stringify({ state: displayPresence(computePresence(req.params.key, 
   });
   app.post("/api/:key/attachments", async (req, res, next) => {
     try {
-      if (!isSameOriginRequest(req)) {
+      if (!isSameOriginRequest(req, allowedHostnames, allowAnyHostname)) {
         res.status(403).json({ error: "cross-origin attachment upload rejected" });
         return;
       }
@@ -11142,7 +11142,7 @@ data: ${JSON.stringify({ state: displayPresence(computePresence(req.params.key, 
   });
   app.delete("/api/:key/attachments/:id", async (req, res, next) => {
     try {
-      if (!isSameOriginRequest(req)) {
+      if (!isSameOriginRequest(req, allowedHostnames, allowAnyHostname)) {
         res.status(403).json({ error: "cross-origin attachment delete rejected" });
         return;
       }
