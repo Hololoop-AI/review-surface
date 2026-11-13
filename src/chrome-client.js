@@ -1242,9 +1242,8 @@ function createChatAttachmentsController({ list, notice, onChange = () => {} }) 
       const item = items.find((candidate) => candidate.localId === localId);
       if (item?.file) startUpload(item);
     },
-    hasPending: () => items.some((item) => item.status === "uploading"),
     hasItems: () => items.length > 0,
-    hasErrors: () => items.some((item) => item.status === "error"),
+    blocksSend: () => items.some((item) => item.status === "uploading" || item.status === "error"),
     noteSendBlocked() {
       sendBlocked = true;
       syncNotice();
@@ -1263,14 +1262,17 @@ const chatAttachmentController = createChatAttachmentsController({
 /**
  * A place a freeform message for the round is written: its text box, its images, and how it says
  * there was nothing to send.
- * @typedef {{ input: HTMLTextAreaElement, attachments: ReturnType<typeof createChatAttachmentsController>, nothingToSend: () => void, sent: () => void }} RoundComposer
+ * @typedef {{ text: () => string, clear: () => void, attachments: ReturnType<typeof createChatAttachmentsController>, sendBlocked: () => void, nothingToSend: () => void }} RoundComposer
  */
 /** @type {RoundComposer} */
 const sidebarComposer = {
-  input: chatInput,
+  text: () => chatInput.value.trim(),
+  clear: () => {
+    chatInput.value = "";
+  },
   attachments: chatAttachmentController,
+  sendBlocked: () => chatAttachmentController.noteSendBlocked(),
   nothingToSend: () => showSendHint(),
-  sent: () => {},
 };
 
 /** @param {boolean} [endAfter] @param {RoundComposer} [composer] whose message and images go with the queue */
@@ -1283,11 +1285,11 @@ function sendQueued(endAfter, composer = sidebarComposer) {
   // still deliver, mirroring how the annotation card holds only its own card
   // open. Gating the whole pipeline here made Send and Send & End silently
   // deliver nothing while the only signal sat in the composer toolbar.
-  const chipsBlocked = composer.attachments.hasPending() || composer.attachments.hasErrors();
-  if (chipsBlocked) composer.attachments.noteSendBlocked();
+  const chipsBlocked = composer.attachments.blocksSend();
+  if (chipsBlocked) composer.sendBlocked();
 
   if (!chipsBlocked) {
-    const text = composer.input.value.trim();
+    const text = composer.text();
     const attachments = composer.attachments.collectReady();
     if (text || attachments.length) {
       const prompt = { uid: "", prompt: text, selector: "", tag: "message", text: "Freeform message" };
@@ -1296,9 +1298,8 @@ function sendQueued(endAfter, composer = sidebarComposer) {
       persistQueuedPrompts();
       addChat("user", text || "Image message");
       if (text) renderedChat.push({ role: "user", text });
-      composer.input.value = "";
       composer.attachments.reset();
-      composer.sent();
+      composer.clear();
       render();
     }
   }
@@ -3636,6 +3637,8 @@ const threadFrameByKey = new Map();
 let activeThread = "";
 // The thread shown in the chat window, and the update it was last fetched at.
 let activeChat = "";
+// The chat the text in the shared chat box was typed for; "" while the box is empty.
+let chatDraftOwner = "";
 let chatSeenUpdate = "";
 let threadsStream = /** @type {EventSource | null} */ (null);
 
@@ -4084,19 +4087,33 @@ const chatPopAttachmentController = createChatAttachmentsController({
 });
 /** @type {RoundComposer} */
 const pageChatComposer = {
-  input: chatPopInput,
+  text: pageChatDraft,
+  clear() {
+    if (chatDraftOwner === pageChatKey) clearChatDraft();
+    else syncSendPageLabel();
+  },
   attachments: chatPopAttachmentController,
   // Say it where the message was written; from the ⋮ menu the window may be shut, so open it.
+  sendBlocked() {
+    showPageChat();
+    chatPopAttachmentController.noteSendBlocked();
+  },
   nothingToSend() {
-    if (!pageChatOffered()) {
-      showSendHint();
-      return;
-    }
-    if (activeChat !== pageChatKey || chatPop.hidden) openChat(pageChatKey);
+    showPageChat();
     chatPopHint.textContent = "Nothing queued to send yet.";
   },
-  sent: () => syncSendPageLabel(),
 };
+function pageChatDraft() {
+  return chatDraftOwner === pageChatKey ? chatPopInput.value.trim() : "";
+}
+function clearChatDraft() {
+  chatPopInput.value = "";
+  chatDraftOwner = "";
+  syncSendPageLabel();
+}
+function showPageChat() {
+  if (activeChat !== pageChatKey || chatPop.hidden) openChat(pageChatKey);
+}
 wireChatAttachments({
   controller: chatPopAttachmentController,
   textarea: chatPopInput,
@@ -4110,7 +4127,7 @@ wireChatAttachments({
 // The Send page label tells you what it will send: your message once the box has one, and how
 // many queued notes go with it.
 function syncSendPageLabel() {
-  const withMessage = Boolean(chatPopInput.value.trim()) || chatPopAttachmentController.hasItems();
+  const withMessage = Boolean(pageChatDraft()) || chatPopAttachmentController.hasItems();
   const label = withMessage ? "Send page with your message" : "Send page";
   chatPopSendPage.textContent = queued.length ? `${label} (${queued.length})` : label;
 }
@@ -4248,8 +4265,7 @@ async function sendChat() {
     return;
   }
   chatPopSend.disabled = false;
-  chatPopInput.value = "";
-  syncSendPageLabel();
+  clearChatDraft();
   chatPopHint.textContent = chatPopQuick.checked ? "Sent - asked for a quick answer." : "Sent.";
   if (threadKey === pageChatKey) {
     // The sidebar shows the same conversation; keep its transcript in step.
@@ -4407,7 +4423,7 @@ async function sendFeedChat(threadKey, text) {
     return;
   }
   chatPopSend.disabled = false;
-  chatPopInput.value = "";
+  clearChatDraft();
   await refreshFeedChat(threadKey);
   // After the refresh, which would otherwise overwrite it with the next open question's hint.
   chatPopHint.textContent = body.kind === "answer" ? "Answered - the run picks it up between steps." : "Sent.";
@@ -4444,14 +4460,18 @@ function setChatFull(full) {
   chatPopLog.scrollTop = chatPopLog.scrollHeight;
 }
 chatPopFull.onclick = () => setChatFull(!chatPop.classList.contains("full"));
-chatPopInput.addEventListener("input", syncSendPageLabel);
+chatPopInput.addEventListener("input", () => {
+  chatDraftOwner = chatPopInput.value ? activeChat : "";
+  syncSendPageLabel();
+});
 chatPopSendPage.onclick = () => {
-  if (sendQueued(false, pageChatComposer)) chatPopHint.textContent = "Page review sent.";
+  const held = chatPopAttachmentController.blocksSend();
+  if (sendQueued(false, pageChatComposer) && !held) chatPopHint.textContent = "Page review sent.";
 };
 // The sidebar's Send & End, from the ⋮ menu beside End session, with This page's message and images.
 sendPageAndEndButton.onclick = () => {
   closeMenus();
-  sendQueued(true, pageChatComposer);
+  sendQueued(true, pageChatOffered() ? pageChatComposer : sidebarComposer);
 };
 chatPopExpand.onclick = () => {
   const threadKey = activeChat;
