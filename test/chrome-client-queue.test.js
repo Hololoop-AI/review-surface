@@ -16,7 +16,7 @@ const servedChromeIds = new Set(
   ),
 );
 
-/** @typedef {{ key: string, file: string, layoutGateEnabled?: boolean, layoutGateMaxHoldMs?: number, modeToggleHotkeyKey?: string, initialLayoutWarnings?: any[], chromeLoadToken?: string, initialArtifactRevision?: number, initialArtifactLoadToken?: string, initialArtifactLoadSequence?: number, attachmentMaxBytes?: number, attachmentMaxCount?: number, attachmentAcceptedMime?: string[], initialEnded?: boolean, initialEndedBy?: string | null, delivery?: string, initialReloadState?: { boot: string, version: string, count: number }, initialChat?: { role: string, text: string }[], threadAgents?: { id: string, label: string, title: string, prefix: string }[], hostUrl?: string | null, messageFeed?: string }} HarnessSessionData */
+/** @typedef {{ key: string, file: string, layoutGateEnabled?: boolean, layoutGateMaxHoldMs?: number, modeToggleHotkeyKey?: string, initialLayoutWarnings?: any[], chromeLoadToken?: string, initialArtifactRevision?: number, initialArtifactLoadToken?: string, initialArtifactLoadSequence?: number, attachmentMaxBytes?: number, attachmentMaxCount?: number, attachmentAcceptedMime?: string[], initialEnded?: boolean, initialEndedBy?: string | null, delivery?: string, initialReloadState?: { boot: string, version: string, count: number }, initialChat?: { role: string, text: string }[], threadAgents?: { id: string, label: string, title: string, prefix: string }[], hostUrl?: string | null, messageFeed?: string, embedded?: boolean }} HarnessSessionData */
 /** @type {HarnessSessionData} */
 const defaultSessionData = {
   key: "abc",
