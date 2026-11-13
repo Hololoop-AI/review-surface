@@ -16,7 +16,7 @@ const servedChromeIds = new Set(
   ),
 );
 
-/** @typedef {{ key: string, file: string, layoutGateEnabled?: boolean, layoutGateMaxHoldMs?: number, modeToggleHotkeyKey?: string, initialLayoutWarnings?: any[], chromeLoadToken?: string, initialArtifactRevision?: number, initialArtifactLoadToken?: string, initialArtifactLoadSequence?: number, attachmentMaxBytes?: number, attachmentMaxCount?: number, attachmentAcceptedMime?: string[], initialEnded?: boolean, initialEndedBy?: string | null, delivery?: string, initialReloadState?: { boot: string, version: string, count: number }, initialChat?: { role: string, text: string }[], threadAgents?: { id: string, label: string, title: string, prefix: string }[], hostUrl?: string | null, messageFeed?: string }} HarnessSessionData */
+/** @typedef {{ key: string, file: string, layoutGateEnabled?: boolean, layoutGateMaxHoldMs?: number, modeToggleHotkeyKey?: string, initialLayoutWarnings?: any[], chromeLoadToken?: string, initialArtifactRevision?: number, initialArtifactLoadToken?: string, initialArtifactLoadSequence?: number, attachmentMaxBytes?: number, attachmentMaxCount?: number, attachmentAcceptedMime?: string[], initialEnded?: boolean, initialEndedBy?: string | null, delivery?: string, initialReloadState?: { boot: string, version: string, count: number }, initialChat?: { role: string, text: string }[], threadAgents?: { id: string, label: string, title: string, prefix: string }[], hostUrl?: string | null, messageFeed?: string, embedded?: boolean }} HarnessSessionData */
 /** @type {HarnessSessionData} */
 const defaultSessionData = {
   key: "abc",
@@ -6233,6 +6233,7 @@ test("the host's message feed: a run's question is a footer tab, opens in the ch
   await flushPromises();
   assert.equal(chrome.element("chatPop").hidden, false);
   assert.equal(chrome.element("chatPopPresence").textContent, "Asks you");
+  assert.equal(chrome.element("chatPopAttachBar").hidden, true, "a host conversation takes no images and no speed");
   assert.deepEqual(
     chrome.element("chatPopLog").children.map((line) => line.textContent),
     ["Question: Which greeting?\nSuggested: Hello, world!"],
@@ -6371,4 +6372,442 @@ test("This page: Send page with nothing queued says so instead of claiming a sen
     chrome.postedToFrame.slice(framePosts).some((message) => message.type === "review-surface:requestSnapshot"),
     false,
   );
+});
+
+// Round 4 of retiring the sidebar (2026-11-11): the Conversation sidebar held the only freeform
+// message that rode with the round, the only image attach, and the only Send & End. The This page
+// chat takes all three over; the sidebar stays behind the ⋮ menu as a fallback.
+/** @param {{ posts: any[], attachmentId?: string, storedQueue?: any[] }} options */
+function pageChatHarness({ posts, attachmentId = "c".repeat(64) + ".png", storedQueue }) {
+  return createChromeHarness({
+    storedQueue: storedQueue ?? [{ uid: "", prompt: "Fix the header", selector: "h1", tag: "element", text: "Header" }],
+    sessionData: { ...defaultSessionData, attachmentMaxBytes: 1024, attachmentMaxCount: 4 },
+    fetchImpl: async (url, init) => {
+      if (String(url) === "/api/abc/conversation") {
+        return { ok: true, json: async () => ({ title: "artifact", status: "open", chat: [] }) };
+      }
+      if (String(url) === "/api/abc/attachments") {
+        return { ok: true, json: async () => ({ attachment: { id: attachmentId } }) };
+      }
+      if (String(url) === "/api/abc/prompts") posts.push(JSON.parse(init.body));
+      return { ok: true, json: async () => ({ threads: [] }) };
+    },
+  });
+}
+
+async function openPageChat(chrome) {
+  await flushPromises();
+  chrome.element("threadsPageTab").children[0].onclick();
+  await flushPromises();
+  await flushPromises();
+}
+
+async function deliverRound(chrome) {
+  assert.equal(chrome.postedToFrame.at(-1).type, "review-surface:requestSnapshot", "the round's send started");
+  chrome.sendFrameMessage({ type: "review-surface:snapshot", snapshot: "uid=1 body" });
+  await flushPromises();
+  await flushPromises();
+}
+
+test("This page: Send page carries the chat box's text with the queued notes, and its label says so", async () => {
+  const posts = [];
+  const chrome = await pageChatHarness({ posts });
+  await openPageChat(chrome);
+  assert.equal(chrome.element("chatPopSendPage").textContent, "Send page (1)");
+
+  chrome.element("chatPopInput").value = "Tighten the whole intro too";
+  chrome.element("chatPopInput").dispatch("input");
+  assert.equal(chrome.element("chatPopSendPage").textContent, "Send page with your message (1)");
+
+  chrome.element("chatPopSendPage").onclick();
+  await deliverRound(chrome);
+
+  assert.equal(posts.length, 1);
+  assert.deepEqual(posts[0].prompts, [
+    { uid: "", prompt: "Fix the header", selector: "h1", tag: "element", text: "Header" },
+    { uid: "", prompt: "Tighten the whole intro too", selector: "", tag: "message", text: "Freeform message" },
+  ]);
+  assert.equal(posts[0].prompts[1].channel, undefined, "a round, not a direct chat");
+  assert.equal(chrome.element("chatPopInput").value, "");
+  assert.equal(chrome.element("chatPopSendPage").textContent, "Send page");
+  assert.equal(chrome.element("chatPopHint").textContent, "Page review sent.");
+});
+
+test("This page: text alone is enough for Send page, and Enter stays a direct chat", async () => {
+  const posts = [];
+  const chrome = await pageChatHarness({ posts, storedQueue: [] });
+  await openPageChat(chrome);
+
+  chrome.element("chatPopInput").value = "Just a chat";
+  chrome.element("chatPopInput").dispatch("keydown", { key: "Enter", shiftKey: false, preventDefault() {} });
+  await flushPromises();
+  assert.deepEqual(
+    posts.map((body) => body.prompts.map((prompt) => [prompt.prompt, prompt.channel])),
+    [[["Just a chat", "chat"]]],
+  );
+  assert.equal(chrome.element("chatPopSendPage").textContent, "Send page");
+
+  chrome.element("chatPopInput").value = "Now the page";
+  chrome.element("chatPopInput").dispatch("input");
+  assert.equal(chrome.element("chatPopSendPage").textContent, "Send page with your message");
+  chrome.element("chatPopSendPage").onclick();
+  await deliverRound(chrome);
+  assert.deepEqual(
+    posts[1].prompts.map((prompt) => [prompt.tag, prompt.prompt]),
+    [["message", "Now the page"]],
+  );
+});
+
+test("This page: an image attached in the chat window rides on Send page, not on Enter", async () => {
+  const posts = [];
+  const id = "c".repeat(64) + ".png";
+  const chrome = await pageChatHarness({ posts, attachmentId: id });
+  await openPageChat(chrome);
+  assert.equal(chrome.element("chatPopAttach").hidden, false, "This page offers attaching");
+
+  chrome.element("chatPopAttach").onclick();
+  assert.equal(chrome.element("chatPopAttachInput").clicked, true, "the button opens the picker");
+  chrome.element("chatPopAttachInput").files = [pastedImage("shot.png")];
+  chrome.element("chatPopAttachInput").dispatch("change");
+  await flushPromises();
+  await flushPromises();
+  assert.match(chrome.element("chatPopAttachments").innerHTML, /shot\.png/);
+  assert.match(chrome.element("chatPopAttachments").innerHTML, /chat-attachment-ready/);
+  assert.equal(chrome.element("chatAttachments").innerHTML, "", "the sidebar's composer is separate");
+
+  chrome.element("chatPopInput").value = "Quick question first";
+  chrome.element("chatPopForm").onsubmit({ preventDefault() {} });
+  await flushPromises();
+  assert.equal(posts[0].prompts[0].attachments, undefined, "Enter carries no image");
+  assert.match(chrome.element("chatPopAttachments").innerHTML, /shot\.png/, "the chip waits for Send page");
+
+  chrome.element("chatPopInput").value = "See the screenshot";
+  chrome.element("chatPopInput").dispatch("input");
+  chrome.element("chatPopSendPage").onclick();
+  await deliverRound(chrome);
+  const message = posts[1].prompts.at(-1);
+  assert.equal(message.prompt, "See the screenshot");
+  assert.deepEqual(message.attachments, [{ id, name: "shot.png" }]);
+  assert.equal(chrome.element("chatPopAttachments").innerHTML, "", "the chips clear once sent");
+});
+
+test("This page: paste attaches into the chat window and a chip can be removed", async () => {
+  const posts = [];
+  const chrome = await pageChatHarness({ posts });
+  await openPageChat(chrome);
+
+  const event = clipboardEvent(pastedImage("pasted.png"));
+  chrome.element("chatPopInput").dispatch("paste", event);
+  await flushPromises();
+  await flushPromises();
+  assert.equal(event.defaultPrevented, true);
+  assert.match(chrome.element("chatPopAttachments").innerHTML, /pasted\.png/);
+  assert.equal(chrome.element("chatPopSendPage").textContent, "Send page with your message (1)");
+
+  chrome.element("chatPopAttachments").dispatch("click", {
+    target: {
+      closest: (selector) =>
+        selector === "[data-chat-attachment-remove]" ? { dataset: { chatAttachmentRemove: "0" } } : null,
+    },
+  });
+  assert.equal(chrome.element("chatPopAttachments").innerHTML, "");
+  assert.equal(chrome.element("chatPopSendPage").textContent, "Send page (1)");
+});
+
+test("This page: a drop onto the chat window attaches, and a failed chip holds the message back", async () => {
+  const posts = [];
+  const chrome = await createChromeHarness({
+    storedQueue: [{ uid: "", prompt: "Fix the header", selector: "h1", tag: "element", text: "Header" }],
+    sessionData: { ...defaultSessionData, attachmentMaxBytes: 1024, attachmentMaxCount: 4 },
+    fetchImpl: async (url, init) => {
+      if (String(url) === "/api/abc/conversation") {
+        return { ok: true, json: async () => ({ title: "artifact", status: "open", chat: [] }) };
+      }
+      if (String(url) === "/api/abc/attachments") return { ok: false, json: async () => ({ error: "storage full" }) };
+      if (String(url) === "/api/abc/prompts") posts.push(JSON.parse(init.body));
+      return { ok: true, json: async () => ({ threads: [] }) };
+    },
+  });
+  await openPageChat(chrome);
+  const drop = {
+    dataTransfer: { types: ["Files"], files: [pastedImage("dropped.png")] },
+    preventDefault() {},
+  };
+  chrome.element("chatPopForm").dispatch("drop", drop);
+  await flushPromises();
+  await flushPromises();
+  assert.match(chrome.element("chatPopAttachments").innerHTML, /chat-attachment-error/);
+
+  chrome.element("chatPopInput").value = "Held back";
+  chrome.element("chatPopInput").dispatch("input");
+  chrome.element("chatPopSendPage").onclick();
+  assert.match(chrome.element("chatPopAttachmentNotice").textContent, /retry or remove/i);
+  await deliverRound(chrome);
+  assert.deepEqual(
+    posts[0].prompts.map((prompt) => prompt.prompt),
+    ["Fix the header"],
+  );
+  assert.equal(chrome.element("chatPopInput").value, "Held back", "the message waits with its image");
+  assert.notEqual(chrome.element("chatPopHint").textContent, "Page review sent.", "the message was held back");
+});
+
+test("a side thread's chat window offers no attaching", async () => {
+  const chrome = await createChromeHarness({
+    initialThreads: [footerThread({ key: "t1", title: "Side thread" })],
+    fetchImpl: async () => ({ ok: true, json: async () => ({ title: "Side thread", status: "open", chat: [] }) }),
+  });
+  await flushPromises();
+  await openPageChat(chrome);
+  assert.equal(chrome.element("chatPopAttach").hidden, false);
+  chrome.element("chatPopClose").onclick();
+  const [sideTab] = chrome.element("threadsTabs").children;
+  sideTab.onclick();
+  await flushPromises();
+  assert.equal(chrome.element("chatPopAttach").hidden, true);
+  assert.equal(chrome.element("chatPopAttachments").hidden, true);
+  assert.equal(chrome.element("chatPopAttachBar").hidden, false, "Quick answer stays for a side thread");
+});
+
+test("the ⋮ menu's Send page and end sends the chat's text and images with the queue, then ends", async () => {
+  const posts = [];
+  const id = "d".repeat(64) + ".png";
+  const chrome = await pageChatHarness({ posts, attachmentId: id });
+  await openPageChat(chrome);
+  chrome.element("chatPopInput").dispatch("paste", clipboardEvent(pastedImage("final.png")));
+  await flushPromises();
+  await flushPromises();
+  chrome.element("chatPopInput").value = "That's everything";
+  chrome.element("chatPopInput").dispatch("input");
+
+  chrome.element("moreButton").onclick();
+  assert.equal(chrome.element("moreMenu").hidden, false);
+  chrome.element("sendPageAndEnd").onclick();
+  assert.equal(chrome.element("moreMenu").hidden, true, "the menu closes");
+  await deliverRound(chrome);
+
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].endSession, true);
+  assert.deepEqual(
+    posts[0].prompts.map((prompt) => [prompt.prompt, prompt.attachments]),
+    [
+      ["Fix the header", undefined],
+      ["That's everything", [{ id, name: "final.png" }]],
+    ],
+  );
+});
+
+test("the ⋮ menu's Send page and end with nothing to send neither sends nor ends", async () => {
+  const posts = [];
+  const chrome = await pageChatHarness({ posts, storedQueue: [] });
+  await flushPromises();
+  const framePosts = chrome.postedToFrame.length;
+
+  chrome.element("sendPageAndEnd").onclick();
+  await flushPromises();
+  await flushPromises();
+  assert.equal(
+    chrome.postedToFrame.slice(framePosts).some((message) => message.type === "review-surface:requestSnapshot"),
+    false,
+  );
+  assert.equal(chrome.element("chatPop").hidden, false, "the chat window opens to say why");
+  assert.equal(chrome.element("chatPopHint").textContent, "Nothing queued to send yet.");
+  assert.equal(posts.length, 0);
+});
+
+function sideThreadHarness({ posts, storedQueue }) {
+  return createChromeHarness({
+    storedQueue,
+    initialThreads: [footerThread({ key: "t1", title: "Side thread" })],
+    fetchImpl: async (url, init) => {
+      if (String(url).endsWith("/prompts")) posts.push({ url: String(url), body: JSON.parse(init.body) });
+      return { ok: true, json: async () => ({ title: "Side thread", status: "open", chat: [], threads: [] }) };
+    },
+  });
+}
+
+async function draftInSideThread(chrome, text) {
+  await flushPromises();
+  const [sideTab] = chrome.element("threadsTabs").children;
+  sideTab.onclick();
+  await flushPromises();
+  await flushPromises();
+  chrome.element("chatPopInput").value = text;
+  chrome.element("chatPopInput").dispatch("input");
+}
+
+test("each chat keeps its own unsent text: a side thread's reply is not in This page's box, nor sent by Send page", async () => {
+  const posts = [];
+  const chrome = await sideThreadHarness({
+    posts,
+    storedQueue: [{ uid: "", prompt: "Fix the header", selector: "h1", tag: "element", text: "Header" }],
+  });
+  await draftInSideThread(chrome, "For the side thread only");
+
+  await openPageChat(chrome);
+  assert.equal(chrome.element("chatPopInput").value, "", "This page's box shows only its own text");
+  assert.equal(chrome.element("chatPopSendPage").textContent, "Send page (1)");
+  chrome.element("chatPopSendPage").onclick();
+  await deliverRound(chrome);
+
+  assert.deepEqual(
+    posts.map((post) => [post.url, post.body.prompts.map((prompt) => prompt.prompt)]),
+    [["/api/abc/prompts", ["Fix the header"]]],
+  );
+  chrome.element("chatPopClose").onclick();
+  chrome.element("threadsTabs").children[0].onclick();
+  await flushPromises();
+  assert.equal(chrome.element("chatPopInput").value, "For the side thread only", "the reply waits in its own chat");
+});
+
+test("This page's unsent text survives a visit to a side thread and still rides on Send page", async () => {
+  const posts = [];
+  const chrome = await sideThreadHarness({ posts, storedQueue: [] });
+  await openPageChat(chrome);
+  chrome.element("chatPopInput").value = "For the page";
+  chrome.element("chatPopInput").dispatch("input");
+
+  chrome.element("threadsTabs").children[0].onclick();
+  await flushPromises();
+  assert.equal(chrome.element("chatPopInput").value, "", "the side thread starts with its own empty box");
+  chrome.element("chatPopInput").value = "Side reply";
+  chrome.element("chatPopForm").onsubmit({ preventDefault() {} });
+  await flushPromises();
+  await flushPromises();
+  assert.deepEqual(
+    posts.map((post) => [post.url, post.body.prompts.map((prompt) => prompt.prompt)]),
+    [["/api/t1/prompts", ["Side reply"]]],
+    "Enter sends the open chat's own text to that chat",
+  );
+
+  await openPageChat(chrome);
+  assert.equal(chrome.element("chatPopInput").value, "For the page");
+  assert.equal(chrome.element("chatPopSendPage").textContent, "Send page with your message");
+  chrome.element("chatPopSendPage").onclick();
+  await deliverRound(chrome);
+  assert.deepEqual(
+    posts[1].body.prompts.map((prompt) => prompt.prompt),
+    ["For the page"],
+  );
+});
+
+test("the ⋮ menu's Send page and end does not take a side thread's unsent reply as the page's message", async () => {
+  const posts = [];
+  const chrome = await sideThreadHarness({ posts, storedQueue: [] });
+  await draftInSideThread(chrome, "For the side thread only");
+  const framePosts = chrome.postedToFrame.length;
+
+  chrome.element("sendPageAndEnd").onclick();
+  await flushPromises();
+  await flushPromises();
+
+  assert.equal(
+    chrome.postedToFrame.slice(framePosts).some((message) => message.type === "review-surface:requestSnapshot"),
+    false,
+    "nothing is sent and the session does not end",
+  );
+  assert.equal(posts.length, 0);
+  assert.equal(chrome.element("chatPopSendPage").hidden, false, "This page's window is the one shown");
+  assert.equal(chrome.element("chatPopHint").textContent, "Nothing queued to send yet.");
+  assert.equal(chrome.element("chatPopInput").value, "", "the reply is not shown as This page's text");
+});
+
+test("in a thread inside another page's window, Send page and end takes the sidebar's message", async () => {
+  const posts = [];
+  const chrome = await createChromeHarness({
+    storedQueue: [{ uid: "", prompt: "Fix the header", selector: "h1", tag: "element", text: "Header" }],
+    sessionData: { ...defaultSessionData, embedded: true },
+    fetchImpl: async (url, init) => {
+      if (String(url) === "/api/abc/prompts") posts.push(JSON.parse(init.body));
+      return { ok: true, json: async () => ({ threads: [] }) };
+    },
+  });
+  await flushPromises();
+  chrome.element("chatInput").value = "Last thing from the sidebar";
+
+  chrome.element("sendPageAndEnd").onclick();
+  await deliverRound(chrome);
+
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].endSession, true);
+  assert.deepEqual(
+    posts[0].prompts.map((prompt) => prompt.prompt),
+    ["Fix the header", "Last thing from the sidebar"],
+  );
+  assert.equal(chrome.element("chatInput").value, "");
+});
+
+test("a failed image behind a closed This page window: Send page and end opens it and says why", async () => {
+  const posts = [];
+  const chrome = await createChromeHarness({
+    storedQueue: [{ uid: "", prompt: "Fix the header", selector: "h1", tag: "element", text: "Header" }],
+    sessionData: { ...defaultSessionData, attachmentMaxBytes: 1024, attachmentMaxCount: 4 },
+    fetchImpl: async (url, init) => {
+      if (String(url) === "/api/abc/conversation") {
+        return { ok: true, json: async () => ({ title: "artifact", status: "open", chat: [] }) };
+      }
+      if (String(url) === "/api/abc/attachments") return { ok: false, json: async () => ({ error: "storage full" }) };
+      if (String(url) === "/api/abc/prompts") posts.push(JSON.parse(init.body));
+      return { ok: true, json: async () => ({ threads: [] }) };
+    },
+  });
+  await openPageChat(chrome);
+  chrome.element("chatPopInput").dispatch("paste", clipboardEvent(pastedImage("broken.png")));
+  await flushPromises();
+  await flushPromises();
+  chrome.element("chatPopInput").value = "Held back";
+  chrome.element("chatPopInput").dispatch("input");
+  chrome.element("chatPopClose").onclick();
+  assert.equal(chrome.element("chatPop").hidden, true);
+
+  chrome.element("sendPageAndEnd").onclick();
+  assert.equal(chrome.element("chatPop").hidden, false, "the window with the failed image opens");
+  assert.equal(chrome.element("chatPopTitle").textContent, "This page");
+  assert.match(chrome.element("chatPopAttachmentNotice").textContent, /retry or remove/i);
+  await deliverRound(chrome);
+  assert.deepEqual(
+    posts[0].prompts.map((prompt) => prompt.prompt),
+    ["Fix the header"],
+  );
+  assert.notEqual(posts[0].endSession, true, "the session stays open for the held message");
+  assert.equal(chrome.element("chatPopInput").value, "Held back");
+});
+
+function roundRequested(chrome, since) {
+  return chrome.postedToFrame.slice(since).some((message) => message.type === "review-surface:requestSnapshot");
+}
+
+test("the sidebar's Send & End is held while This page has an unsent message or image", async () => {
+  const posts = [];
+  const chrome = await pageChatHarness({ posts });
+  await openPageChat(chrome);
+  chrome.element("chatPopInput").dispatch("paste", clipboardEvent(pastedImage("waiting.png")));
+  await flushPromises();
+  await flushPromises();
+  chrome.element("chatPopClose").onclick();
+  const framePosts = chrome.postedToFrame.length;
+
+  chrome.element("sendAndEnd").onclick();
+  await flushPromises();
+  assert.equal(roundRequested(chrome, framePosts), false, "nothing is sent and the session does not end");
+  assert.equal(posts.length, 0);
+  assert.equal(chrome.element("chatPop").hidden, false, "the chat holding the image opens");
+  assert.equal(chrome.element("chatPopSendPage").hidden, false, "This page's window is the one shown");
+  assert.match(chrome.element("chatPopHint").textContent, /first/i);
+  assert.match(chrome.element("chatPopAttachments").innerHTML, /waiting\.png/, "the image is still there");
+});
+
+test("the ⋮ menu's Send page and end is held while the sidebar has an unsent message", async () => {
+  const posts = [];
+  const chrome = await pageChatHarness({ posts });
+  await flushPromises();
+  chrome.element("chatInput").value = "Typed in the sidebar";
+  const framePosts = chrome.postedToFrame.length;
+
+  chrome.element("sendPageAndEnd").onclick();
+  await flushPromises();
+  assert.equal(roundRequested(chrome, framePosts), false, "nothing is sent and the session does not end");
+  assert.equal(posts.length, 0);
+  assert.equal(chrome.element("sendHint").hidden, false, "the sidebar says why");
+  assert.match(chrome.element("sendHint").textContent, /first/i);
+  assert.equal(chrome.element("chatInput").value, "Typed in the sidebar");
 });

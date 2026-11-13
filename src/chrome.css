@@ -2160,9 +2160,13 @@ body.host-page #annotation {
 .chat-pop-compose textarea:focus-visible {
   outline: none;
 }
+/* The hint takes its own line above the two sends, and none while it is empty: "Send page with your
+   message (N)" needs the width of a 360px window, and of a phone. */
 .chat-pop-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
   margin-top: 6px;
 }
@@ -2175,11 +2179,12 @@ body.host-page #annotation {
 }
 /* A runner conversation carries no speed and has no page of its own: both controls hide. */
 .chat-pop-speed[hidden],
+.chat-pop-hint:empty,
 .chat-pop-head .thread-action[hidden] {
   display: none;
 }
 .chat-pop-hint {
-  flex: 1;
+  flex: 1 0 100%;
   min-width: 0;
   font-size: var(--text-xs);
   color: var(--fg-faint);
@@ -2202,6 +2207,33 @@ body.host-page #annotation {
 }
 .chat-pop-send-page[hidden] {
   display: none;
+}
+/* This page's images: the composer's own chips, shorter here so the transcript keeps the room. */
+.chat-pop-attachments {
+  max-height: 96px;
+  margin-top: 6px;
+}
+.chat-pop-attach-bar {
+  margin-top: 4px;
+}
+.chat-pop-attach-bar .chat-attach {
+  flex: 0 0 auto;
+  font-size: var(--text-xs);
+}
+.chat-pop-attach-bar .chat-attachment-notice {
+  flex: 1;
+}
+/* Quick answer sits at the right end of this row, leaving the button row to the two sends. */
+.chat-pop-attach-bar .chat-pop-speed {
+  margin-left: auto;
+}
+.chat-pop-attachments[hidden],
+.chat-pop-attach-bar[hidden],
+.chat-pop-attach-bar .chat-attach[hidden] {
+  display: none;
+}
+.chat-pop-compose.is-dropping {
+  background: var(--bg-elevated);
 }
 /* The agent's thinking: there to watch, quieter than what it says. */
 .chat-pop-line.from-thinking {
