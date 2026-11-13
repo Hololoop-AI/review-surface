@@ -1262,7 +1262,7 @@ const chatAttachmentController = createChatAttachmentsController({
 /**
  * A place a freeform message for the round is written: its text box, its images, and how it says
  * there was nothing to send.
- * @typedef {{ text: () => string, clear: () => void, attachments: ReturnType<typeof createChatAttachmentsController>, sendBlocked: () => void, nothingToSend: () => void }} RoundComposer
+ * @typedef {{ text: () => string, clear: () => void, attachments: ReturnType<typeof createChatAttachmentsController>, sendBlocked: () => void, nothingToSend: () => void, endHeld: () => void }} RoundComposer
  */
 /** @type {RoundComposer} */
 const sidebarComposer = {
@@ -1273,12 +1273,26 @@ const sidebarComposer = {
   attachments: chatAttachmentController,
   sendBlocked: () => chatAttachmentController.noteSendBlocked(),
   nothingToSend: () => showSendHint(),
+  endHeld() {
+    panelHidden = false;
+    applyPanelHidden(false);
+    setSheetOpen(true);
+    showSendHint("Send or clear this message first - ending now would leave it behind.", 6000);
+  },
 };
 
 /** @param {boolean} [endAfter] @param {RoundComposer} [composer] whose message and images go with the queue */
 function sendQueued(endAfter, composer = sidebarComposer) {
   if (ended) return false;
   closeMenus();
+
+  if (endAfter) {
+    const other = composer === sidebarComposer ? pageChatComposer : sidebarComposer;
+    if (other.text() || other.attachments.hasItems()) {
+      other.endHeld();
+      return false;
+    }
+  }
 
   // A pending or failed chip holds back only the COMPOSER message (and an
   // explicit end, which would strand the chips) - queued annotation prompts
@@ -3637,8 +3651,9 @@ const threadFrameByKey = new Map();
 let activeThread = "";
 // The thread shown in the chat window, and the update it was last fetched at.
 let activeChat = "";
-// The chat the text in the shared chat box was typed for; "" while the box is empty.
-let chatDraftOwner = "";
+// Each chat's unsent text while another chat (or none) has the shared chat box.
+/** @type {Map<string, string>} */
+const chatDrafts = new Map();
 let chatSeenUpdate = "";
 let threadsStream = /** @type {EventSource | null} */ (null);
 
@@ -4088,10 +4103,7 @@ const chatPopAttachmentController = createChatAttachmentsController({
 /** @type {RoundComposer} */
 const pageChatComposer = {
   text: pageChatDraft,
-  clear() {
-    if (chatDraftOwner === pageChatKey) clearChatDraft();
-    else syncSendPageLabel();
-  },
+  clear: () => clearChatDraft(pageChatKey),
   attachments: chatPopAttachmentController,
   // Say it where the message was written; from the ⋮ menu the window may be shut, so open it.
   sendBlocked() {
@@ -4102,13 +4114,21 @@ const pageChatComposer = {
     showPageChat();
     chatPopHint.textContent = "Nothing queued to send yet.";
   },
+  endHeld() {
+    showPageChat();
+    chatPopHint.textContent = "Send or clear this message first - ending now would leave it behind.";
+  },
 };
 function pageChatDraft() {
-  return chatDraftOwner === pageChatKey ? chatPopInput.value.trim() : "";
+  return (activeChat === pageChatKey ? chatPopInput.value : chatDrafts.get(pageChatKey) || "").trim();
 }
-function clearChatDraft() {
-  chatPopInput.value = "";
-  chatDraftOwner = "";
+function stashChatDraft() {
+  if (activeChat) chatDrafts.set(activeChat, chatPopInput.value);
+}
+/** @param {string} threadKey */
+function clearChatDraft(threadKey) {
+  if (activeChat === threadKey) chatPopInput.value = "";
+  chatDrafts.delete(threadKey);
   syncSendPageLabel();
 }
 function showPageChat() {
@@ -4140,7 +4160,9 @@ function openChat(threadKey, anchor = null) {
   placeChatAbove(threadKey === pageChatKey ? null : anchor || threadsButton);
   const thread = listedThreads().find((candidate) => candidate.key === threadKey);
   if (!thread) return;
+  stashChatDraft();
   activeChat = threadKey;
+  chatPopInput.value = chatDrafts.get(threadKey) || "";
   chatSeenUpdate = "";
   chatPopTitle.textContent = thread.title;
   chatPopPresence.textContent = threadPresenceLabel(thread);
@@ -4193,6 +4215,7 @@ function closeChat() {
   if (chatPop.hidden) return;
   chatPop.hidden = true;
   setChatFull(false);
+  stashChatDraft();
   activeChat = "";
   renderThreads();
 }
@@ -4265,7 +4288,7 @@ async function sendChat() {
     return;
   }
   chatPopSend.disabled = false;
-  clearChatDraft();
+  clearChatDraft(threadKey);
   chatPopHint.textContent = chatPopQuick.checked ? "Sent - asked for a quick answer." : "Sent.";
   if (threadKey === pageChatKey) {
     // The sidebar shows the same conversation; keep its transcript in step.
@@ -4423,7 +4446,7 @@ async function sendFeedChat(threadKey, text) {
     return;
   }
   chatPopSend.disabled = false;
-  clearChatDraft();
+  clearChatDraft(threadKey);
   await refreshFeedChat(threadKey);
   // After the refresh, which would otherwise overwrite it with the next open question's hint.
   chatPopHint.textContent = body.kind === "answer" ? "Answered - the run picks it up between steps." : "Sent.";
@@ -4460,10 +4483,7 @@ function setChatFull(full) {
   chatPopLog.scrollTop = chatPopLog.scrollHeight;
 }
 chatPopFull.onclick = () => setChatFull(!chatPop.classList.contains("full"));
-chatPopInput.addEventListener("input", () => {
-  chatDraftOwner = chatPopInput.value ? activeChat : "";
-  syncSendPageLabel();
-});
+chatPopInput.addEventListener("input", syncSendPageLabel);
 chatPopSendPage.onclick = () => {
   const held = chatPopAttachmentController.blocksSend();
   if (sendQueued(false, pageChatComposer) && !held) chatPopHint.textContent = "Page review sent.";

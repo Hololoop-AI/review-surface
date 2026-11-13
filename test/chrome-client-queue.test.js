@@ -6548,6 +6548,7 @@ test("This page: a drop onto the chat window attaches, and a failed chip holds t
     ["Fix the header"],
   );
   assert.equal(chrome.element("chatPopInput").value, "Held back", "the message waits with its image");
+  assert.notEqual(chrome.element("chatPopHint").textContent, "Page review sent.", "the message was held back");
 });
 
 test("a side thread's chat window offers no attaching", async () => {
@@ -6634,7 +6635,7 @@ async function draftInSideThread(chrome, text) {
   chrome.element("chatPopInput").dispatch("input");
 }
 
-test("a side thread's unsent reply is neither counted nor sent by Send page", async () => {
+test("each chat keeps its own unsent text: a side thread's reply is not in This page's box, nor sent by Send page", async () => {
   const posts = [];
   const chrome = await sideThreadHarness({
     posts,
@@ -6643,6 +6644,7 @@ test("a side thread's unsent reply is neither counted nor sent by Send page", as
   await draftInSideThread(chrome, "For the side thread only");
 
   await openPageChat(chrome);
+  assert.equal(chrome.element("chatPopInput").value, "", "This page's box shows only its own text");
   assert.equal(chrome.element("chatPopSendPage").textContent, "Send page (1)");
   chrome.element("chatPopSendPage").onclick();
   await deliverRound(chrome);
@@ -6651,7 +6653,41 @@ test("a side thread's unsent reply is neither counted nor sent by Send page", as
     posts.map((post) => [post.url, post.body.prompts.map((prompt) => prompt.prompt)]),
     [["/api/abc/prompts", ["Fix the header"]]],
   );
-  assert.equal(chrome.element("chatPopInput").value, "For the side thread only", "the reply is still in the box");
+  chrome.element("chatPopClose").onclick();
+  chrome.element("threadsTabs").children[0].onclick();
+  await flushPromises();
+  assert.equal(chrome.element("chatPopInput").value, "For the side thread only", "the reply waits in its own chat");
+});
+
+test("This page's unsent text survives a visit to a side thread and still rides on Send page", async () => {
+  const posts = [];
+  const chrome = await sideThreadHarness({ posts, storedQueue: [] });
+  await openPageChat(chrome);
+  chrome.element("chatPopInput").value = "For the page";
+  chrome.element("chatPopInput").dispatch("input");
+
+  chrome.element("threadsTabs").children[0].onclick();
+  await flushPromises();
+  assert.equal(chrome.element("chatPopInput").value, "", "the side thread starts with its own empty box");
+  chrome.element("chatPopInput").value = "Side reply";
+  chrome.element("chatPopForm").onsubmit({ preventDefault() {} });
+  await flushPromises();
+  await flushPromises();
+  assert.deepEqual(
+    posts.map((post) => [post.url, post.body.prompts.map((prompt) => prompt.prompt)]),
+    [["/api/t1/prompts", ["Side reply"]]],
+    "Enter sends the open chat's own text to that chat",
+  );
+
+  await openPageChat(chrome);
+  assert.equal(chrome.element("chatPopInput").value, "For the page");
+  assert.equal(chrome.element("chatPopSendPage").textContent, "Send page with your message");
+  chrome.element("chatPopSendPage").onclick();
+  await deliverRound(chrome);
+  assert.deepEqual(
+    posts[1].body.prompts.map((prompt) => prompt.prompt),
+    ["For the page"],
+  );
 });
 
 test("the ⋮ menu's Send page and end does not take a side thread's unsent reply as the page's message", async () => {
@@ -6670,8 +6706,9 @@ test("the ⋮ menu's Send page and end does not take a side thread's unsent repl
     "nothing is sent and the session does not end",
   );
   assert.equal(posts.length, 0);
+  assert.equal(chrome.element("chatPopSendPage").hidden, false, "This page's window is the one shown");
   assert.equal(chrome.element("chatPopHint").textContent, "Nothing queued to send yet.");
-  assert.equal(chrome.element("chatPopInput").value, "For the side thread only");
+  assert.equal(chrome.element("chatPopInput").value, "", "the reply is not shown as This page's text");
 });
 
 test("in a thread inside another page's window, Send page and end takes the sidebar's message", async () => {
@@ -6732,8 +6769,45 @@ test("a failed image behind a closed This page window: Send page and end opens i
     ["Fix the header"],
   );
   assert.notEqual(posts[0].endSession, true, "the session stays open for the held message");
-
-  chrome.element("chatPopSendPage").onclick();
-  assert.notEqual(chrome.element("chatPopHint").textContent, "Page review sent.", "the message was held back");
   assert.equal(chrome.element("chatPopInput").value, "Held back");
+});
+
+function roundRequested(chrome, since) {
+  return chrome.postedToFrame.slice(since).some((message) => message.type === "review-surface:requestSnapshot");
+}
+
+test("the sidebar's Send & End is held while This page has an unsent message or image", async () => {
+  const posts = [];
+  const chrome = await pageChatHarness({ posts });
+  await openPageChat(chrome);
+  chrome.element("chatPopInput").dispatch("paste", clipboardEvent(pastedImage("waiting.png")));
+  await flushPromises();
+  await flushPromises();
+  chrome.element("chatPopClose").onclick();
+  const framePosts = chrome.postedToFrame.length;
+
+  chrome.element("sendAndEnd").onclick();
+  await flushPromises();
+  assert.equal(roundRequested(chrome, framePosts), false, "nothing is sent and the session does not end");
+  assert.equal(posts.length, 0);
+  assert.equal(chrome.element("chatPop").hidden, false, "the chat holding the image opens");
+  assert.equal(chrome.element("chatPopSendPage").hidden, false, "This page's window is the one shown");
+  assert.match(chrome.element("chatPopHint").textContent, /first/i);
+  assert.match(chrome.element("chatPopAttachments").innerHTML, /waiting\.png/, "the image is still there");
+});
+
+test("the ⋮ menu's Send page and end is held while the sidebar has an unsent message", async () => {
+  const posts = [];
+  const chrome = await pageChatHarness({ posts });
+  await flushPromises();
+  chrome.element("chatInput").value = "Typed in the sidebar";
+  const framePosts = chrome.postedToFrame.length;
+
+  chrome.element("sendPageAndEnd").onclick();
+  await flushPromises();
+  assert.equal(roundRequested(chrome, framePosts), false, "nothing is sent and the session does not end");
+  assert.equal(posts.length, 0);
+  assert.equal(chrome.element("sendHint").hidden, false, "the sidebar says why");
+  assert.match(chrome.element("sendHint").textContent, /first/i);
+  assert.equal(chrome.element("chatInput").value, "Typed in the sidebar");
 });
