@@ -1,5 +1,54 @@
 # Changelog
 
+## [0.1.57](https://github.com/Hololoop-AI/review-surface/compare/review-surface-v0.1.56...review-surface-v0.1.57) (2026-11-13)
+
+
+### Features
+
+* a push-delivery page does not claim its agent is not listening ([6993f10](https://github.com/Hololoop-AI/review-surface/commit/6993f10363dc48c61409110b45032c329252f3cf))
+* add composable annotation actions and study threads ([fb8b6b3](https://github.com/Hololoop-AI/review-surface/commit/fb8b6b3d414bfbddb6d5d1ed8097bd1f3f6ee62c))
+* **chrome:** a host app's theme.css restyles the chrome and the annotation card ([0563089](https://github.com/Hololoop-AI/review-surface/commit/056308955a0dfd760ce670f820598bd60c293ee6))
+* **chrome:** a loading page shows the Hololoop ring after 300 ms instead of the checking card ([6d79fe9](https://github.com/Hololoop-AI/review-surface/commit/6d79fe9afbff373bcc74ac12c2ddec8f7ec5ddb1))
+* **chrome:** add footer messenger with page chat, threads across pages, and message feed ([262610a](https://github.com/Hololoop-AI/review-surface/commit/262610ac8f6077751f76a3bbe7e2bfe30d300c80))
+* **chrome:** an older page links to the newest page in its line of work ([e9e5a79](https://github.com/Hololoop-AI/review-surface/commit/e9e5a7932c6109eef5de30f42be22ec714fe8077))
+* **chrome:** Cadre wordmark in the bar and the Hololoop ring mark as the favicon ([14a91b3](https://github.com/Hololoop-AI/review-surface/commit/14a91b3948720e2b05aaeab65f6f9bc2d85f53d5))
+* **chrome:** desktop conversation collapse — Chat toggle in the bar hides the panel so the artifact takes full width ([cee8a6c](https://github.com/Hololoop-AI/review-surface/commit/cee8a6c8856841ff1257cb405ccfdb4bc931cdbc))
+* **chrome:** link an older page to the newest page in its line of work ([c9fefdb](https://github.com/Hololoop-AI/review-surface/commit/c9fefdb2584e9b41f2776cf91b8671e407d9032b))
+* **chrome:** restyle the chrome and annotation card from a host theme.css ([8124965](https://github.com/Hololoop-AI/review-surface/commit/81249654d52d90f5e6bb3555ce010008b112e845))
+* **chrome:** send the page review from the This page chat with text and images ([8c77298](https://github.com/Hololoop-AI/review-surface/commit/8c77298eef1489c04e53bc8113a66c0d4f9ec370))
+* **chrome:** the loading ring breathes like the Hololoop mark ([277d4fe](https://github.com/Hololoop-AI/review-surface/commit/277d4fecfb14bd00a3ecef0949f6ddab97ed43a3))
+* **chrome:** This page chat sends the round with your text and images; Send page and end in the ⋮ menu ([0ddd7d0](https://github.com/Hololoop-AI/review-surface/commit/0ddd7d0cb2f7899c5360f0be5e3b25bbf761a48e))
+* event log, page graph, and always-on server ([647225d](https://github.com/Hololoop-AI/review-surface/commit/647225d3b3d3541d411026789b72cd12cc9a365b))
+* journal every accepted feedback batch; add journal command ([9f42b4d](https://github.com/Hololoop-AI/review-surface/commit/9f42b4d6239f600671498d96830275c055eed53b))
+* **server:** allow one named local origin to frame the review chrome ([25b4cdb](https://github.com/Hololoop-AI/review-surface/commit/25b4cdbf47b5084dbca431fb933c53e65548642e))
+* **server:** Cadre branding, faster page reveal, capped layout check, and loading ring ([7838dbb](https://github.com/Hololoop-AI/review-surface/commit/7838dbb9bf075c0d133361f3afee72063f2bbba0))
+* **server:** GET /open?file=&lt;path&gt; resolves an artifact to its session ([c83a24a](https://github.com/Hololoop-AI/review-surface/commit/c83a24adda99212382115deca9debaa823914fe7))
+* **server:** read-only GET /api/:key/agent-status for external dashboards ([322673f](https://github.com/Hololoop-AI/review-surface/commit/322673f9d48efc4586d44f91d539c398e271d740))
+* **server:** report when a page was last viewed and whether it is unseen ([2bf5588](https://github.com/Hololoop-AI/review-surface/commit/2bf558823c0bfa5d3f54e475b5ee7312a471dfbc))
+* the layout check covers the whole page instead of its first 800 elements ([3f2cb20](https://github.com/Hololoop-AI/review-surface/commit/3f2cb204f2f9a2cf6137629a39b617bc1fda17b0))
+
+
+### Bug Fixes
+
+* **attachments:** image upload and delete work behind a host's proxy ([66b8a00](https://github.com/Hololoop-AI/review-surface/commit/66b8a00a3ea4f45774bb3857f99c03ee816ece8f))
+* **chrome:** a reopened tab catches up on what it missed while hidden ([5767690](https://github.com/Hololoop-AI/review-surface/commit/57676901556f2947eb93e3399e00944ddb28a4fd))
+* **chrome:** hidden review tabs release their live connection and catch up when shown ([cc6d895](https://github.com/Hololoop-AI/review-surface/commit/cc6d8953cac53d0f9284ab86d1e18fa61602f53f))
+* **chrome:** load ended sessions read-only instead of covering them ([8448ea6](https://github.com/Hololoop-AI/review-surface/commit/8448ea6d7397dc11d44ff3d4d8e8090f70121421))
+* **chrome:** the thread window's status follows the thread ([771e973](https://github.com/Hololoop-AI/review-surface/commit/771e9732fe037d25cb797adb73ec36de7673264f))
+* **chrome:** the thread window's status follows the thread ([93401e9](https://github.com/Hololoop-AI/review-surface/commit/93401e91ed7fbacf19b50c9b9137044a83d06ec9))
+* keep the annotation card above the phone keyboard ([c275ffa](https://github.com/Hololoop-AI/review-surface/commit/c275ffafe2128f31d6636cd5c9c629b94f904f32))
+* **server:** image attachments upload and delete behind a host's proxy ([ca3e49a](https://github.com/Hololoop-AI/review-surface/commit/ca3e49a8d17b2f0a24636ca7aa49f5c10de03994))
+* the page frame allows fullscreen ([d8a38d6](https://github.com/Hololoop-AI/review-surface/commit/d8a38d680faaed053a57ed58bd1667f336f285b4))
+
+
+### Performance Improvements
+
+* **chrome:** a hidden tab closes its live stream and catches up when shown ([708d93b](https://github.com/Hololoop-AI/review-surface/commit/708d93b7c8e7daf32d44dd797fe8646aaa29cbe4))
+* pages show as soon as they look final, and the layout check and page copy run without repeated layout reads ([bb7ade3](https://github.com/Hololoop-AI/review-surface/commit/bb7ade3848460d85d8ddf90183c9fb332c968b27))
+* **server:** cache session reads and gzip review page assets ([73e1d48](https://github.com/Hololoop-AI/review-surface/commit/73e1d48b16c2dff9796cbea2c8bb80ef229401f6))
+* **server:** review pages load fast over a slow link ([76cb828](https://github.com/Hololoop-AI/review-surface/commit/76cb8284193db03eabdf304c3293c7badd6037cd))
+* the layout check covers the first 2,000 elements and every control after them ([33d4619](https://github.com/Hololoop-AI/review-surface/commit/33d46195ed391f0c486c8a0eabac97c8925a1b12))
+
 ## [0.1.56](https://github.com/kunchenguid/review-surface/compare/review-surface-v0.1.55...review-surface-v0.1.56) (2026-08-22)
 
 
