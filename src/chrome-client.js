@@ -461,7 +461,10 @@ function renderQueueDock() {
     }),
   );
   if (count === 0) setMenuOpen(queueOpen, queueMenu, false);
-  if (footerReady) renderThreads();
+  if (footerReady) {
+    renderThreads();
+    syncSendPageLabel();
+  }
 }
 
 function updateSendState() {
@@ -1049,7 +1052,12 @@ function requestSnapshot(action) {
   postToFrame({ type: "review-surface:requestSnapshot" });
 }
 
-function createChatAttachmentsController() {
+// One composer's image attachments: its chips, send gate and notice. Each composer (the sidebar's
+// Conversation and the footer's This page chat) gets its own instance over its own chip list and
+// notice, so neither can see or send the other's images.
+// `onChange` runs after every render, so something that mirrors the chips (a button label) follows.
+/** @param {{ list: HTMLElement, notice: HTMLElement, onChange?: () => void }} dom */
+function createChatAttachmentsController({ list, notice, onChange = () => {} }) {
   const items = [];
   let nextId = 0;
   let capRejected = false;
@@ -1060,7 +1068,7 @@ function createChatAttachmentsController() {
   }
 
   function renderAttachments() {
-    chatAttachments.innerHTML = items
+    list.innerHTML = items
       .map((item) => {
         const status = item.status === "uploading" ? "Uploading…" : item.status === "error" ? item.error : "";
         const preview = item.preview
@@ -1099,6 +1107,7 @@ function createChatAttachmentsController() {
       })
       .join("");
     syncNotice();
+    onChange();
   }
 
   // The notice is DERIVED from the current item states on every render, never
@@ -1110,7 +1119,7 @@ function createChatAttachmentsController() {
     const pending = items.some((item) => item.status === "uploading");
     const errored = items.some((item) => item.status === "error");
     if (!pending && !errored) sendBlocked = false;
-    chatAttachmentNotice.textContent =
+    notice.textContent =
       sendBlocked && pending
         ? "Waiting for an image to finish uploading…"
         : sendBlocked && errored
@@ -1234,6 +1243,7 @@ function createChatAttachmentsController() {
       if (item?.file) startUpload(item);
     },
     hasPending: () => items.some((item) => item.status === "uploading"),
+    hasItems: () => items.length > 0,
     hasErrors: () => items.some((item) => item.status === "error"),
     noteSendBlocked() {
       sendBlocked = true;
@@ -1245,9 +1255,26 @@ function createChatAttachmentsController() {
   };
 }
 
-const chatAttachmentController = createChatAttachmentsController();
+const chatAttachmentController = createChatAttachmentsController({
+  list: chatAttachments,
+  notice: chatAttachmentNotice,
+});
 
-function sendQueued(endAfter) {
+/**
+ * A place a freeform message for the round is written: its text box, its images, and how it says
+ * there was nothing to send.
+ * @typedef {{ input: HTMLTextAreaElement, attachments: ReturnType<typeof createChatAttachmentsController>, nothingToSend: () => void, sent: () => void }} RoundComposer
+ */
+/** @type {RoundComposer} */
+const sidebarComposer = {
+  input: chatInput,
+  attachments: chatAttachmentController,
+  nothingToSend: () => showSendHint(),
+  sent: () => {},
+};
+
+/** @param {boolean} [endAfter] @param {RoundComposer} [composer] whose message and images go with the queue */
+function sendQueued(endAfter, composer = sidebarComposer) {
   if (ended) return false;
   closeMenus();
 
@@ -1256,12 +1283,12 @@ function sendQueued(endAfter) {
   // still deliver, mirroring how the annotation card holds only its own card
   // open. Gating the whole pipeline here made Send and Send & End silently
   // deliver nothing while the only signal sat in the composer toolbar.
-  const chipsBlocked = chatAttachmentController.hasPending() || chatAttachmentController.hasErrors();
-  if (chipsBlocked) chatAttachmentController.noteSendBlocked();
+  const chipsBlocked = composer.attachments.hasPending() || composer.attachments.hasErrors();
+  if (chipsBlocked) composer.attachments.noteSendBlocked();
 
   if (!chipsBlocked) {
-    const text = chatInput.value.trim();
-    const attachments = chatAttachmentController.collectReady();
+    const text = composer.input.value.trim();
+    const attachments = composer.attachments.collectReady();
     if (text || attachments.length) {
       const prompt = { uid: "", prompt: text, selector: "", tag: "message", text: "Freeform message" };
       if (attachments.length) prompt.attachments = attachments;
@@ -1269,13 +1296,14 @@ function sendQueued(endAfter) {
       persistQueuedPrompts();
       addChat("user", text || "Image message");
       if (text) renderedChat.push({ role: "user", text });
-      chatInput.value = "";
-      chatAttachmentController.reset();
+      composer.input.value = "";
+      composer.attachments.reset();
+      composer.sent();
       render();
     }
   }
   if (!queued.length) {
-    if (!chipsBlocked) showSendHint();
+    if (!chipsBlocked) composer.nothingToSend();
     return false;
   }
   hideSendHint();
@@ -3237,12 +3265,6 @@ moreButton.onclick = () => {
 warningsButton.onclick = toggleWarningsDrawer;
 warningsSelectAll.onchange = toggleSelectAllWarnings;
 warningsQueueButton.onclick = queueSelectedWarningFixes;
-chatAttachButton.onclick = () => chatAttachInput.click();
-chatAttachInput.addEventListener("change", () => {
-  chatAttachmentController.addFiles(chatAttachInput.files);
-  chatAttachmentController.rejectUnsupported(chatAttachInput.files);
-  chatAttachInput.value = "";
-});
 // The one place a paste or drop is turned into a file list, so both surfaces see
 // the same payload. Pasted screenshots arrive as items, not files, in some
 // browsers; `.files` alone silently attaches nothing there.
@@ -3271,37 +3293,67 @@ function keepsClipboardText(text, files) {
     names.some((name) => line === name || line.endsWith("/" + name) || line.endsWith("\\" + name)),
   );
 }
-chatInput.addEventListener("paste", (event) => {
-  const files = transferredFiles(event.clipboardData);
-  // Images only: Office and macOS pastes expose stray non-image file flavors
-  // beside their text, so unsupported entries raise no chip here (matching the
-  // annotation card) - a chip would block sending for a perceived text paste.
-  const added = chatAttachmentController.addFiles(files);
-  if (added && !keepsClipboardText(event.clipboardData?.getData("text/plain") || "", files)) event.preventDefault();
-});
-chatComposer.addEventListener("dragover", (event) => {
-  if (Array.from(event.dataTransfer?.types || []).includes("Files")) {
+// Wires one composer's attach button, file picker, paste, drop and chip buttons to its controller.
+// Both composers go through here, so the sidebar and the This page chat attach the same way.
+/**
+ * @param {{ controller: ReturnType<typeof createChatAttachmentsController>, textarea: HTMLTextAreaElement, dropZone: HTMLElement, list: HTMLElement, attachButton: HTMLButtonElement, fileInput: HTMLInputElement, accepts?: () => boolean }} parts
+ * `accepts` says whether the composer takes images right now (a side thread's chat window does not).
+ */
+function wireChatAttachments({ controller, textarea, dropZone, list, attachButton, fileInput, accepts = () => true }) {
+  attachButton.onclick = () => fileInput.click();
+  fileInput.addEventListener("change", () => {
+    controller.addFiles(fileInput.files);
+    controller.rejectUnsupported(fileInput.files);
+    fileInput.value = "";
+  });
+  textarea.addEventListener("paste", (event) => {
+    if (!accepts()) return;
+    const files = transferredFiles(event.clipboardData);
+    // Images only: Office and macOS pastes expose stray non-image file flavors
+    // beside their text, so unsupported entries raise no chip here (matching the
+    // annotation card) - a chip would block sending for a perceived text paste.
+    const added = controller.addFiles(files);
+    if (added && !keepsClipboardText(event.clipboardData?.getData("text/plain") || "", files)) event.preventDefault();
+  });
+  dropZone.addEventListener("dragover", (event) => {
+    if (accepts() && Array.from(event.dataTransfer?.types || []).includes("Files")) {
+      event.preventDefault();
+      dropZone.classList.add("is-dropping");
+    }
+  });
+  dropZone.addEventListener("dragleave", (event) => {
+    const entering = /** @type {Node | null} */ (event.relatedTarget);
+    if (!dropZone.contains(entering)) dropZone.classList.remove("is-dropping");
+  });
+  dropZone.addEventListener("drop", (event) => {
+    dropZone.classList.remove("is-dropping");
+    if (!accepts() || !Array.from(event.dataTransfer?.types || []).includes("Files")) return;
     event.preventDefault();
-    chatComposer.classList.add("is-dropping");
-  }
-});
-chatComposer.addEventListener("dragleave", (event) => {
-  const entering = /** @type {Node | null} */ (event.relatedTarget);
-  if (!chatComposer.contains(entering)) chatComposer.classList.remove("is-dropping");
-});
-chatComposer.addEventListener("drop", (event) => {
-  chatComposer.classList.remove("is-dropping");
-  if (!Array.from(event.dataTransfer?.types || []).includes("Files")) return;
-  event.preventDefault();
-  const files = transferredFiles(event.dataTransfer);
-  if (!files.length) {
-    // A drag advertising Files with nothing enumerable: the default was already
-    // consumed, so refuse visibly (like the card) instead of swallowing it.
-    chatAttachmentController.rejectUnsupported([{ name: "file", type: "" }]);
-    return;
-  }
-  chatAttachmentController.addFiles(files);
-  chatAttachmentController.rejectUnsupported(files);
+    const files = transferredFiles(event.dataTransfer);
+    if (!files.length) {
+      // A drag advertising Files with nothing enumerable: the default was already
+      // consumed, so refuse visibly (like the card) instead of swallowing it.
+      controller.rejectUnsupported([{ name: "file", type: "" }]);
+      return;
+    }
+    controller.addFiles(files);
+    controller.rejectUnsupported(files);
+  });
+  list.addEventListener("click", (event) => {
+    const target = /** @type {HTMLElement | null} */ (event.target);
+    const remove = /** @type {HTMLElement | null} */ (target?.closest?.("[data-chat-attachment-remove]") || null);
+    if (remove) controller.remove(String(remove.dataset.chatAttachmentRemove || ""));
+    const retry = /** @type {HTMLElement | null} */ (target?.closest?.("[data-chat-attachment-retry]") || null);
+    if (retry) controller.retry(String(retry.dataset.chatAttachmentRetry || ""));
+  });
+}
+wireChatAttachments({
+  controller: chatAttachmentController,
+  textarea: chatInput,
+  dropZone: chatComposer,
+  list: chatAttachments,
+  attachButton: chatAttachButton,
+  fileInput: chatAttachInput,
 });
 // A file drop that misses the composer must not navigate the chrome away from
 // the session (losing chips, uploads, and the SSE connection). Text drags stay
@@ -3311,13 +3363,6 @@ document.addEventListener("dragover", (event) => {
 });
 document.addEventListener("drop", (event) => {
   if (Array.from(event.dataTransfer?.types || []).includes("Files")) event.preventDefault();
-});
-chatAttachments.addEventListener("click", (event) => {
-  const target = /** @type {HTMLElement | null} */ (event.target);
-  const remove = /** @type {HTMLElement | null} */ (target?.closest?.("[data-chat-attachment-remove]") || null);
-  if (remove) chatAttachmentController.remove(String(remove.dataset.chatAttachmentRemove || ""));
-  const retry = /** @type {HTMLElement | null} */ (target?.closest?.("[data-chat-attachment-retry]") || null);
-  if (retry) chatAttachmentController.retry(String(retry.dataset.chatAttachmentRetry || ""));
 });
 chatInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
@@ -4023,6 +4068,52 @@ const chatPopExpand = /** @type {HTMLButtonElement} */ (document.getElementById(
 const chatPopClose = /** @type {HTMLButtonElement} */ (document.getElementById("chatPopClose"));
 const chatPopFull = /** @type {HTMLButtonElement} */ (document.getElementById("chatPopFull"));
 const chatPopSendPage = /** @type {HTMLButtonElement} */ (document.getElementById("chatPopSendPage"));
+const chatPopAttachments = /** @type {HTMLDivElement} */ (document.getElementById("chatPopAttachments"));
+const chatPopAttachBar = /** @type {HTMLDivElement} */ (document.getElementById("chatPopAttachBar"));
+const chatPopAttach = /** @type {HTMLButtonElement} */ (document.getElementById("chatPopAttach"));
+const chatPopAttachInput = /** @type {HTMLInputElement} */ (document.getElementById("chatPopAttachInput"));
+const chatPopAttachmentNotice = /** @type {HTMLSpanElement} */ (document.getElementById("chatPopAttachmentNotice"));
+const sendPageAndEndButton = /** @type {HTMLButtonElement} */ (document.getElementById("sendPageAndEnd"));
+// This page's chat is where the round's own message is written now (the sidebar composer is the
+// fallback): text in its box and its images go with Send page; Enter is a direct chat and carries
+// neither images nor the queue.
+const chatPopAttachmentController = createChatAttachmentsController({
+  list: chatPopAttachments,
+  notice: chatPopAttachmentNotice,
+  onChange: () => syncSendPageLabel(),
+});
+/** @type {RoundComposer} */
+const pageChatComposer = {
+  input: chatPopInput,
+  attachments: chatPopAttachmentController,
+  // Say it where the message was written; from the ⋮ menu the window may be shut, so open it.
+  nothingToSend() {
+    if (!pageChatOffered()) {
+      showSendHint();
+      return;
+    }
+    if (activeChat !== pageChatKey || chatPop.hidden) openChat(pageChatKey);
+    chatPopHint.textContent = "Nothing queued to send yet.";
+  },
+  sent: () => syncSendPageLabel(),
+};
+wireChatAttachments({
+  controller: chatPopAttachmentController,
+  textarea: chatPopInput,
+  dropZone: chatPopForm,
+  list: chatPopAttachments,
+  attachButton: chatPopAttach,
+  fileInput: chatPopAttachInput,
+  accepts: () => activeChat === pageChatKey,
+});
+
+// The Send page label tells you what it will send: your message once the box has one, and how
+// many queued notes go with it.
+function syncSendPageLabel() {
+  const withMessage = Boolean(chatPopInput.value.trim()) || chatPopAttachmentController.hasItems();
+  const label = withMessage ? "Send page with your message" : "Send page";
+  chatPopSendPage.textContent = queued.length ? `${label} (${queued.length})` : label;
+}
 
 /**
  * @param {string} threadKey
@@ -4042,9 +4133,14 @@ function openChat(threadKey, anchor = null) {
   chatPopQuick.closest?.("label")?.toggleAttribute("hidden", Boolean(thread.feed));
   chatPopExpand.hidden = Boolean(thread.feed || thread.pageChat);
   chatPopSendPage.hidden = !thread.pageChat;
+  // Images only ride on Send page, so only This page offers them; a host conversation has neither
+  // images nor a speed, so its whole row goes.
+  chatPopAttach.hidden = !thread.pageChat;
+  chatPopAttachments.hidden = !thread.pageChat;
+  chatPopAttachBar.hidden = Boolean(thread.feed);
   chatPop.classList.toggle("page-chat", Boolean(thread.pageChat));
   chatPopInput.placeholder = thread.pageChat
-    ? "Talk to this page's agent. Enter sends; Send page sends the review."
+    ? "Message this page's agent. Enter chats; Send page sends the review."
     : "Reply…";
   if (thread.feed) feedKeep.set(thread.key, thread);
   chatPop.hidden = false;
@@ -4120,7 +4216,8 @@ async function refreshChat() {
   chatPopInput.disabled = ended;
   chatPopSend.disabled = ended;
   chatPopSendPage.disabled = ended;
-  chatPopSendPage.textContent = queued.length ? `Send page (${queued.length})` : "Send page";
+  chatPopAttach.disabled = ended;
+  syncSendPageLabel();
   if (ended) chatPopHint.textContent = "This thread has ended.";
 }
 
@@ -4152,6 +4249,7 @@ async function sendChat() {
   }
   chatPopSend.disabled = false;
   chatPopInput.value = "";
+  syncSendPageLabel();
   chatPopHint.textContent = chatPopQuick.checked ? "Sent - asked for a quick answer." : "Sent.";
   if (threadKey === pageChatKey) {
     // The sidebar shows the same conversation; keep its transcript in step.
@@ -4346,9 +4444,14 @@ function setChatFull(full) {
   chatPopLog.scrollTop = chatPopLog.scrollHeight;
 }
 chatPopFull.onclick = () => setChatFull(!chatPop.classList.contains("full"));
+chatPopInput.addEventListener("input", syncSendPageLabel);
 chatPopSendPage.onclick = () => {
-  chatPopHint.textContent = sendQueued(false) ? "Page review sent." : "Nothing queued to send yet.";
-  chatPopSendPage.textContent = "Send page";
+  if (sendQueued(false, pageChatComposer)) chatPopHint.textContent = "Page review sent.";
+};
+// The sidebar's Send & End, from the ⋮ menu beside End session, with This page's message and images.
+sendPageAndEndButton.onclick = () => {
+  closeMenus();
+  sendQueued(true, pageChatComposer);
 };
 chatPopExpand.onclick = () => {
   const threadKey = activeChat;
