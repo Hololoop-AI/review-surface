@@ -724,8 +724,66 @@ test("Tab cannot walk behind an open full-size view", () => {
 test("leaving the frame hides the expand button", () => {
   const sdk = bootSdk();
   sdk.dispatch("pointerover", { target: image(sdk, LARGE) });
-  sdk.dispatch("pointerout", { target: sdk.body, relatedTarget: null });
+  sdk.dispatch("pointerout", { target: sdk.body, relatedTarget: null, pointerType: "mouse" });
   assert.equal(expandButton(sdk).hidden, true);
+});
+
+test("lifting a finger off a tapped image keeps its expand button for the next tap", () => {
+  const sdk = bootSdk();
+  const img = image(sdk, LARGE);
+  sdk.dispatch("pointerover", { target: img, pointerType: "touch" });
+  sdk.dispatch("pointerout", { target: img, relatedTarget: null, pointerType: "touch" });
+  assert.equal(expandButton(sdk).hidden, false, "the button is still there to tap");
+  expandButton(sdk).onclick({ preventDefault() {}, stopPropagation() {} });
+  assert.equal(lightbox(sdk).hidden, false, "and tapping it opens the image");
+
+  sdk.dispatch("keydown", escapeKey());
+  sdk.dispatch("pointerover", { target: img, pointerType: "touch" });
+  sdk.dispatch("pointerover", { target: appendTo(sdk.body, createElement("p")), pointerType: "touch" });
+  assert.equal(expandButton(sdk).hidden, true, "a tap elsewhere puts it away");
+});
+
+function fire(element, type) {
+  const event = { ...escapeKey(), key: undefined };
+  event.preventDefault = () => (event.defaultPrevented = true);
+  for (const entry of element.listeners.filter((listener) => listener.type === type)) entry.handler(event);
+  return { event };
+}
+
+test("pressing the expand button does not take focus from what the reader was in", () => {
+  const sdk = bootSdk();
+  sdk.dispatch("pointerover", { target: image(sdk, LARGE) });
+  const press = fire(expandButton(sdk), "mousedown");
+  assert.equal(press.event.defaultPrevented, true, "the press is refused its default focus move");
+});
+
+test("an open full-size view keeps keys and touch drags from scrolling the page behind", () => {
+  const sdk = bootSdk();
+  sdk.dispatch("pointerover", { target: image(sdk, LARGE) });
+  expandButton(sdk).onclick({ preventDefault() {}, stopPropagation() {} });
+  const scrollKeys = [" ", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "PageUp", "PageDown", "Home", "End"];
+  for (const key of scrollKeys) {
+    const press = { ...escapeKey(), key };
+    press.preventDefault = () => (press.defaultPrevented = true);
+    sdk.dispatch("keydown", press);
+    assert.equal(press.defaultPrevented, true, JSON.stringify(key) + " does not scroll the page");
+    assert.equal(lightbox(sdk).hidden, false, JSON.stringify(key) + " does not close it");
+  }
+  const typed = { ...escapeKey(), key: "a" };
+  typed.preventDefault = () => (typed.defaultPrevented = true);
+  sdk.dispatch("keydown", typed);
+  assert.equal(typed.defaultPrevented, false, "other keys are left alone");
+
+  assert.equal(fire(lightbox(sdk), "touchmove").event.defaultPrevented, true, "a drag does not scroll it");
+  assert.equal(fire(lightbox(sdk), "wheel").event.defaultPrevented, true, "nor does the wheel");
+});
+
+test("with no full-size view open the scrolling keys are left to the page", () => {
+  const sdk = bootSdk();
+  const press = { ...escapeKey(), key: "PageDown" };
+  press.preventDefault = () => (press.defaultPrevented = true);
+  sdk.dispatch("keydown", press);
+  assert.equal(press.defaultPrevented, false);
 });
 
 test("an image removed since it was pointed at does not open", () => {
