@@ -5,10 +5,10 @@ import vm from "node:vm";
 import { CHROME_THEME_FAVICON_JS, createChromeHtml, extractArtifactHead } from "../src/server.js";
 
 // A document just big enough for the favicon script: a root element whose computed --accent the
-// test sets, a head holding the icon link, a MutationObserver the test can fire, and capturing
+// test sets, a host theme style block the test can add or remove, a head holding the icon link, a MutationObserver the test can fire, and capturing
 // load listeners.
-function fakeDocument({ marked = true, accent = "#7fbbb3" } = {}) {
-  const state = { accent, observers: [], loadListeners: [], mediaListeners: [] };
+function fakeDocument({ marked = true, accent = "#7fbbb3", hostTheme = true } = {}) {
+  const state = { accent, hostTheme, observers: [], loadListeners: [], mediaListeners: [] };
   const link = {
     rel: "icon",
     href: "data:image/svg+xml;base64,STATIC",
@@ -19,6 +19,7 @@ function fakeDocument({ marked = true, accent = "#7fbbb3" } = {}) {
   const document = {
     documentElement,
     head,
+    getElementById: (id) => (id === "review-surface-host-theme" && state.hostTheme ? { nodeName: "STYLE" } : null),
     querySelector: (selector) =>
       selector === "link[rel~=icon][data-review-surface-theme-icon]" && marked ? link : null,
     addEventListener: (type, fn, capture) => {
@@ -72,6 +73,10 @@ test("the tab icon redraws when the theme changes, and only then", () => {
   assert.ok(watched.includes(head), "watches stylesheets in the head");
   const root = observer.targets.find((entry) => entry.target === documentElement).options;
   assert.deepEqual([...root.attributeFilter].sort(), ["class", "data-theme", "style"]);
+  const headOptions = observer.targets.find((entry) => entry.target === head).options;
+  assert.equal(headOptions.childList, true, "a stylesheet added or removed");
+  assert.equal(headOptions.subtree, true, "changes inside the head's elements");
+  assert.equal(headOptions.characterData, true, "the inlined theme style block rewritten");
 
   state.accent = "oklch(70% 0.1 200)";
   observer.fn([]);
@@ -110,6 +115,35 @@ test("with no --accent yet the built-in icon stays", () => {
   assert.match(decoded(link.href), /stroke='#7fbbb3'/);
 });
 
+test("without a host theme the built-in icon stays, whatever --accent chrome.css defines", () => {
+  const { context, link, state } = fakeDocument({ accent: "#f4c95d", hostTheme: false });
+  vm.runInNewContext(CHROME_THEME_FAVICON_JS, context);
+  assert.equal(link.href, "data:image/svg+xml;base64,STATIC");
+
+  state.observers[0].fn([]);
+  state.loadListeners[0]();
+  assert.equal(link.href, "data:image/svg+xml;base64,STATIC");
+
+  state.hostTheme = true;
+  state.accent = "#7fbbb3";
+  state.observers[0].fn([]); // the theme block arrived in the head
+  assert.match(decoded(link.href), /stroke='#7fbbb3'/);
+});
+
+test("removing the host theme restores the built-in icon, and a returning theme redraws", () => {
+  const { context, link, state } = fakeDocument({ accent: "#7fbbb3" });
+  vm.runInNewContext(CHROME_THEME_FAVICON_JS, context);
+  assert.match(decoded(link.href), /stroke='#7fbbb3'/);
+
+  state.hostTheme = false;
+  state.observers[0].fn([]);
+  assert.equal(link.href, "data:image/svg+xml;base64,STATIC");
+
+  state.hostTheme = true;
+  state.observers[0].fn([]); // same accent as before the removal
+  assert.match(decoded(link.href), /stroke='#7fbbb3'/);
+});
+
 test("a quote in --accent cannot break out of the icon's markup", () => {
   const { context, link } = fakeDocument({ accent: "red' onload='x" });
   vm.runInNewContext(CHROME_THEME_FAVICON_JS, context);
@@ -122,10 +156,19 @@ test("only the default favicon is marked to follow the theme", () => {
   assert.doesNotMatch(own.faviconTag, /data-review-surface-theme-icon/);
 });
 
-test("the chrome page runs the favicon script before the client script", () => {
-  const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
-  const script = html.indexOf(CHROME_THEME_FAVICON_JS);
-  assert.ok(script > 0, "favicon script is inlined");
-  assert.ok(script < html.indexOf('src="/chrome-client.js'), "it does not depend on the client loading");
-  assert.ok(script > html.indexOf('id="review-surface-host-theme"') || !html.includes("review-surface-host-theme"));
+test("the chrome page runs the favicon script after the host theme and before the boot failsafe", () => {
+  const html = createChromeHtml(
+    { key: "abc", file: "/tmp/artifact.html" },
+    { hostTheme: ":root { --accent: #7fbbb3; }" },
+  );
+  const scripts = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)];
+  const favicon = scripts.find((entry) => entry[1] === CHROME_THEME_FAVICON_JS);
+  assert.ok(favicon, "favicon script is inlined");
+  const failsafe = scripts.find((entry) => entry[1].includes("__reviewSurfaceChromeBootFailed"));
+  assert.ok(failsafe, "boot failsafe is inlined");
+  const theme = html.indexOf('<style id="review-surface-host-theme">');
+  assert.ok(theme > 0, "host theme is inlined");
+  assert.ok(theme < favicon.index, "the theme is already applied when the icon is first drawn");
+  assert.ok(favicon.index < failsafe.index, "before the boot failsafe");
+  assert.ok(favicon.index < html.indexOf('src="/chrome-client.js'), "it does not depend on the client loading");
 });

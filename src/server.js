@@ -2955,13 +2955,17 @@ const LAVISH_DEFAULT_FAVICON = `<link rel="icon" data-review-surface-theme-icon 
 // page's CSS, so the mark is redrawn from the root element's --accent whenever the theme could
 // have changed: the root's style, class or data-theme; a stylesheet added, removed, re-pointed or
 // rewritten in the head; one finishing loading (capture, since load does not bubble); or the
-// system light/dark setting. With no --accent the static icon above stays. Inline and before
+// system light/dark setting. It recolors only while the host theme's style block is on the page:
+// chrome.css always defines a built-in --accent, so without that block (or with no --accent) the
+// static icon above stays, and it comes back if the block is removed. Inline and before
 // chrome-client.js so it needs nothing else on the page to work.
 export const CHROME_THEME_FAVICON_JS = `(function(){
 var link=document.querySelector("link[rel~=icon][data-review-surface-theme-icon]");
 if(!link)return;
+var original=link.href;
 var last=null;
 function draw(){
+if(!document.getElementById("review-surface-host-theme")){if(last!==null){last=null;link.href=original;}return;}
 var accent=getComputedStyle(document.documentElement).getPropertyValue("--accent").trim().replace(/['"<>&]/g,"");
 if(!accent||accent===last)return;
 last=accent;
