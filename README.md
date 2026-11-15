@@ -40,6 +40,10 @@ are the token block at the top of `src/chrome.css`). With no file, the
 built-in look is used; an unreadable file is reported on stderr and the
 built-in look is served.
 
+The tab icon follows the theme too: unless the artifact sets its own icon,
+the page draws the Hololoop mark in the theme's `--accent` and redraws it
+when the theme changes.
+
 ## Images
 
 An image drawn larger than about 200px shows an expand button in its top-right

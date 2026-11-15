@@ -203,7 +203,7 @@ function parseChromeElements(html) {
 // would in a browser.
 function bootChromeFailsafe(options = {}) {
   const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" }, options);
-  const inline = html.match(/<script>([\s\S]*?)<\/script>\s*<script src="\/chrome-client\.js"/);
+  const inline = html.match(/<script>((?:(?!<script>)[\s\S])*?)<\/script>\s*<script src="\/chrome-client\.js"/);
   assert.ok(inline, "the chrome page must inline a boot failsafe before its client script");
 
   const elements = parseChromeElements(html);
@@ -5685,13 +5685,15 @@ function restoreEnv(name, value) {
 test("chrome falls back to a default favicon and title when none are provided", () => {
   const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
 
-  assert.match(html, /<link rel="icon" href="data:image\/svg\+xml[;,]/);
+  assert.match(html, /<link rel="icon" data-review-surface-theme-icon href="data:image\/svg\+xml[;,]/);
   assert.match(html, /<title>Review Surface<\/title>/);
 });
 
 test("the default favicon is the Hololoop ring mark", () => {
   const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
-  const href = html.match(/<link rel="icon" href="data:image\/svg\+xml;base64,([^"]+)">/);
+  const href = html.match(
+    /<link rel="icon" data-review-surface-theme-icon href="data:image\/svg\+xml;base64,([^"]+)">/,
+  );
   assert.ok(href, "default favicon is a base64 SVG data URI");
   const svg = Buffer.from(href[1], "base64").toString("utf8");
 
@@ -5712,7 +5714,9 @@ test("GET /favicon.ico serves the same Hololoop mark for pages that declare no i
     assert.equal(res.status, 200);
     assert.match(res.headers.get("content-type") || "", /^image\/svg\+xml/);
     const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
-    const href = html.match(/<link rel="icon" href="data:image\/svg\+xml;base64,([^"]+)">/);
+    const href = html.match(
+      /<link rel="icon" data-review-surface-theme-icon href="data:image\/svg\+xml;base64,([^"]+)">/,
+    );
     assert.ok(href, "default favicon is a base64 SVG data URI");
     assert.equal(await res.text(), Buffer.from(href[1], "base64").toString("utf8"), "one source for both");
   } finally {
