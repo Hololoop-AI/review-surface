@@ -39,6 +39,9 @@ function createElement(tag) {
     getAttribute(name) {
       return attributes.has(name) ? attributes.get(name) : null;
     },
+    removeAttribute(name) {
+      attributes.delete(name);
+    },
     matches(selectorList) {
       return String(selectorList)
         .split(",")
@@ -183,6 +186,16 @@ function bootSdk({ querySelectorAll = () => [], sdkOptions = {} } = {}) {
     posted,
     body,
     api: sandbox.window.reviewSurface,
+    resize() {
+      for (const entry of windowListeners.filter((listener) => listener.type === "resize")) entry.handler({});
+    },
+    dispatch(type, event) {
+      for (const entry of documentListeners.filter((listener) => listener.type === type)) entry.handler(event);
+      return event;
+    },
+    overlay() {
+      return documentElement.children.flatMap((child) => child.shadowRoot?.children || []);
+    },
     click(target, extra = {}) {
       const listener = documentListeners.find((entry) => entry.type === "click");
       assert.ok(listener, "the SDK registers a document click listener");
@@ -590,4 +603,245 @@ test("an action that throws keeps the card open and says why", () => {
   sdk.click(appendTo(sdk.body, cell("p", "x")));
   actionButton(sdk.card(), 0).onclick();
   assert.equal(sdk.card().querySelector(".review-surface-hint").textContent, "no host to ask");
+});
+
+function image(sdk, rect, src = "http://127.0.0.1/artifact/abc/shot.png") {
+  const img = appendTo(sdk.body, createElement("img"));
+  img.src = src;
+  img.currentSrc = src;
+  img.alt = "Screenshot";
+  img.getBoundingClientRect = () => ({ ...rect, width: rect.right - rect.left, height: rect.bottom - rect.top });
+  return img;
+}
+
+function escapeKey() {
+  const event = {
+    key: "Escape",
+    defaultPrevented: false,
+    preventDefault() {
+      event.defaultPrevented = true;
+    },
+    stopPropagation() {},
+  };
+  return event;
+}
+
+const LARGE = { left: 100, top: 50, right: 500, bottom: 350 };
+
+function expandButton(sdk) {
+  return sdk.overlay().find((child) => child.className === "review-surface-image-expand");
+}
+
+function lightbox(sdk) {
+  return sdk.overlay().find((child) => child.className === "review-surface-lightbox");
+}
+
+test("pointing at a large image shows an expand button in its corner", () => {
+  const sdk = bootSdk();
+  sdk.dispatch("pointerover", { target: image(sdk, LARGE) });
+  const button = expandButton(sdk);
+  assert.ok(button, "a large image gets an expand button");
+  assert.equal(button.hidden, false);
+  assert.equal(button.getAttribute("aria-label"), "Expand image");
+  assert.deepEqual([button.style.left, button.style.top], ["460px", "58px"]);
+});
+
+test("a small image gets no expand button", () => {
+  const sdk = bootSdk();
+  sdk.dispatch("pointerover", { target: image(sdk, { left: 0, top: 0, right: 120, bottom: 90 }) });
+  const button = expandButton(sdk);
+  assert.ok(!button || button.hidden, "an icon-sized image is left alone");
+});
+
+test("the expand button opens the image full size, and Esc or a click closes it", () => {
+  const sdk = bootSdk();
+  const img = image(sdk, LARGE);
+  sdk.dispatch("pointerover", { target: img });
+  expandButton(sdk).onclick({ preventDefault() {}, stopPropagation() {} });
+  assert.equal(expandButton(sdk).hidden, true, "the button steps aside while the image is open");
+
+  const box = lightbox(sdk);
+  assert.ok(box, "the expand button opens a full-size view");
+  assert.equal(box.hidden, false);
+  assert.equal(box.getAttribute("role"), "dialog");
+  assert.equal(box.querySelector("img").src, "http://127.0.0.1/artifact/abc/shot.png");
+  assert.equal(sdk.cards().length, 0, "expanding is not an annotation");
+
+  const esc = sdk.dispatch("keydown", escapeKey());
+  assert.equal(box.hidden, true, "Esc closes the full-size view");
+  assert.equal(esc.defaultPrevented, true);
+
+  sdk.dispatch("pointerover", { target: img });
+  expandButton(sdk).onclick({ preventDefault() {}, stopPropagation() {} });
+  assert.equal(box.hidden, false);
+  box.onclick({ preventDefault() {}, stopPropagation() {} });
+  assert.equal(box.hidden, true, "a click closes the full-size view");
+});
+
+test("Esc with no full-size view open is left to the page", () => {
+  const sdk = bootSdk();
+  const esc = sdk.dispatch("keydown", escapeKey());
+  assert.equal(esc.defaultPrevented, false);
+});
+
+test("a click on the image itself still annotates it", () => {
+  const sdk = bootSdk();
+  const img = image(sdk, LARGE);
+  sdk.dispatch("pointerover", { target: img });
+  sdk.click(img);
+  assert.equal(sdk.cards().length, 1, "the image opens an annotation card as before");
+  assert.ok(!lightbox(sdk) || lightbox(sdk).hidden, "and no full-size view");
+});
+
+test("pointing away from the image hides its expand button", () => {
+  const sdk = bootSdk();
+  sdk.dispatch("pointerover", { target: image(sdk, LARGE) });
+  sdk.dispatch("pointerover", { target: appendTo(sdk.body, createElement("p")) });
+  assert.equal(expandButton(sdk).hidden, true);
+});
+
+test("a full-size view opened after a card was made still draws on top of it", () => {
+  const sdk = bootSdk();
+  const img = image(sdk, LARGE);
+  sdk.dispatch("pointerover", { target: img });
+  expandButton(sdk).onclick({ preventDefault() {}, stopPropagation() {} });
+  sdk.dispatch("keydown", escapeKey());
+  sdk.click(appendTo(sdk.body, cell("p", "A paragraph")));
+  assert.equal(sdk.cards().length, 1);
+  sdk.dispatch("pointerover", { target: img });
+  expandButton(sdk).onclick({ preventDefault() {}, stopPropagation() {} });
+  assert.equal(sdk.overlay().at(-1), lightbox(sdk), "the view is the shadow root's last child");
+});
+
+test("Tab cannot walk behind an open full-size view", () => {
+  const sdk = bootSdk();
+  sdk.dispatch("pointerover", { target: image(sdk, LARGE) });
+  expandButton(sdk).onclick({ preventDefault() {}, stopPropagation() {} });
+  const tab = { ...escapeKey(), key: "Tab" };
+  tab.preventDefault = () => (tab.defaultPrevented = true);
+  sdk.dispatch("keydown", tab);
+  assert.equal(tab.defaultPrevented, true);
+  assert.equal(lightbox(sdk).hidden, false, "Tab does not close it");
+});
+
+test("leaving the frame hides the expand button", () => {
+  const sdk = bootSdk();
+  sdk.dispatch("pointerover", { target: image(sdk, LARGE) });
+  sdk.dispatch("pointerout", { target: sdk.body, relatedTarget: null, pointerType: "mouse" });
+  assert.equal(expandButton(sdk).hidden, true);
+});
+
+test("lifting a finger off a tapped image keeps its expand button for the next tap", () => {
+  const sdk = bootSdk();
+  const img = image(sdk, LARGE);
+  sdk.dispatch("pointerover", { target: img, pointerType: "touch" });
+  sdk.dispatch("pointerout", { target: img, relatedTarget: null, pointerType: "touch" });
+  assert.equal(expandButton(sdk).hidden, false, "the button is still there to tap");
+  expandButton(sdk).onclick({ preventDefault() {}, stopPropagation() {} });
+  assert.equal(lightbox(sdk).hidden, false, "and tapping it opens the image");
+
+  sdk.dispatch("keydown", escapeKey());
+  sdk.dispatch("pointerover", { target: img, pointerType: "touch" });
+  sdk.dispatch("pointerover", { target: appendTo(sdk.body, createElement("p")), pointerType: "touch" });
+  assert.equal(expandButton(sdk).hidden, true, "a tap elsewhere puts it away");
+});
+
+function fire(element, type, extra = {}) {
+  const event = { ...escapeKey(), key: undefined, ...extra };
+  event.preventDefault = () => (event.defaultPrevented = true);
+  for (const entry of element.listeners.filter((listener) => listener.type === type)) entry.handler(event);
+  return { event };
+}
+
+test("pressing the expand button does not take focus from what the reader was in", () => {
+  const sdk = bootSdk();
+  sdk.dispatch("pointerover", { target: image(sdk, LARGE) });
+  const press = fire(expandButton(sdk), "mousedown");
+  assert.equal(press.event.defaultPrevented, true, "the press is refused its default focus move");
+});
+
+test("an open full-size view keeps keys and touch drags from scrolling the page behind", () => {
+  const sdk = bootSdk();
+  sdk.dispatch("pointerover", { target: image(sdk, LARGE) });
+  expandButton(sdk).onclick({ preventDefault() {}, stopPropagation() {} });
+  const scrollKeys = [" ", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "PageUp", "PageDown", "Home", "End"];
+  for (const key of scrollKeys) {
+    const press = { ...escapeKey(), key };
+    press.preventDefault = () => (press.defaultPrevented = true);
+    sdk.dispatch("keydown", press);
+    assert.equal(press.defaultPrevented, true, JSON.stringify(key) + " does not scroll the page");
+    assert.equal(lightbox(sdk).hidden, false, JSON.stringify(key) + " does not close it");
+  }
+  const typed = { ...escapeKey(), key: "a" };
+  typed.preventDefault = () => (typed.defaultPrevented = true);
+  sdk.dispatch("keydown", typed);
+  assert.equal(typed.defaultPrevented, false, "other keys are left alone");
+
+  const drag = fire(lightbox(sdk), "touchmove", { touches: [{}] });
+  assert.equal(drag.event.defaultPrevented, true, "a one-finger drag does not scroll it");
+  assert.equal(fire(lightbox(sdk), "wheel").event.defaultPrevented, true, "nor does the wheel");
+});
+
+test("two fingers on the full-size view are left to the browser, so the image can be pinch-zoomed", () => {
+  const sdk = bootSdk();
+  sdk.dispatch("pointerover", { target: image(sdk, LARGE) });
+  expandButton(sdk).onclick({ preventDefault() {}, stopPropagation() {} });
+  const pinch = fire(lightbox(sdk), "touchmove", { touches: [{}, {}] });
+  assert.equal(pinch.event.defaultPrevented, false);
+});
+
+test("a resize moves the expand button with its image instead of hiding it", () => {
+  const sdk = bootSdk();
+  const img = image(sdk, LARGE);
+  sdk.dispatch("pointerover", { target: img });
+  const moved = { left: 20, top: 120, right: 420, bottom: 420 };
+  img.getBoundingClientRect = () => ({ ...moved, width: 400, height: 300 });
+  sdk.resize();
+  const button = expandButton(sdk);
+  assert.equal(button.hidden, false, "a keyboard opening does not take the button away");
+  assert.deepEqual([button.style.left, button.style.top], ["380px", "128px"], "it sits in the image's new corner");
+  button.onclick({ preventDefault() {}, stopPropagation() {} });
+  assert.equal(lightbox(sdk).hidden, false, "and still opens that image");
+});
+
+test("a resize that leaves the image too small or removes it hides the expand button", () => {
+  const sdk = bootSdk();
+  const shrunk = image(sdk, LARGE);
+  sdk.dispatch("pointerover", { target: shrunk });
+  shrunk.getBoundingClientRect = () => ({ left: 0, top: 0, right: 120, bottom: 90, width: 120, height: 90 });
+  sdk.resize();
+  assert.equal(expandButton(sdk).hidden, true, "an image no longer large enough loses its button");
+
+  const removed = image(sdk, LARGE);
+  sdk.dispatch("pointerover", { target: removed });
+  removed.isConnected = false;
+  sdk.resize();
+  assert.equal(expandButton(sdk).hidden, true, "so does one that is gone");
+});
+
+test("a resize with no expand button showing brings none back", () => {
+  const sdk = bootSdk();
+  const img = image(sdk, LARGE);
+  sdk.dispatch("pointerover", { target: img });
+  sdk.dispatch("pointerover", { target: appendTo(sdk.body, createElement("p")) });
+  sdk.resize();
+  assert.equal(expandButton(sdk).hidden, true);
+});
+
+test("with no full-size view open the scrolling keys are left to the page", () => {
+  const sdk = bootSdk();
+  const press = { ...escapeKey(), key: "PageDown" };
+  press.preventDefault = () => (press.defaultPrevented = true);
+  sdk.dispatch("keydown", press);
+  assert.equal(press.defaultPrevented, false);
+});
+
+test("an image removed since it was pointed at does not open", () => {
+  const sdk = bootSdk();
+  const img = image(sdk, LARGE);
+  sdk.dispatch("pointerover", { target: img });
+  img.isConnected = false;
+  expandButton(sdk).onclick({ preventDefault() {}, stopPropagation() {} });
+  assert.ok(!lightbox(sdk) || lightbox(sdk).hidden, "nothing opens for a removed image");
+  assert.equal(expandButton(sdk).hidden, true);
 });

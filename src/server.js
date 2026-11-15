@@ -40,6 +40,7 @@ import {
   serializeLayoutWarnings,
 } from "./layout-warnings.js";
 import * as mermaidNode from "./mermaid-node.js";
+import * as imageExpandHelpers from "./image-expand.js";
 import * as tableCellHelpers from "./table-cell.js";
 import { extractMermaidSources, mermaidSourceHash } from "./mermaid-source.js";
 import {
@@ -3201,6 +3202,7 @@ export function createSdkJs(
 ) {
   const mermaidHelperSource = serializeModuleHelpers(mermaidNode);
   const tableHelperSource = serializeModuleHelpers(tableCellHelpers);
+  const imageExpandHelperSource = serializeModuleHelpers(imageExpandHelpers);
   const revisionNumber = Number(artifactRevision);
   const revision = Number.isFinite(revisionNumber) && revisionNumber >= 0 ? Math.trunc(revisionNumber) : 0;
   const loadToken = String(artifactLoadToken || "").slice(0, 200);
@@ -3241,6 +3243,7 @@ const annotationActionPrompt=${annotationActionPrompt.toString()};
 ${mermaidHelperSource.declarations}
 const mermaidHelpers={ ${mermaidHelperSource.names.join(", ")} };
 ${tableHelperSource.declarations}
+${imageExpandHelperSource.declarations}
 (${createArtifactSdk.toString()})(deriveQueueKey, isNativeInteractiveControl, mermaidHelpers, artifactRevision, artifactLoadToken, key, ${JSON.stringify(sdkOptions)});
 })();`;
 }

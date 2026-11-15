@@ -39,3 +39,9 @@ and it should override custom properties under `:root, :host` (the chrome's
 are the token block at the top of `src/chrome.css`). With no file, the
 built-in look is used; an unreadable file is reported on stderr and the
 built-in look is served.
+
+## Images
+
+An image drawn larger than about 200px shows an expand button in its top-right
+corner when you point at it. The button opens the image full size over the
+page; Esc or a click closes it. A click on the image itself still annotates it.
