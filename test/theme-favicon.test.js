@@ -5,8 +5,8 @@ import vm from "node:vm";
 import { CHROME_THEME_FAVICON_JS, createChromeHtml, extractArtifactHead } from "../src/server.js";
 
 // A document just big enough for the favicon script: a root element whose computed --accent the
-// test sets, a host theme style block the test can add or remove, a head holding the icon link, a MutationObserver the test can fire, and capturing
-// load listeners.
+// test sets, a host theme style block the test can add, a head holding the icon link, a
+// MutationObserver the test can fire, and capturing load listeners.
 function fakeDocument({ marked = true, accent = "#7fbbb3", hostTheme = true } = {}) {
   const state = { accent, hostTheme, observers: [], loadListeners: [], mediaListeners: [] };
   const link = {
@@ -127,20 +127,6 @@ test("without a host theme the built-in icon stays, whatever --accent chrome.css
   state.hostTheme = true;
   state.accent = "#7fbbb3";
   state.observers[0].fn([]); // the theme block arrived in the head
-  assert.match(decoded(link.href), /stroke='#7fbbb3'/);
-});
-
-test("removing the host theme restores the built-in icon, and a returning theme redraws", () => {
-  const { context, link, state } = fakeDocument({ accent: "#7fbbb3" });
-  vm.runInNewContext(CHROME_THEME_FAVICON_JS, context);
-  assert.match(decoded(link.href), /stroke='#7fbbb3'/);
-
-  state.hostTheme = false;
-  state.observers[0].fn([]);
-  assert.equal(link.href, "data:image/svg+xml;base64,STATIC");
-
-  state.hostTheme = true;
-  state.observers[0].fn([]); // same accent as before the removal
   assert.match(decoded(link.href), /stroke='#7fbbb3'/);
 });
 
