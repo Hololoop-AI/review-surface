@@ -186,6 +186,9 @@ function bootSdk({ querySelectorAll = () => [], sdkOptions = {} } = {}) {
     posted,
     body,
     api: sandbox.window.reviewSurface,
+    resize() {
+      for (const entry of windowListeners.filter((listener) => listener.type === "resize")) entry.handler({});
+    },
     dispatch(type, event) {
       for (const entry of documentListeners.filter((listener) => listener.type === type)) entry.handler(event);
       return event;
@@ -743,8 +746,8 @@ test("lifting a finger off a tapped image keeps its expand button for the next t
   assert.equal(expandButton(sdk).hidden, true, "a tap elsewhere puts it away");
 });
 
-function fire(element, type) {
-  const event = { ...escapeKey(), key: undefined };
+function fire(element, type, extra = {}) {
+  const event = { ...escapeKey(), key: undefined, ...extra };
   event.preventDefault = () => (event.defaultPrevented = true);
   for (const entry of element.listeners.filter((listener) => listener.type === type)) entry.handler(event);
   return { event };
@@ -774,8 +777,55 @@ test("an open full-size view keeps keys and touch drags from scrolling the page 
   sdk.dispatch("keydown", typed);
   assert.equal(typed.defaultPrevented, false, "other keys are left alone");
 
-  assert.equal(fire(lightbox(sdk), "touchmove").event.defaultPrevented, true, "a drag does not scroll it");
+  const drag = fire(lightbox(sdk), "touchmove", { touches: [{}] });
+  assert.equal(drag.event.defaultPrevented, true, "a one-finger drag does not scroll it");
   assert.equal(fire(lightbox(sdk), "wheel").event.defaultPrevented, true, "nor does the wheel");
+});
+
+test("two fingers on the full-size view are left to the browser, so the image can be pinch-zoomed", () => {
+  const sdk = bootSdk();
+  sdk.dispatch("pointerover", { target: image(sdk, LARGE) });
+  expandButton(sdk).onclick({ preventDefault() {}, stopPropagation() {} });
+  const pinch = fire(lightbox(sdk), "touchmove", { touches: [{}, {}] });
+  assert.equal(pinch.event.defaultPrevented, false);
+});
+
+test("a resize moves the expand button with its image instead of hiding it", () => {
+  const sdk = bootSdk();
+  const img = image(sdk, LARGE);
+  sdk.dispatch("pointerover", { target: img });
+  const moved = { left: 20, top: 120, right: 420, bottom: 420 };
+  img.getBoundingClientRect = () => ({ ...moved, width: 400, height: 300 });
+  sdk.resize();
+  const button = expandButton(sdk);
+  assert.equal(button.hidden, false, "a keyboard opening does not take the button away");
+  assert.deepEqual([button.style.left, button.style.top], ["380px", "128px"], "it sits in the image's new corner");
+  button.onclick({ preventDefault() {}, stopPropagation() {} });
+  assert.equal(lightbox(sdk).hidden, false, "and still opens that image");
+});
+
+test("a resize that leaves the image too small or removes it hides the expand button", () => {
+  const sdk = bootSdk();
+  const shrunk = image(sdk, LARGE);
+  sdk.dispatch("pointerover", { target: shrunk });
+  shrunk.getBoundingClientRect = () => ({ left: 0, top: 0, right: 120, bottom: 90, width: 120, height: 90 });
+  sdk.resize();
+  assert.equal(expandButton(sdk).hidden, true, "an image no longer large enough loses its button");
+
+  const removed = image(sdk, LARGE);
+  sdk.dispatch("pointerover", { target: removed });
+  removed.isConnected = false;
+  sdk.resize();
+  assert.equal(expandButton(sdk).hidden, true, "so does one that is gone");
+});
+
+test("a resize with no expand button showing brings none back", () => {
+  const sdk = bootSdk();
+  const img = image(sdk, LARGE);
+  sdk.dispatch("pointerover", { target: img });
+  sdk.dispatch("pointerover", { target: appendTo(sdk.body, createElement("p")) });
+  sdk.resize();
+  assert.equal(expandButton(sdk).hidden, true);
 });
 
 test("with no full-size view open the scrolling keys are left to the page", () => {
