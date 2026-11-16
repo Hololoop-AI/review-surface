@@ -2946,7 +2946,37 @@ const HOLOLOOP_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0
   <circle cx="16" cy="16" r="6" stroke-opacity="0.55"/>
 </svg>`;
 
-const LAVISH_DEFAULT_FAVICON = `<link rel="icon" href="data:image/svg+xml;base64,${Buffer.from(HOLOLOOP_FAVICON_SVG).toString("base64")}">`;
+// The marker tells CHROME_THEME_FAVICON_JS this is our icon to recolor; an artifact's own icon
+// carries none and is left alone.
+const LAVISH_DEFAULT_FAVICON = `<link rel="icon" data-review-surface-theme-icon href="data:image/svg+xml;base64,${Buffer.from(HOLOLOOP_FAVICON_SVG).toString("base64")}">`;
+
+// The tab icon in the host theme's accent, the way Cadre's fleet app does it (cadre-runner
+// web/src/ui/favicon.ts, followThemeFavicon). A favicon is a separate image that cannot read the
+// page's CSS, so the mark is redrawn from the root element's --accent whenever the theme could
+// have changed: the root's style, class or data-theme; a stylesheet added, removed, re-pointed or
+// rewritten in the head; one finishing loading (capture, since load does not bubble); or the
+// system light/dark setting. It recolors only while the host theme's style block is on the page:
+// chrome.css always defines a built-in --accent, so without that block (or with no --accent) the
+// static icon above stays. Inline and before chrome-client.js so it needs nothing else on the
+// page to work.
+export const CHROME_THEME_FAVICON_JS = `(function(){
+var link=document.querySelector("link[rel~=icon][data-review-surface-theme-icon]");
+if(!link)return;
+var last=null;
+function draw(){
+if(!document.getElementById("review-surface-host-theme"))return;
+var accent=getComputedStyle(document.documentElement).getPropertyValue("--accent").trim().replace(/['"<>&]/g,"");
+if(!accent||accent===last)return;
+last=accent;
+link.href="data:image/svg+xml,"+encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none' stroke='"+accent+"' stroke-width='2.8'><circle cx='16' cy='16' r='12.6'/><circle cx='16' cy='16' r='6' stroke-opacity='0.55'/></svg>");
+}
+draw();
+var watch=new MutationObserver(draw);
+watch.observe(document.documentElement,{attributes:true,attributeFilter:["style","class","data-theme"]});
+watch.observe(document.head,{childList:true,subtree:true,characterData:true,attributes:true,attributeFilter:["href","media","disabled"]});
+document.addEventListener("load",draw,true);
+if(typeof matchMedia==="function"){var m=matchMedia("(prefers-color-scheme: dark)");if(m&&m.addEventListener)m.addEventListener("change",draw);}
+})();`;
 
 function readTagAttr(tag, name) {
   // Tokenize real attributes rather than searching for the bare name anywhere in
@@ -3139,6 +3169,7 @@ ${faviconTag}
 <div class="ended-overlay" id="endedOverlay" hidden><div class="ended-card"><div class="ended-title">Session ended. Read-only. <br>Return to your agent to continue.</div><p class="ended-copy">${escapeHtml(session.file)}</p>${endedNewerPage}</div></div>
 <div class="whiteboard-overlay" id="whiteboardOverlay" hidden><div class="whiteboard-shell"><div class="whiteboard-error" id="whiteboardError" hidden></div><button class="whiteboard-close" id="whiteboardClose" type="button" aria-label="Close whiteboard"><svg width="14" height="14" viewBox="0 0 10 10" fill="none" aria-hidden="true" focusable="false"><path d="M1 1L9 9M9 1L1 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button><iframe id="whiteboardFrame" title="Excalidraw whiteboard" sandbox="allow-scripts allow-popups"></iframe></div></div>
 <script id="review-surface-session" type="application/json">${sessionJson}</script>
+<script>${CHROME_THEME_FAVICON_JS}</script>
 <script>${CHROME_BOOT_FAILSAFE_JS}</script>
 <script src="${versioned("/chrome-client.js", assetVersions.client)}" onerror="window.__reviewSurfaceChromeBootFailed()"></script>
 </body>

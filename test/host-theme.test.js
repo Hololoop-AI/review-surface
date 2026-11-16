@@ -10,7 +10,7 @@ const THEME = ":root, :host { --bg: #272e33; --accent: #7fbbb3; }";
 
 test("chrome page carries no host theme when the host has none", () => {
   const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
-  assert.doesNotMatch(html, /review-surface-host-theme/);
+  assert.doesNotMatch(html, /<style id="review-surface-host-theme"/);
 });
 
 test("chrome page inlines the host theme after chrome.css so it wins", () => {
