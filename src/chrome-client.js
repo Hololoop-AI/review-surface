@@ -455,23 +455,21 @@ function postAnnotationMarkers(freshPage = false) {
 /**
  * A marker's Edit in the page: open that note for editing here, in the Queued window. The page is
  * untrusted, so it can only ask; the text is changed in the chrome, by the reader. The note is the
- * one at `index` if it still reads `was`, else the first element note that does.
+ * one at `index`, and only while it still reads `was`: a stale ask opens nothing.
  * @param {number} index
  * @param {string} was
  */
 function editQueuedFromPage(index, was) {
   if (ended) return;
-  const onElement = (/** @type {any} */ p) =>
-    Boolean(p?.selector) && p.tag !== "message" && String(p.prompt || "") === was;
-  const at = onElement(queued[index]) ? index : queued.findIndex(onElement);
-  if (at === -1) return;
+  const note = /** @type {any} */ (queued[index]);
+  if (!note?.selector || note.tag === "message" || String(note.prompt || "") !== was) return;
   closeChat();
   setMenuOpen(queueOpen, queueMenu, true);
-  const row = /** @type {HTMLElement | undefined} */ (queueList.children[at]);
+  const row = /** @type {HTMLElement | undefined} */ (queueList.children[index]);
   const text = row?.querySelector(".queue-item-text");
   if (!row || !text) return;
   row.scrollIntoView?.({ block: "nearest" });
-  editQueuedPrompt(at, row, /** @type {HTMLElement} */ (text));
+  editQueuedPrompt(index, row, /** @type {HTMLElement} */ (text));
 }
 
 function renderQueueDock() {
@@ -3167,8 +3165,10 @@ window.addEventListener("message", (event) => {
     return;
   }
   // The artifact spoke, so it rendered and ran its SDK - there is nothing fatal to probe for.
-  if (msg.type === "review-surface:closeFooterPanels") closeFooterPanels();
-  if (msg.type === "review-surface:editQueued") editQueuedFromPage(Number(msg.index), String(msg.was ?? ""));
+  if (navigator.userActivation?.isActive !== false) {
+    if (msg.type === "review-surface:closeFooterPanels") closeFooterPanels();
+    if (msg.type === "review-surface:editQueued") editQueuedFromPage(Number(msg.index), String(msg.was ?? ""));
+  }
   if (msg.type === "review-surface:queuePrompt") {
     enqueuePrompt(msg.prompt);
     // Queued from inside the artifact, where the closed dock is the only sign it landed.

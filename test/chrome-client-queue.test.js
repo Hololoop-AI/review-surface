@@ -825,6 +825,42 @@ test("queued notes become markers in the page, whose Edit opens the note here, a
   );
 });
 
+test("a page's Edit ask opens only the note it names, and a stale ask opens nothing", async () => {
+  const chrome = await createChromeHarness();
+  for (const prompt of ["First", "Second"]) {
+    chrome.sendFrameMessage({
+      type: "review-surface:queuePrompt",
+      prompt: { prompt, selector: "h1#title", tag: "h1", text: "Title" },
+    });
+  }
+  chrome.sendFrameMessage({ type: "review-surface:editQueued", index: 0, was: "Second" });
+  assert.equal(chrome.element("queueMenu").hidden, true, "the note at that index reads otherwise");
+
+  const long = "x".repeat(5000);
+  chrome.sendFrameMessage({
+    type: "review-surface:queuePrompt",
+    prompt: { prompt: long, selector: "p#long", tag: "p", text: "Long" },
+  });
+  const sent = chrome.postedToFrame.filter((m) => m.type === "review-surface:annotationMarkers").at(-1).markers[2];
+  chrome.sendFrameMessage({ type: "review-surface:editQueued", index: sent.index, was: sent.text });
+  assert.equal(chrome.element("queueMenu").hidden, false);
+  assert.equal(chrome.element("queueList").children[2].querySelectorAll(".queue-item-input")[0].value, long);
+});
+
+test("the page's Edit and panel-closing asks are ignored without a real click", async () => {
+  const chrome = await createChromeHarness({ userActivation: { isActive: false } });
+  chrome.sendFrameMessage({
+    type: "review-surface:queuePrompt",
+    prompt: { prompt: "Shorter", selector: "h1#title", tag: "h1", text: "Title" },
+  });
+  chrome.sendFrameMessage({ type: "review-surface:editQueued", index: 0, was: "Shorter" });
+  assert.equal(chrome.element("queueMenu").hidden, true, "no editor opens on a script's ask");
+
+  chrome.element("queueOpen").click();
+  chrome.sendFrameMessage({ type: "review-surface:closeFooterPanels" });
+  assert.equal(chrome.element("queueMenu").hidden, false, "the reader's open panel stays open");
+});
+
 test("an open Queued tells the page, and the page's click closes it", async () => {
   const chrome = await createChromeHarness();
   chrome.sendFrameMessage({

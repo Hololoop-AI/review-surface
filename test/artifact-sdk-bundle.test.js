@@ -880,6 +880,28 @@ test("the served SDK bundle cancels an empty card on a click away and on Escape,
   assert.equal(sdk.cards().length, 4, "after Cancel, a click opens a card again");
 });
 
+// A written card is modal for links too: neither an ordinary link nor a link to another review page
+// is followed while it is open.
+test("the served SDK bundle follows no link while a card holds text", () => {
+  const sdk = bootSdk();
+  const paragraph = appendTo(sdk.body, cell("p", "See the reviews"));
+  const link = appendTo(paragraph, cell("a", "the reviews"));
+  link.setAttribute("href", "#reviews");
+  sdk.click(paragraph);
+  const kept = sdk.card();
+  kept.querySelector("textarea").value = "tighten this";
+
+  assert.equal(sdk.click(link).defaultPrevented, true, "the link is not followed");
+  const before = sdk.posted.length;
+  assert.equal(sdk.click(pageLink(sdk, "/session/0123456789abcdef")).defaultPrevented, true);
+  assert.equal(sdk.posted.slice(before).filter((message) => message.type === "review-surface:openPage").length, 0);
+  assert.equal(sdk.cards().length, 1);
+  assert.equal(kept.querySelector("textarea").value, "tighten this");
+
+  kept.querySelector(".review-surface-cancel").onclick();
+  assert.equal(sdk.click(link).defaultPrevented, false, "after Cancel the link is followed again");
+});
+
 // With This page or Queued open in the chrome, a click in the page only closes it: one action at a
 // time, so the same click never also opens an annotation card.
 test("the served SDK bundle spends a click on closing an open footer panel, and nothing else", () => {
