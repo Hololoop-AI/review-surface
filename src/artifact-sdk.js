@@ -1210,6 +1210,13 @@ export function createArtifactSdk(
     return isNativeInteractive(el);
   }
 
+  // A link is navigation even in annotate mode: clicking it follows it, and the element it sits
+  // in stays annotatable everywhere else. Selecting a link's text still annotates it.
+  function isNavigationLink(el) {
+    const href = el?.closest?.("a")?.getAttribute?.("href");
+    return typeof href === "string" && !/^\s*javascript:/i.test(href);
+  }
+
   function highlightElement(el) {
     if (!el) return;
     el.style.outline = "var(--review-surface-annotate-outline,2px solid #f4c95d)";
@@ -2455,7 +2462,7 @@ export function createArtifactSdk(
 
     shadow = host.attachShadow({ mode: "open" });
     const style = document.createElement("style");
-    style.textContent = `:host{all:initial;position:fixed;z-index:2147483647;left:0;top:0;color-scheme:dark;--ink-900:#0f1115;--ink-800:#11141a;--ink-700:#171a21;--ink-600:#1c212b;--steel-700:#2a2f3a;--steel-600:#303745;--steel-500:#3c4557;--steel-400:#8c96aa;--steel-300:#aeb6c6;--steel-200:#b9c0cf;--steel-100:#d8deea;--cream-50:#fffbf3;--cream-100:#f7f3ea;--cream-200:#e8e1cf;--brass-500:#f4c95d;--brass-400:#ffd877;--brass-ink:#17130a;--bg:var(--ink-900);--bg-panel:var(--ink-800);--bg-elevated:var(--ink-600);--fg:var(--cream-100);--fg-faint:var(--steel-300);--border:var(--steel-600);--accent:#f4c95d;--accent-hover:#ffd877;--font-sans:Geist,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--font-mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--radius-md:10px;--radius-xl:14px;--shadow-floating:0 20px 70px rgba(0,0,0,.35);font-family:var(--font-sans)}*{box-sizing:border-box}:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.review-surface-text-highlight{position:fixed;pointer-events:none;background:color-mix(in srgb,var(--accent) 28%,transparent);border-radius:2px;box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 45%,transparent)}.review-surface-annotation-card{position:fixed;width:min(320px,calc(100vw - 24px));padding:12px;border-radius:var(--radius-xl);background:var(--bg-panel);color:var(--fg);border:1px solid var(--accent);box-shadow:var(--shadow-floating);font:14px/1.4 var(--font-sans)}.review-surface-heading{font-weight:700;margin-bottom:6px}.review-surface-annotation-card textarea{width:100%;min-height:86px;resize:vertical;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg);color:var(--fg);padding:9px;font:inherit;font-family:var(--font-sans)}.review-surface-annotation-card textarea::placeholder{color:var(--fg-faint)}.review-surface-annotation-card .review-surface-hint{margin-top:6px;font-size:11px;color:var(--fg-faint)}.review-surface-annotation-card .review-surface-hint-alert{color:var(--danger-fg,#ff9d7a);font-weight:700}.review-surface-annotation-card .review-surface-row{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}.review-surface-annotation-card button{border:0;border-radius:var(--radius-md);padding:8px 10px;font-family:var(--font-sans);font-size:13px;font-weight:700;cursor:pointer}.review-surface-annotation-card button:active{opacity:.85}.review-surface-annotation-card .review-surface-send{background:var(--accent);color:var(--brass-ink)}.review-surface-annotation-card .review-surface-send:hover{background:var(--accent-hover)}.review-surface-annotation-card .review-surface-cancel{background:var(--steel-700);color:var(--fg)}.review-surface-annotation-card .review-surface-action{background:var(--steel-700);color:var(--accent)}.review-surface-annotation-card .review-surface-action:hover{background:var(--steel-600)}.review-surface-annotation-card.is-dropping{outline:2px dashed var(--accent);outline-offset:3px}.review-surface-attachments{display:flex;flex-direction:column;gap:6px;margin-top:8px;max-height:176px;overflow-y:auto}.review-surface-attachment-chip{display:flex;align-items:center;gap:8px;padding:6px;border-radius:var(--radius-md);background:var(--bg);border:1px solid var(--border)}.review-surface-attachment-chip.is-error{border-color:var(--danger,#e0623d)}.review-surface-attachment-thumb{width:32px;height:32px;border-radius:6px;object-fit:cover;background:var(--ink-700);flex:0 0 auto}.review-surface-attachment-thumb-empty{display:inline-block}.review-surface-attachment-body{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1 1 auto}.review-surface-attachment-name{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.review-surface-attachment-status{font-size:11px;color:var(--fg-faint)}.review-surface-attachment-status-error{color:var(--danger-fg,#ff9d7a)}.review-surface-attachment-retry{flex:0 0 auto;padding:4px 8px;font-size:11px;font-weight:700;border-radius:8px;background:var(--steel-700);color:var(--fg);cursor:pointer;border:0}.review-surface-attachment-remove{flex:0 0 auto;display:flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0!important;border-radius:50%;background:transparent;color:color-mix(in srgb,var(--fg) 85%,transparent);cursor:pointer;border:0}.review-surface-attachment-remove:hover{background:color-mix(in srgb,var(--fg) 14%,transparent);color:var(--fg)}.review-surface-attach-row{margin-top:8px}.review-surface-attach{display:inline-flex;align-items:center;gap:6px;padding:6px 9px!important;background:var(--steel-700)!important;color:var(--fg)!important;font-size:12px!important}.review-surface-attach:hover{background:var(--steel-600)!important}.review-surface-reveal-marker{position:fixed;pointer-events:none;border:2px solid var(--accent);border-radius:4px;box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 22%,transparent);animation:review-surface-reveal-pulse 2.4s var(--ease,ease-out) forwards}@keyframes review-surface-reveal-pulse{0%{opacity:0}12%{opacity:1}70%{opacity:1}100%{opacity:0}}.review-surface-image-expand{position:fixed;width:32px;height:32px;display:flex;align-items:center;justify-content:center;padding:0;border:1px solid var(--border);border-radius:var(--radius-md);background:color-mix(in srgb,var(--bg-panel) 88%,transparent);color:var(--fg);cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.35)}.review-surface-image-expand:hover{color:var(--accent);border-color:var(--accent)}.review-surface-image-expand[hidden],.review-surface-lightbox[hidden]{display:none}.review-surface-lightbox{position:fixed;left:0;top:0;width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;padding:2vmin;background:rgba(0,0,0,.86);cursor:zoom-out;overscroll-behavior:contain;touch-action:pinch-zoom}.review-surface-lightbox img{width:100%;height:100%;object-fit:contain;border-radius:4px;box-shadow:var(--shadow-floating)}`;
+    style.textContent = `:host{all:initial;position:fixed;z-index:2147483647;left:0;top:0;color-scheme:dark;--ink-900:#0f1115;--ink-800:#11141a;--ink-700:#171a21;--ink-600:#1c212b;--steel-700:#2a2f3a;--steel-600:#303745;--steel-500:#3c4557;--steel-400:#8c96aa;--steel-300:#aeb6c6;--steel-200:#b9c0cf;--steel-100:#d8deea;--cream-50:#fffbf3;--cream-100:#f7f3ea;--cream-200:#e8e1cf;--brass-500:#f4c95d;--brass-400:#ffd877;--brass-ink:#17130a;--bg:var(--ink-900);--bg-panel:var(--ink-800);--bg-elevated:var(--ink-600);--fg:var(--cream-100);--fg-faint:var(--steel-300);--border:var(--steel-600);--accent:#f4c95d;--accent-hover:#ffd877;--font-sans:Geist,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--font-mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--radius-md:10px;--radius-xl:14px;--shadow-floating:0 20px 70px rgba(0,0,0,.35);font-family:var(--font-sans)}*{box-sizing:border-box}:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.review-surface-text-highlight{position:fixed;pointer-events:none;background:color-mix(in srgb,var(--accent) 28%,transparent);border-radius:2px;box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 45%,transparent)}.review-surface-annotation-card{position:fixed;width:min(320px,calc(100vw - 24px));padding:12px;border-radius:var(--radius-xl);background:var(--bg-panel);color:var(--fg);border:1px solid var(--accent);box-shadow:var(--shadow-floating);font:14px/1.4 var(--font-sans)}.review-surface-heading{font-weight:700;margin-bottom:6px}.review-surface-annotation-card textarea{width:100%;min-height:86px;resize:vertical;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg);color:var(--fg);padding:9px;font:inherit;font-family:var(--font-sans)}.review-surface-annotation-card textarea::placeholder{color:var(--fg-faint)}.review-surface-annotation-card .review-surface-hint{margin-top:6px;font-size:11px;color:var(--fg-faint)}.review-surface-annotation-card .review-surface-hint-alert{color:var(--danger-fg,#ff9d7a);font-weight:700}.review-surface-annotation-card .review-surface-row{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}.review-surface-annotation-card button{border:0;border-radius:var(--radius-md);padding:8px 10px;font-family:var(--font-sans);font-size:13px;font-weight:700;cursor:pointer}.review-surface-annotation-card button:active{opacity:.85}.review-surface-annotation-card .review-surface-send{background:var(--accent);color:var(--brass-ink)}.review-surface-annotation-card .review-surface-send:hover{background:var(--accent-hover)}.review-surface-annotation-card .review-surface-cancel{background:var(--steel-700);color:var(--fg)}.review-surface-annotation-card .review-surface-action{background:var(--steel-700);color:var(--accent)}.review-surface-annotation-card .review-surface-action:hover{background:var(--steel-600)}.review-surface-annotation-card.is-dropping{outline:2px dashed var(--accent);outline-offset:3px}.review-surface-attachments{display:flex;flex-direction:column;gap:6px;margin-top:8px;max-height:176px;overflow-y:auto}.review-surface-attachment-chip{display:flex;align-items:center;gap:8px;padding:6px;border-radius:var(--radius-md);background:var(--bg);border:1px solid var(--border)}.review-surface-attachment-chip.is-error{border-color:var(--danger,#e0623d)}.review-surface-attachment-thumb{width:32px;height:32px;border-radius:6px;object-fit:cover;background:var(--ink-700);flex:0 0 auto}.review-surface-attachment-thumb-empty{display:inline-block}.review-surface-attachment-body{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1 1 auto}.review-surface-attachment-name{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.review-surface-attachment-status{font-size:11px;color:var(--fg-faint)}.review-surface-attachment-status-error{color:var(--danger-fg,#ff9d7a)}.review-surface-attachment-retry{flex:0 0 auto;padding:4px 8px;font-size:11px;font-weight:700;border-radius:8px;background:var(--steel-700);color:var(--fg);cursor:pointer;border:0}.review-surface-attachment-remove{flex:0 0 auto;display:flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0!important;border-radius:50%;background:transparent;color:color-mix(in srgb,var(--fg) 85%,transparent);cursor:pointer;border:0}.review-surface-attachment-remove:hover{background:color-mix(in srgb,var(--fg) 14%,transparent);color:var(--fg)}.review-surface-attach-row{margin-top:8px}.review-surface-attach{display:inline-flex;align-items:center;gap:6px;padding:6px 9px!important;background:var(--steel-700)!important;color:var(--fg)!important;font-size:12px!important}.review-surface-attach:hover{background:var(--steel-600)!important}.review-surface-reveal-marker{position:fixed;pointer-events:none;border:2px solid var(--accent);border-radius:4px;box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 22%,transparent);animation:review-surface-reveal-pulse 2.4s var(--ease,ease-out) forwards}@keyframes review-surface-reveal-pulse{0%{opacity:0}12%{opacity:1}70%{opacity:1}100%{opacity:0}}.review-surface-image-expand{position:fixed;width:32px;height:32px;display:flex;align-items:center;justify-content:center;padding:0;border:1px solid var(--border);border-radius:var(--radius-md);background:color-mix(in srgb,var(--bg-panel) 88%,transparent);color:var(--fg);cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.35)}.review-surface-image-expand:hover{color:var(--accent);border-color:var(--accent)}.review-surface-image-expand[hidden],.review-surface-lightbox[hidden]{display:none}.review-surface-lightbox{position:fixed;left:0;top:0;width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;padding:2vmin;background:rgba(0,0,0,.86);cursor:zoom-out;overscroll-behavior:contain;touch-action:pinch-zoom}.review-surface-lightbox img{width:100%;height:100%;object-fit:contain;border-radius:4px;box-shadow:var(--shadow-floating)}.review-surface-annotation-card.is-nudged{animation:review-surface-nudge .32s ease-out}@keyframes review-surface-nudge{0%,100%{transform:translateX(0)}25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}.review-surface-note-marker{position:absolute;min-width:16px;height:16px;padding:0 4px;display:flex;align-items:center;justify-content:center;border:0;border-radius:8px;background:var(--accent);color:var(--brass-ink);font:700 10px/1 var(--font-sans);cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.45);opacity:.9}.review-surface-note-marker:hover,.review-surface-note-marker[aria-expanded=true]{opacity:1;outline:2px solid color-mix(in srgb,var(--accent) 40%,transparent)}.review-surface-note-preview{position:fixed;width:min(300px,calc(100vw - 24px));max-height:min(320px,calc(100vh - 24px));overflow:auto;padding:8px;border-radius:var(--radius-md);background:var(--bg-panel);color:var(--fg);border:1px solid var(--accent);box-shadow:var(--shadow-floating);font:13px/1.4 var(--font-sans)}.review-surface-note-preview[hidden],.review-surface-note-marker[hidden]{display:none}.review-surface-note-row{display:grid;grid-template-columns:1fr auto;gap:4px 8px;align-items:start;padding:4px 2px}.review-surface-note-row+.review-surface-note-row{border-top:1px solid var(--border)}.review-surface-note-text{white-space:pre-wrap;overflow-wrap:anywhere}.review-surface-note-row button{border:0;border-radius:6px;padding:3px 7px;background:var(--steel-700);color:var(--fg);font:600 11px var(--font-sans);cursor:pointer}`;
     // The host's theme (createSdkJs's hostThemeCss) comes last so its custom properties win.
     style.textContent += String(options.hostThemeCss || "");
     shadow.appendChild(style);
@@ -2479,7 +2486,33 @@ export function createArtifactSdk(
     window.visualViewport.addEventListener("resize", () => repositionActiveCard?.());
   }
 
+  // The open card's text box, so a click outside it can tell whether anything was typed.
+  let activeCardTextarea = null;
+
+  /** The open card holds nothing yet: no text and no image. */
+  function activeCardIsEmpty() {
+    if (!activeCardTextarea) return false;
+    return !activeCardTextarea.value.trim() && !(activeAttachments?.hasReady?.() || activeAttachments?.hasPending?.());
+  }
+
+  /** The open card holds something the reader wrote: it stays until Cancel, Escape or Queue. */
+  function activeCardHasWork() {
+    return Boolean(activeCardTextarea) && !activeCardIsEmpty();
+  }
+
+  /** A click away from a card with work in it: shake the card and hand the cursor back to it. */
+  function nudgeActiveCard() {
+    const card = activeCardTextarea?.closest?.(".review-surface-annotation-card");
+    if (card) {
+      card.classList.remove("is-nudged");
+      void card.offsetWidth;
+      card.classList.add("is-nudged");
+    }
+    activeCardTextarea?.focus?.();
+  }
+
   function closeCard() {
+    activeCardTextarea = null;
     activeCardContext = null;
     repositionActiveCard = null;
     if (activeAttachments) {
@@ -2597,6 +2630,7 @@ export function createArtifactSdk(
     const attachInput = /** @type {HTMLInputElement | null} */ (card.querySelector(".review-surface-attach-input"));
     const attachNotice = /** @type {HTMLDivElement | null} */ (card.querySelector(".review-surface-hint"));
     if (!textarea || !cancelButton || !sendButton || !attachmentsList || !attachButton || !attachInput) return;
+    activeCardTextarea = textarea;
 
     // The card has one notice line, shared by the neutral keyboard hint and by
     // attachment problems (the count cap, a stalled upload, a failed one). A rejected
@@ -2722,6 +2756,13 @@ export function createArtifactSdk(
       if (result !== false) closeCard();
     }
     textarea.addEventListener("keydown", (event) => {
+      // Escape is Cancel, as on the button: the card closes and nothing is queued.
+      if (event.key === "Escape" && !event.isComposing) {
+        event.preventDefault();
+        event.stopPropagation();
+        closeCard();
+        return;
+      }
       if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
         event.preventDefault();
         const sendNow = (event.ctrlKey || event.metaKey) && (!!textarea.value.trim() || attachments.hasReady());
@@ -2762,6 +2803,10 @@ export function createArtifactSdk(
     snapshot,
   };
 
+  // A footer panel (This page, Queued) is open in the chrome around this page: the next click in
+  // the page only closes it, and does nothing else - no annotation card, no link, no button.
+  let footerPanelOpen = false;
+
   window.addEventListener("message", (event) => {
     // The chrome is the only legitimate sender. This listener is on `window`, so
     // without the source check the artifact could post to itself and drive the SDK.
@@ -2780,6 +2825,8 @@ export function createArtifactSdk(
     }
     if (msg.type === "review-surface:restoreReviewState") restoreReviewState(msg.state);
     if (msg.type === "review-surface:revealElement") revealElement(msg.selector);
+    if (msg.type === "review-surface:annotationMarkers") setNoteMarkers(msg.markers);
+    if (msg.type === "review-surface:footerPanel") footerPanelOpen = msg.open === true;
     if (msg.type === "review-surface:visibleArea") {
       const bottom = Number(msg.bottom);
       hostVisibleBottom = Number.isFinite(bottom) && bottom > 0 ? bottom : null;
@@ -2787,8 +2834,220 @@ export function createArtifactSdk(
     }
   });
 
-  // Bring a warning's element into view and flash it. The marker is Review Surface UI, so it is excluded
-  // from the layout audit and never becomes a finding of its own.
+  // Queued notes, drawn where they were written: the chrome owns the queue and sends its notes'
+  // targets here (review-surface:annotationMarkers); each annotated element gets a small numbered
+  // marker at its top-right corner. Pointing at a marker previews its notes; clicking pins the
+  // preview, whose Edit asks the chrome to open that note in its Queued window
+  // (review-surface:editQueued); the chrome owns the queue and the editing. Markers live in the shadow root, so a click on one never
+  // reaches the annotation handlers.
+  let noteMarkers = [];
+  let markerEls = [];
+  /** @type {WeakMap<Element, { target: Element, selector: string }>} */
+  const markerInfo = new WeakMap();
+  let notePreview = null;
+  let previewFor = null;
+  let previewPinned = false;
+  let markerFrame = 0;
+
+  function setNoteMarkers(list) {
+    noteMarkers = (Array.isArray(list) ? list : [])
+      .filter((m) => m && typeof m.selector === "string" && m.selector && Number.isInteger(m.index))
+      .map((m) => ({ index: m.index, selector: m.selector, text: String(m.text || "") }));
+    drawNoteMarkers();
+  }
+
+  // Markers sit in the page itself (an absolutely placed layer at the document's origin), so they
+  // move with the page as it scrolls, with no repositioning to lag behind it.
+  let markerRoot = null;
+  function ensureMarkerRoot() {
+    if (markerRoot) return markerRoot;
+    const host = document.createElement("div");
+    host.className = "review-surface-marker-root";
+    host.setAttribute("data-review-surface-ui", "marker-root");
+    host.style.cssText = "position:absolute;left:0;top:0;width:0;height:0;z-index:2147483646";
+    document.documentElement.appendChild(host);
+    markerRoot = host.attachShadow({ mode: "open" });
+    const style = ensureShadow().querySelector("style");
+    if (style) markerRoot.appendChild(style.cloneNode(true));
+    return markerRoot;
+  }
+
+  let markerResizeWatch = null;
+  function drawNoteMarkers() {
+    const root = ensureMarkerRoot();
+    // Images, fonts and opened sections move elements after the markers are placed.
+    if (!markerResizeWatch && typeof ResizeObserver === "function") {
+      markerResizeWatch = new ResizeObserver(() => scheduleMarkerPlacement());
+      markerResizeWatch.observe(document.documentElement);
+    }
+    for (const el of markerEls) el.remove();
+    markerEls = [];
+    const groups = new Map();
+    for (const note of noteMarkers) {
+      if (!groups.has(note.selector)) groups.set(note.selector, []);
+      groups.get(note.selector).push(note);
+    }
+    for (const [selectorText, notes] of groups) {
+      const target = safeQuerySelector(selectorText);
+      if (!(target instanceof Element)) continue;
+      const marker = document.createElement("button");
+      marker.type = "button";
+      marker.className = "review-surface-note-marker";
+      marker.textContent = String(notes.length);
+      marker.setAttribute(
+        "aria-label",
+        notes.length === 1 ? "1 queued note here" : notes.length + " queued notes here",
+      );
+      marker.setAttribute("aria-expanded", String(previewPinned && previewFor === selectorText));
+      markerInfo.set(marker, { target, selector: selectorText });
+      marker.addEventListener("mouseenter", () => {
+        if (!previewPinned) showNotePreview(marker, notes);
+      });
+      marker.addEventListener("mouseleave", () => {
+        if (!previewPinned) window.setTimeout(() => hideNotePreviewUnlessHovered(), 120);
+      });
+      marker.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (previewPinned && previewFor === selectorText) return closeNotePreview();
+        previewPinned = true;
+        showNotePreview(marker, notes);
+        marker.setAttribute("aria-expanded", "true");
+      });
+      root.appendChild(marker);
+      markerEls.push(marker);
+    }
+    placeNoteMarkers();
+    if (!previewFor) return;
+    const open = markerEls.find((m) => markerInfo.get(m)?.selector === previewFor);
+    if (!open) closeNotePreview();
+    else if (notePreview && !notePreview.hidden) showNotePreview(open, groups.get(previewFor));
+  }
+
+  function placeNoteMarkers() {
+    for (const marker of markerEls) {
+      const info = markerInfo.get(marker);
+      if (!info) continue;
+      const rect = info.target.getBoundingClientRect();
+      const hidden = rect.width === 0 && rect.height === 0;
+      marker.hidden = hidden;
+      const right = Math.min(rect.right - 8, document.documentElement.clientWidth - 24);
+      marker.style.left = Math.max(2, right) + window.scrollX + "px";
+      marker.style.top = Math.max(2, rect.top + window.scrollY - 8) + "px";
+    }
+    if (notePreview && !notePreview.hidden && previewFor) {
+      const marker = markerEls.find((m) => markerInfo.get(m)?.selector === previewFor);
+      if (marker) placeNotePreview(marker);
+    }
+  }
+
+  function scheduleMarkerPlacement() {
+    if (markerFrame || !markerEls.length) return;
+    markerFrame = window.requestAnimationFrame(() => {
+      markerFrame = 0;
+      placeNoteMarkers();
+    });
+  }
+
+  // The preview goes beside the annotated element, not over its text: to its right or left when
+  // there is room, else below it, else above it; only when none fits does it sit by the marker.
+  function placeNotePreview(marker) {
+    const width = notePreview.offsetWidth || 300;
+    const height = notePreview.offsetHeight || 120;
+    const viewW = document.documentElement.clientWidth || window.innerWidth;
+    const viewB = visibleFrameBottom();
+    const gap = 8;
+    const el = markerInfo.get(marker)?.target.getBoundingClientRect() || marker.getBoundingClientRect();
+    const m = marker.getBoundingClientRect();
+    const clampTop = (top) => Math.max(12, Math.min(top, viewB - height - 12));
+    const clampLeft = (left) => Math.max(12, Math.min(left, viewW - width - 12));
+    let spot;
+    if (el.right + gap + width <= viewW - 12) spot = { left: el.right + gap, top: clampTop(el.top) };
+    else if (el.left - gap - width >= 12) spot = { left: el.left - gap - width, top: clampTop(el.top) };
+    else if (el.bottom + gap + height <= viewB - 12) spot = { left: clampLeft(m.right - width), top: el.bottom + gap };
+    else if (el.top - gap - height >= 12) spot = { left: clampLeft(m.right - width), top: el.top - gap - height };
+    else spot = { left: clampLeft(m.right - width), top: clampTop(m.bottom + 6) };
+    notePreview.style.left = spot.left + "px";
+    notePreview.style.top = spot.top + "px";
+  }
+
+  function showNotePreview(marker, notes) {
+    const root = ensureShadow();
+    if (!notePreview) {
+      notePreview = document.createElement("div");
+      notePreview.className = "review-surface-note-preview";
+      notePreview.setAttribute("role", "dialog");
+      notePreview.setAttribute("aria-label", "Queued notes on this element");
+      notePreview.addEventListener("mouseleave", () => {
+        if (!previewPinned) hideNotePreviewUnlessHovered();
+      });
+      root.appendChild(notePreview);
+    }
+    previewFor = markerInfo.get(marker)?.selector || null;
+    notePreview.replaceChildren(...notes.map((note) => noteRow(note)));
+    notePreview.hidden = false;
+    placeNotePreview(marker);
+  }
+
+  function noteRow(note) {
+    const row = document.createElement("div");
+    row.className = "review-surface-note-row";
+    const text = document.createElement("span");
+    text.className = "review-surface-note-text";
+    text.textContent = note.text.slice(0, 2000) || "(an image)";
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.textContent = "Edit";
+    // The text is edited in the chrome's Queued window, never here: this page is untrusted, so it
+    // may ask the chrome to open a note for editing but cannot change one itself.
+    edit.addEventListener("click", (event) => {
+      event.stopPropagation();
+      closeNotePreview();
+      postArtifactMessage("review-surface:editQueued", { index: note.index, was: note.text });
+    });
+    row.append(text, edit);
+    return row;
+  }
+
+  function hideNotePreviewUnlessHovered() {
+    if (previewPinned || !notePreview) return;
+    const hovered = notePreview.matches?.(":hover") || markerEls.some((m) => m.matches?.(":hover"));
+    if (!hovered) {
+      notePreview.hidden = true;
+      previewFor = null;
+    }
+  }
+
+  function closeNotePreview() {
+    previewPinned = false;
+    previewFor = null;
+    if (notePreview) notePreview.hidden = true;
+    for (const marker of markerEls) marker.setAttribute("aria-expanded", "false");
+  }
+
+  // Scrolling moves the markers with the page; only a pinned preview, which floats over it,
+  // follows its marker. A layout change (a resize) places the markers again.
+  window.addEventListener(
+    "scroll",
+    () => {
+      if (!notePreview || notePreview.hidden || !previewFor) return;
+      if (!previewPinned) {
+        notePreview.hidden = true;
+        previewFor = null;
+        return;
+      }
+      const marker = markerEls.find((m) => markerInfo.get(m)?.selector === previewFor);
+      if (marker) placeNotePreview(marker);
+    },
+    { passive: true, capture: true },
+  );
+  window.addEventListener("resize", scheduleMarkerPlacement);
+  // An element added late (a page that renders itself) gets its marker once the page has loaded.
+  window.addEventListener("load", () => {
+    if (noteMarkers.length) drawNoteMarkers();
+  });
+
+  // Bring a warning's element into view and flash it.
   function revealElement(selector) {
     const target = selector === "html" ? document.documentElement : safeQuerySelector(selector);
     if (!(target instanceof Element)) return;
@@ -2965,6 +3224,19 @@ export function createArtifactSdk(
     else placeExpandButton(expandImage);
   });
 
+  // Escape anywhere in the page closes what the SDK has open: a pinned notes preview, else the
+  // annotation card (its own box handles Escape first when the cursor is in it).
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || event.defaultPrevented) return;
+    if (previewPinned) {
+      closeNotePreview();
+      event.preventDefault();
+    } else if (activeCardTextarea) {
+      closeCard();
+      event.preventDefault();
+    }
+  });
+
   // Capture phase so the mode hotkey fires no matter where focus is inside the artifact -
   // including a checkbox, button, link, or the annotation-card textarea - without disturbing
   // normal typing. This SDK doesn't own the mode state; it asks the chrome to toggle the same
@@ -3001,7 +3273,8 @@ export function createArtifactSdk(
         !annotationMode ||
         isReviewSurfaceUi(event.target) ||
         isReviewSurfaceAction(event.target) ||
-        isInteractiveControl(event.target)
+        isInteractiveControl(event.target) ||
+        isNavigationLink(event.target)
       )
         return;
       const target = annotationTargetEl(event.target);
@@ -3035,8 +3308,15 @@ export function createArtifactSdk(
       )
         return;
 
+      // With a footer panel open, the click that follows only closes it (see the click handler).
+      if (footerPanelOpen) return;
       const c = textSelectionContext(document.getSelection());
       if (!c) return;
+      if (activeCardHasWork()) {
+        ignoreNextClick = true;
+        nudgeActiveCard();
+        return;
+      }
 
       ignoreNextClick = true;
       showAnnotationCard(c.element, { context: c, range: c.range });
@@ -3079,18 +3359,37 @@ export function createArtifactSdk(
   document.addEventListener(
     "click",
     (event) => {
-      if (followReviewPageLink(event)) return;
-      if (
-        !annotationMode ||
-        isReviewSurfaceUi(event.target) ||
-        isReviewSurfaceAction(event.target) ||
-        isInteractiveControl(event.target)
-      )
+      if (footerPanelOpen && !isReviewSurfaceUi(event.target)) {
+        event.preventDefault();
+        event.stopPropagation();
+        footerPanelOpen = false;
+        ignoreNextClick = false;
+        postArtifactMessage("review-surface:closeFooterPanels");
         return;
+      }
+      if (previewPinned && !isReviewSurfaceUi(event.target)) closeNotePreview();
+      const annotating =
+        annotationMode &&
+        !isReviewSurfaceUi(event.target) &&
+        !isReviewSurfaceAction(event.target) &&
+        !isInteractiveControl(event.target);
+      // The click that ended a text selection, and any click away from a card with work in it
+      // (modal: only Cancel, Escape or Queue close it), does nothing else - not even follow a link.
+      if (annotating && (ignoreNextClick || activeCardHasWork())) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (ignoreNextClick) ignoreNextClick = false;
+        else nudgeActiveCard();
+        return;
+      }
+      if (annotating && isNavigationLink(event.target) && activeCardIsEmpty()) closeCard();
+      if (followReviewPageLink(event)) return;
+      if (!annotating || isNavigationLink(event.target)) return;
       event.preventDefault();
       event.stopPropagation();
-      if (ignoreNextClick) {
-        ignoreNextClick = false;
+      // Clicking away from a card nothing was typed into is Cancel; it does not open another.
+      if (activeCardIsEmpty()) {
+        closeCard();
         return;
       }
       showAnnotationCard(event.target);

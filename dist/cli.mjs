@@ -5540,6 +5540,10 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
   function isInteractiveControl(el) {
     return isNativeInteractive(el);
   }
+  function isNavigationLink(el) {
+    const href = el?.closest?.("a")?.getAttribute?.("href");
+    return typeof href === "string" && !/^\s*javascript:/i.test(href);
+  }
   function highlightElement(el) {
     if (!el) return;
     el.style.outline = "var(--review-surface-annotate-outline,2px solid #f4c95d)";
@@ -6548,7 +6552,7 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     document.documentElement.appendChild(host);
     shadow = host.attachShadow({ mode: "open" });
     const style = document.createElement("style");
-    style.textContent = `:host{all:initial;position:fixed;z-index:2147483647;left:0;top:0;color-scheme:dark;--ink-900:#0f1115;--ink-800:#11141a;--ink-700:#171a21;--ink-600:#1c212b;--steel-700:#2a2f3a;--steel-600:#303745;--steel-500:#3c4557;--steel-400:#8c96aa;--steel-300:#aeb6c6;--steel-200:#b9c0cf;--steel-100:#d8deea;--cream-50:#fffbf3;--cream-100:#f7f3ea;--cream-200:#e8e1cf;--brass-500:#f4c95d;--brass-400:#ffd877;--brass-ink:#17130a;--bg:var(--ink-900);--bg-panel:var(--ink-800);--bg-elevated:var(--ink-600);--fg:var(--cream-100);--fg-faint:var(--steel-300);--border:var(--steel-600);--accent:#f4c95d;--accent-hover:#ffd877;--font-sans:Geist,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--font-mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--radius-md:10px;--radius-xl:14px;--shadow-floating:0 20px 70px rgba(0,0,0,.35);font-family:var(--font-sans)}*{box-sizing:border-box}:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.review-surface-text-highlight{position:fixed;pointer-events:none;background:color-mix(in srgb,var(--accent) 28%,transparent);border-radius:2px;box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 45%,transparent)}.review-surface-annotation-card{position:fixed;width:min(320px,calc(100vw - 24px));padding:12px;border-radius:var(--radius-xl);background:var(--bg-panel);color:var(--fg);border:1px solid var(--accent);box-shadow:var(--shadow-floating);font:14px/1.4 var(--font-sans)}.review-surface-heading{font-weight:700;margin-bottom:6px}.review-surface-annotation-card textarea{width:100%;min-height:86px;resize:vertical;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg);color:var(--fg);padding:9px;font:inherit;font-family:var(--font-sans)}.review-surface-annotation-card textarea::placeholder{color:var(--fg-faint)}.review-surface-annotation-card .review-surface-hint{margin-top:6px;font-size:11px;color:var(--fg-faint)}.review-surface-annotation-card .review-surface-hint-alert{color:var(--danger-fg,#ff9d7a);font-weight:700}.review-surface-annotation-card .review-surface-row{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}.review-surface-annotation-card button{border:0;border-radius:var(--radius-md);padding:8px 10px;font-family:var(--font-sans);font-size:13px;font-weight:700;cursor:pointer}.review-surface-annotation-card button:active{opacity:.85}.review-surface-annotation-card .review-surface-send{background:var(--accent);color:var(--brass-ink)}.review-surface-annotation-card .review-surface-send:hover{background:var(--accent-hover)}.review-surface-annotation-card .review-surface-cancel{background:var(--steel-700);color:var(--fg)}.review-surface-annotation-card .review-surface-action{background:var(--steel-700);color:var(--accent)}.review-surface-annotation-card .review-surface-action:hover{background:var(--steel-600)}.review-surface-annotation-card.is-dropping{outline:2px dashed var(--accent);outline-offset:3px}.review-surface-attachments{display:flex;flex-direction:column;gap:6px;margin-top:8px;max-height:176px;overflow-y:auto}.review-surface-attachment-chip{display:flex;align-items:center;gap:8px;padding:6px;border-radius:var(--radius-md);background:var(--bg);border:1px solid var(--border)}.review-surface-attachment-chip.is-error{border-color:var(--danger,#e0623d)}.review-surface-attachment-thumb{width:32px;height:32px;border-radius:6px;object-fit:cover;background:var(--ink-700);flex:0 0 auto}.review-surface-attachment-thumb-empty{display:inline-block}.review-surface-attachment-body{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1 1 auto}.review-surface-attachment-name{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.review-surface-attachment-status{font-size:11px;color:var(--fg-faint)}.review-surface-attachment-status-error{color:var(--danger-fg,#ff9d7a)}.review-surface-attachment-retry{flex:0 0 auto;padding:4px 8px;font-size:11px;font-weight:700;border-radius:8px;background:var(--steel-700);color:var(--fg);cursor:pointer;border:0}.review-surface-attachment-remove{flex:0 0 auto;display:flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0!important;border-radius:50%;background:transparent;color:color-mix(in srgb,var(--fg) 85%,transparent);cursor:pointer;border:0}.review-surface-attachment-remove:hover{background:color-mix(in srgb,var(--fg) 14%,transparent);color:var(--fg)}.review-surface-attach-row{margin-top:8px}.review-surface-attach{display:inline-flex;align-items:center;gap:6px;padding:6px 9px!important;background:var(--steel-700)!important;color:var(--fg)!important;font-size:12px!important}.review-surface-attach:hover{background:var(--steel-600)!important}.review-surface-reveal-marker{position:fixed;pointer-events:none;border:2px solid var(--accent);border-radius:4px;box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 22%,transparent);animation:review-surface-reveal-pulse 2.4s var(--ease,ease-out) forwards}@keyframes review-surface-reveal-pulse{0%{opacity:0}12%{opacity:1}70%{opacity:1}100%{opacity:0}}.review-surface-image-expand{position:fixed;width:32px;height:32px;display:flex;align-items:center;justify-content:center;padding:0;border:1px solid var(--border);border-radius:var(--radius-md);background:color-mix(in srgb,var(--bg-panel) 88%,transparent);color:var(--fg);cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.35)}.review-surface-image-expand:hover{color:var(--accent);border-color:var(--accent)}.review-surface-image-expand[hidden],.review-surface-lightbox[hidden]{display:none}.review-surface-lightbox{position:fixed;left:0;top:0;width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;padding:2vmin;background:rgba(0,0,0,.86);cursor:zoom-out;overscroll-behavior:contain;touch-action:pinch-zoom}.review-surface-lightbox img{width:100%;height:100%;object-fit:contain;border-radius:4px;box-shadow:var(--shadow-floating)}`;
+    style.textContent = `:host{all:initial;position:fixed;z-index:2147483647;left:0;top:0;color-scheme:dark;--ink-900:#0f1115;--ink-800:#11141a;--ink-700:#171a21;--ink-600:#1c212b;--steel-700:#2a2f3a;--steel-600:#303745;--steel-500:#3c4557;--steel-400:#8c96aa;--steel-300:#aeb6c6;--steel-200:#b9c0cf;--steel-100:#d8deea;--cream-50:#fffbf3;--cream-100:#f7f3ea;--cream-200:#e8e1cf;--brass-500:#f4c95d;--brass-400:#ffd877;--brass-ink:#17130a;--bg:var(--ink-900);--bg-panel:var(--ink-800);--bg-elevated:var(--ink-600);--fg:var(--cream-100);--fg-faint:var(--steel-300);--border:var(--steel-600);--accent:#f4c95d;--accent-hover:#ffd877;--font-sans:Geist,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--font-mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--radius-md:10px;--radius-xl:14px;--shadow-floating:0 20px 70px rgba(0,0,0,.35);font-family:var(--font-sans)}*{box-sizing:border-box}:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.review-surface-text-highlight{position:fixed;pointer-events:none;background:color-mix(in srgb,var(--accent) 28%,transparent);border-radius:2px;box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 45%,transparent)}.review-surface-annotation-card{position:fixed;width:min(320px,calc(100vw - 24px));padding:12px;border-radius:var(--radius-xl);background:var(--bg-panel);color:var(--fg);border:1px solid var(--accent);box-shadow:var(--shadow-floating);font:14px/1.4 var(--font-sans)}.review-surface-heading{font-weight:700;margin-bottom:6px}.review-surface-annotation-card textarea{width:100%;min-height:86px;resize:vertical;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg);color:var(--fg);padding:9px;font:inherit;font-family:var(--font-sans)}.review-surface-annotation-card textarea::placeholder{color:var(--fg-faint)}.review-surface-annotation-card .review-surface-hint{margin-top:6px;font-size:11px;color:var(--fg-faint)}.review-surface-annotation-card .review-surface-hint-alert{color:var(--danger-fg,#ff9d7a);font-weight:700}.review-surface-annotation-card .review-surface-row{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}.review-surface-annotation-card button{border:0;border-radius:var(--radius-md);padding:8px 10px;font-family:var(--font-sans);font-size:13px;font-weight:700;cursor:pointer}.review-surface-annotation-card button:active{opacity:.85}.review-surface-annotation-card .review-surface-send{background:var(--accent);color:var(--brass-ink)}.review-surface-annotation-card .review-surface-send:hover{background:var(--accent-hover)}.review-surface-annotation-card .review-surface-cancel{background:var(--steel-700);color:var(--fg)}.review-surface-annotation-card .review-surface-action{background:var(--steel-700);color:var(--accent)}.review-surface-annotation-card .review-surface-action:hover{background:var(--steel-600)}.review-surface-annotation-card.is-dropping{outline:2px dashed var(--accent);outline-offset:3px}.review-surface-attachments{display:flex;flex-direction:column;gap:6px;margin-top:8px;max-height:176px;overflow-y:auto}.review-surface-attachment-chip{display:flex;align-items:center;gap:8px;padding:6px;border-radius:var(--radius-md);background:var(--bg);border:1px solid var(--border)}.review-surface-attachment-chip.is-error{border-color:var(--danger,#e0623d)}.review-surface-attachment-thumb{width:32px;height:32px;border-radius:6px;object-fit:cover;background:var(--ink-700);flex:0 0 auto}.review-surface-attachment-thumb-empty{display:inline-block}.review-surface-attachment-body{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1 1 auto}.review-surface-attachment-name{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.review-surface-attachment-status{font-size:11px;color:var(--fg-faint)}.review-surface-attachment-status-error{color:var(--danger-fg,#ff9d7a)}.review-surface-attachment-retry{flex:0 0 auto;padding:4px 8px;font-size:11px;font-weight:700;border-radius:8px;background:var(--steel-700);color:var(--fg);cursor:pointer;border:0}.review-surface-attachment-remove{flex:0 0 auto;display:flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0!important;border-radius:50%;background:transparent;color:color-mix(in srgb,var(--fg) 85%,transparent);cursor:pointer;border:0}.review-surface-attachment-remove:hover{background:color-mix(in srgb,var(--fg) 14%,transparent);color:var(--fg)}.review-surface-attach-row{margin-top:8px}.review-surface-attach{display:inline-flex;align-items:center;gap:6px;padding:6px 9px!important;background:var(--steel-700)!important;color:var(--fg)!important;font-size:12px!important}.review-surface-attach:hover{background:var(--steel-600)!important}.review-surface-reveal-marker{position:fixed;pointer-events:none;border:2px solid var(--accent);border-radius:4px;box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 22%,transparent);animation:review-surface-reveal-pulse 2.4s var(--ease,ease-out) forwards}@keyframes review-surface-reveal-pulse{0%{opacity:0}12%{opacity:1}70%{opacity:1}100%{opacity:0}}.review-surface-image-expand{position:fixed;width:32px;height:32px;display:flex;align-items:center;justify-content:center;padding:0;border:1px solid var(--border);border-radius:var(--radius-md);background:color-mix(in srgb,var(--bg-panel) 88%,transparent);color:var(--fg);cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.35)}.review-surface-image-expand:hover{color:var(--accent);border-color:var(--accent)}.review-surface-image-expand[hidden],.review-surface-lightbox[hidden]{display:none}.review-surface-lightbox{position:fixed;left:0;top:0;width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;padding:2vmin;background:rgba(0,0,0,.86);cursor:zoom-out;overscroll-behavior:contain;touch-action:pinch-zoom}.review-surface-lightbox img{width:100%;height:100%;object-fit:contain;border-radius:4px;box-shadow:var(--shadow-floating)}.review-surface-annotation-card.is-nudged{animation:review-surface-nudge .32s ease-out}@keyframes review-surface-nudge{0%,100%{transform:translateX(0)}25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}.review-surface-note-marker{position:absolute;min-width:16px;height:16px;padding:0 4px;display:flex;align-items:center;justify-content:center;border:0;border-radius:8px;background:var(--accent);color:var(--brass-ink);font:700 10px/1 var(--font-sans);cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.45);opacity:.9}.review-surface-note-marker:hover,.review-surface-note-marker[aria-expanded=true]{opacity:1;outline:2px solid color-mix(in srgb,var(--accent) 40%,transparent)}.review-surface-note-preview{position:fixed;width:min(300px,calc(100vw - 24px));max-height:min(320px,calc(100vh - 24px));overflow:auto;padding:8px;border-radius:var(--radius-md);background:var(--bg-panel);color:var(--fg);border:1px solid var(--accent);box-shadow:var(--shadow-floating);font:13px/1.4 var(--font-sans)}.review-surface-note-preview[hidden],.review-surface-note-marker[hidden]{display:none}.review-surface-note-row{display:grid;grid-template-columns:1fr auto;gap:4px 8px;align-items:start;padding:4px 2px}.review-surface-note-row+.review-surface-note-row{border-top:1px solid var(--border)}.review-surface-note-text{white-space:pre-wrap;overflow-wrap:anywhere}.review-surface-note-row button{border:0;border-radius:6px;padding:3px 7px;background:var(--steel-700);color:var(--fg);font:600 11px var(--font-sans);cursor:pointer}`;
     style.textContent += String(options.hostThemeCss || "");
     shadow.appendChild(style);
     return shadow;
@@ -6564,7 +6568,25 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
   if (window.visualViewport && typeof window.visualViewport.addEventListener === "function") {
     window.visualViewport.addEventListener("resize", () => repositionActiveCard?.());
   }
+  let activeCardTextarea = null;
+  function activeCardIsEmpty() {
+    if (!activeCardTextarea) return false;
+    return !activeCardTextarea.value.trim() && !(activeAttachments?.hasReady?.() || activeAttachments?.hasPending?.());
+  }
+  function activeCardHasWork() {
+    return Boolean(activeCardTextarea) && !activeCardIsEmpty();
+  }
+  function nudgeActiveCard() {
+    const card = activeCardTextarea?.closest?.(".review-surface-annotation-card");
+    if (card) {
+      card.classList.remove("is-nudged");
+      void card.offsetWidth;
+      card.classList.add("is-nudged");
+    }
+    activeCardTextarea?.focus?.();
+  }
   function closeCard() {
+    activeCardTextarea = null;
     activeCardContext = null;
     repositionActiveCard = null;
     if (activeAttachments) {
@@ -6646,6 +6668,7 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
       card.querySelector(".review-surface-hint")
     );
     if (!textarea || !cancelButton || !sendButton || !attachmentsList || !attachButton || !attachInput) return;
+    activeCardTextarea = textarea;
     const defaultHintHtml = attachNotice ? attachNotice.innerHTML : "";
     const notify = (message) => {
       if (!attachNotice) return;
@@ -6742,6 +6765,12 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
       if (result !== false) closeCard();
     }
     textarea.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !event.isComposing) {
+        event.preventDefault();
+        event.stopPropagation();
+        closeCard();
+        return;
+      }
       if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
         event.preventDefault();
         const sendNow = (event.ctrlKey || event.metaKey) && (!!textarea.value.trim() || attachments.hasReady());
@@ -6774,6 +6803,7 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     setStatus: (message) => postArtifactMessage("review-surface:status", { message: String(message) }),
     snapshot
   };
+  let footerPanelOpen = false;
   window.addEventListener("message", (event) => {
     if (event.source !== parent) return;
     const msg = event.data || {};
@@ -6790,11 +6820,195 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     }
     if (msg.type === "review-surface:restoreReviewState") restoreReviewState(msg.state);
     if (msg.type === "review-surface:revealElement") revealElement(msg.selector);
+    if (msg.type === "review-surface:annotationMarkers") setNoteMarkers(msg.markers);
+    if (msg.type === "review-surface:footerPanel") footerPanelOpen = msg.open === true;
     if (msg.type === "review-surface:visibleArea") {
       const bottom = Number(msg.bottom);
       hostVisibleBottom = Number.isFinite(bottom) && bottom > 0 ? bottom : null;
       repositionActiveCard?.();
     }
+  });
+  let noteMarkers = [];
+  let markerEls = [];
+  const markerInfo = /* @__PURE__ */ new WeakMap();
+  let notePreview = null;
+  let previewFor = null;
+  let previewPinned = false;
+  let markerFrame = 0;
+  function setNoteMarkers(list) {
+    noteMarkers = (Array.isArray(list) ? list : []).filter((m) => m && typeof m.selector === "string" && m.selector && Number.isInteger(m.index)).map((m) => ({ index: m.index, selector: m.selector, text: String(m.text || "") }));
+    drawNoteMarkers();
+  }
+  let markerRoot = null;
+  function ensureMarkerRoot() {
+    if (markerRoot) return markerRoot;
+    const host = document.createElement("div");
+    host.className = "review-surface-marker-root";
+    host.setAttribute("data-review-surface-ui", "marker-root");
+    host.style.cssText = "position:absolute;left:0;top:0;width:0;height:0;z-index:2147483646";
+    document.documentElement.appendChild(host);
+    markerRoot = host.attachShadow({ mode: "open" });
+    const style = ensureShadow().querySelector("style");
+    if (style) markerRoot.appendChild(style.cloneNode(true));
+    return markerRoot;
+  }
+  let markerResizeWatch = null;
+  function drawNoteMarkers() {
+    const root = ensureMarkerRoot();
+    if (!markerResizeWatch && typeof ResizeObserver === "function") {
+      markerResizeWatch = new ResizeObserver(() => scheduleMarkerPlacement());
+      markerResizeWatch.observe(document.documentElement);
+    }
+    for (const el of markerEls) el.remove();
+    markerEls = [];
+    const groups = /* @__PURE__ */ new Map();
+    for (const note of noteMarkers) {
+      if (!groups.has(note.selector)) groups.set(note.selector, []);
+      groups.get(note.selector).push(note);
+    }
+    for (const [selectorText, notes] of groups) {
+      const target = safeQuerySelector(selectorText);
+      if (!(target instanceof Element)) continue;
+      const marker = document.createElement("button");
+      marker.type = "button";
+      marker.className = "review-surface-note-marker";
+      marker.textContent = String(notes.length);
+      marker.setAttribute(
+        "aria-label",
+        notes.length === 1 ? "1 queued note here" : notes.length + " queued notes here"
+      );
+      marker.setAttribute("aria-expanded", String(previewPinned && previewFor === selectorText));
+      markerInfo.set(marker, { target, selector: selectorText });
+      marker.addEventListener("mouseenter", () => {
+        if (!previewPinned) showNotePreview(marker, notes);
+      });
+      marker.addEventListener("mouseleave", () => {
+        if (!previewPinned) window.setTimeout(() => hideNotePreviewUnlessHovered(), 120);
+      });
+      marker.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (previewPinned && previewFor === selectorText) return closeNotePreview();
+        previewPinned = true;
+        showNotePreview(marker, notes);
+        marker.setAttribute("aria-expanded", "true");
+      });
+      root.appendChild(marker);
+      markerEls.push(marker);
+    }
+    placeNoteMarkers();
+    if (!previewFor) return;
+    const open = markerEls.find((m) => markerInfo.get(m)?.selector === previewFor);
+    if (!open) closeNotePreview();
+    else if (notePreview && !notePreview.hidden) showNotePreview(open, groups.get(previewFor));
+  }
+  function placeNoteMarkers() {
+    for (const marker of markerEls) {
+      const info = markerInfo.get(marker);
+      if (!info) continue;
+      const rect = info.target.getBoundingClientRect();
+      const hidden = rect.width === 0 && rect.height === 0;
+      marker.hidden = hidden;
+      const right = Math.min(rect.right - 8, document.documentElement.clientWidth - 24);
+      marker.style.left = Math.max(2, right) + window.scrollX + "px";
+      marker.style.top = Math.max(2, rect.top + window.scrollY - 8) + "px";
+    }
+    if (notePreview && !notePreview.hidden && previewFor) {
+      const marker = markerEls.find((m) => markerInfo.get(m)?.selector === previewFor);
+      if (marker) placeNotePreview(marker);
+    }
+  }
+  function scheduleMarkerPlacement() {
+    if (markerFrame || !markerEls.length) return;
+    markerFrame = window.requestAnimationFrame(() => {
+      markerFrame = 0;
+      placeNoteMarkers();
+    });
+  }
+  function placeNotePreview(marker) {
+    const width = notePreview.offsetWidth || 300;
+    const height = notePreview.offsetHeight || 120;
+    const viewW = document.documentElement.clientWidth || window.innerWidth;
+    const viewB = visibleFrameBottom();
+    const gap = 8;
+    const el = markerInfo.get(marker)?.target.getBoundingClientRect() || marker.getBoundingClientRect();
+    const m = marker.getBoundingClientRect();
+    const clampTop = (top) => Math.max(12, Math.min(top, viewB - height - 12));
+    const clampLeft = (left) => Math.max(12, Math.min(left, viewW - width - 12));
+    let spot;
+    if (el.right + gap + width <= viewW - 12) spot = { left: el.right + gap, top: clampTop(el.top) };
+    else if (el.left - gap - width >= 12) spot = { left: el.left - gap - width, top: clampTop(el.top) };
+    else if (el.bottom + gap + height <= viewB - 12) spot = { left: clampLeft(m.right - width), top: el.bottom + gap };
+    else if (el.top - gap - height >= 12) spot = { left: clampLeft(m.right - width), top: el.top - gap - height };
+    else spot = { left: clampLeft(m.right - width), top: clampTop(m.bottom + 6) };
+    notePreview.style.left = spot.left + "px";
+    notePreview.style.top = spot.top + "px";
+  }
+  function showNotePreview(marker, notes) {
+    const root = ensureShadow();
+    if (!notePreview) {
+      notePreview = document.createElement("div");
+      notePreview.className = "review-surface-note-preview";
+      notePreview.setAttribute("role", "dialog");
+      notePreview.setAttribute("aria-label", "Queued notes on this element");
+      notePreview.addEventListener("mouseleave", () => {
+        if (!previewPinned) hideNotePreviewUnlessHovered();
+      });
+      root.appendChild(notePreview);
+    }
+    previewFor = markerInfo.get(marker)?.selector || null;
+    notePreview.replaceChildren(...notes.map((note) => noteRow(note)));
+    notePreview.hidden = false;
+    placeNotePreview(marker);
+  }
+  function noteRow(note) {
+    const row = document.createElement("div");
+    row.className = "review-surface-note-row";
+    const text = document.createElement("span");
+    text.className = "review-surface-note-text";
+    text.textContent = note.text.slice(0, 2e3) || "(an image)";
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.textContent = "Edit";
+    edit.addEventListener("click", (event) => {
+      event.stopPropagation();
+      closeNotePreview();
+      postArtifactMessage("review-surface:editQueued", { index: note.index, was: note.text });
+    });
+    row.append(text, edit);
+    return row;
+  }
+  function hideNotePreviewUnlessHovered() {
+    if (previewPinned || !notePreview) return;
+    const hovered2 = notePreview.matches?.(":hover") || markerEls.some((m) => m.matches?.(":hover"));
+    if (!hovered2) {
+      notePreview.hidden = true;
+      previewFor = null;
+    }
+  }
+  function closeNotePreview() {
+    previewPinned = false;
+    previewFor = null;
+    if (notePreview) notePreview.hidden = true;
+    for (const marker of markerEls) marker.setAttribute("aria-expanded", "false");
+  }
+  window.addEventListener(
+    "scroll",
+    () => {
+      if (!notePreview || notePreview.hidden || !previewFor) return;
+      if (!previewPinned) {
+        notePreview.hidden = true;
+        previewFor = null;
+        return;
+      }
+      const marker = markerEls.find((m) => markerInfo.get(m)?.selector === previewFor);
+      if (marker) placeNotePreview(marker);
+    },
+    { passive: true, capture: true }
+  );
+  window.addEventListener("resize", scheduleMarkerPlacement);
+  window.addEventListener("load", () => {
+    if (noteMarkers.length) drawNoteMarkers();
   });
   function revealElement(selector2) {
     const target = selector2 === "html" ? document.documentElement : safeQuerySelector(selector2);
@@ -6940,6 +7154,16 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     if (expandImage.isConnected === false) hideExpandButton();
     else placeExpandButton(expandImage);
   });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || event.defaultPrevented) return;
+    if (previewPinned) {
+      closeNotePreview();
+      event.preventDefault();
+    } else if (activeCardTextarea) {
+      closeCard();
+      event.preventDefault();
+    }
+  });
   document.addEventListener(
     "keydown",
     (event) => {
@@ -6964,7 +7188,7 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
   document.addEventListener(
     "mouseover",
     (event) => {
-      if (!annotationMode || isReviewSurfaceUi(event.target) || isReviewSurfaceAction(event.target) || isInteractiveControl(event.target))
+      if (!annotationMode || isReviewSurfaceUi(event.target) || isReviewSurfaceAction(event.target) || isInteractiveControl(event.target) || isNavigationLink(event.target))
         return;
       const target = annotationTargetEl(event.target);
       if (target === selected) return;
@@ -6989,8 +7213,14 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     (event) => {
       if (!annotationMode || isReviewSurfaceUi(event.target) || isReviewSurfaceAction(event.target) || isInteractiveControl(event.target))
         return;
+      if (footerPanelOpen) return;
       const c = textSelectionContext(document.getSelection());
       if (!c) return;
+      if (activeCardHasWork()) {
+        ignoreNextClick = true;
+        nudgeActiveCard();
+        return;
+      }
       ignoreNextClick = true;
       showAnnotationCard(c.element, { context: c, range: c.range });
     },
@@ -7024,13 +7254,30 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
   document.addEventListener(
     "click",
     (event) => {
-      if (followReviewPageLink(event)) return;
-      if (!annotationMode || isReviewSurfaceUi(event.target) || isReviewSurfaceAction(event.target) || isInteractiveControl(event.target))
+      if (footerPanelOpen && !isReviewSurfaceUi(event.target)) {
+        event.preventDefault();
+        event.stopPropagation();
+        footerPanelOpen = false;
+        ignoreNextClick = false;
+        postArtifactMessage("review-surface:closeFooterPanels");
         return;
+      }
+      if (previewPinned && !isReviewSurfaceUi(event.target)) closeNotePreview();
+      const annotating = annotationMode && !isReviewSurfaceUi(event.target) && !isReviewSurfaceAction(event.target) && !isInteractiveControl(event.target);
+      if (annotating && (ignoreNextClick || activeCardHasWork())) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (ignoreNextClick) ignoreNextClick = false;
+        else nudgeActiveCard();
+        return;
+      }
+      if (annotating && isNavigationLink(event.target) && activeCardIsEmpty()) closeCard();
+      if (followReviewPageLink(event)) return;
+      if (!annotating || isNavigationLink(event.target)) return;
       event.preventDefault();
       event.stopPropagation();
-      if (ignoreNextClick) {
-        ignoreNextClick = false;
+      if (activeCardIsEmpty()) {
+        closeCard();
         return;
       }
       showAnnotationCard(event.target);
@@ -11799,7 +12046,25 @@ var HOLOLOOP_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0
   <circle cx="16" cy="16" r="12.6"/>
   <circle cx="16" cy="16" r="6" stroke-opacity="0.55"/>
 </svg>`;
-var LAVISH_DEFAULT_FAVICON = `<link rel="icon" href="data:image/svg+xml;base64,${Buffer.from(HOLOLOOP_FAVICON_SVG).toString("base64")}">`;
+var LAVISH_DEFAULT_FAVICON = `<link rel="icon" data-review-surface-theme-icon href="data:image/svg+xml;base64,${Buffer.from(HOLOLOOP_FAVICON_SVG).toString("base64")}">`;
+var CHROME_THEME_FAVICON_JS = `(function(){
+var link=document.querySelector("link[rel~=icon][data-review-surface-theme-icon]");
+if(!link)return;
+var last=null;
+function draw(){
+if(!document.getElementById("review-surface-host-theme"))return;
+var accent=getComputedStyle(document.documentElement).getPropertyValue("--accent").trim().replace(/['"<>&]/g,"");
+if(!accent||accent===last)return;
+last=accent;
+link.href="data:image/svg+xml,"+encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none' stroke='"+accent+"' stroke-width='2.8'><circle cx='16' cy='16' r='12.6'/><circle cx='16' cy='16' r='6' stroke-opacity='0.55'/></svg>");
+}
+draw();
+var watch=new MutationObserver(draw);
+watch.observe(document.documentElement,{attributes:true,attributeFilter:["style","class","data-theme"]});
+watch.observe(document.head,{childList:true,subtree:true,characterData:true,attributes:true,attributeFilter:["href","media","disabled"]});
+document.addEventListener("load",draw,true);
+if(typeof matchMedia==="function"){var m=matchMedia("(prefers-color-scheme: dark)");if(m&&m.addEventListener)m.addEventListener("change",draw);}
+})();`;
 function readTagAttr(tag, name) {
   const attrRe = /([a-z][\w:-]*)\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/gi;
   const target = name.toLowerCase();
@@ -11939,7 +12204,7 @@ ${faviconTag}
 <body class="${bodyClass}">
 <div class="bar"><div class="brand"><span class="brand-mark">Cadre</span></div><div class="spacer" aria-hidden="true"></div><div class="warnings-wrap" id="warningsWrap" hidden><button class="warnings-button" id="warningsButton" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="warningsDrawer">${chromeIcons.warning}<span class="warnings-count" id="warningsCount">0</span></button><div class="menu warnings-drawer" id="warningsDrawer" role="dialog" aria-labelledby="warningsTitle" aria-describedby="warningsSummary" hidden><div class="warnings-head"><h2 class="warnings-title" id="warningsTitle">Layout issues</h2><p class="warnings-summary" id="warningsSummary"></p></div><div class="warnings-toolbar"><label class="warnings-selectall"><input type="checkbox" id="warningsSelectAll"><span>Select all</span></label><span class="warnings-selected" id="warningsSelected" role="status" aria-live="polite"></span></div><div class="warnings-list" id="warningsList"></div><div class="warnings-foot"><p class="warnings-note">Queueing sends a repair request with your next feedback. An issue is marked resolved only after a newer artifact load and a complete check at the same viewport no longer finds it.</p><button class="button" id="warningsQueueButton" type="button" disabled>Queue selected fixes</button></div></div></div><div class="notify-wrap" id="notifyWrap" hidden><button class="notify-button" id="notifyButton" type="button" title="Notifications" aria-haspopup="menu" aria-expanded="false" aria-controls="notifyMenu">${chromeIcons.bell}<span class="notify-count" id="notifyCount" hidden>0</span></button><div class="menu notify-menu" id="notifyMenu" role="menu" aria-label="Notifications" hidden><div class="menu-label">On other pages</div><div class="notify-list" id="notifyList"></div><p class="notify-empty" id="notifyEmpty">Nothing has moved on other pages yet.</p></div></div><button class="annotate-toggle" id="annotation" type="button" aria-pressed="true" aria-label="Annotate" title="${escapeHtml(modeToggleHint)}">${chromeIcons.annotate}</button><div class="more-wrap" id="moreWrap"><button class="more-button" id="moreButton" type="button" title="More" aria-haspopup="menu" aria-expanded="false">${chromeIcons.more}</button><div class="menu more-menu" id="moreMenu" hidden><div class="menu-head"><div class="menu-label">Editing</div><button class="menu-file" id="copyPath" type="button" title="Copy path \xB7 ${escapeHtml(session.file)}">${chromeIcons.file}<span class="menu-file-text"><span class="path-head">${escapeHtml(pathHead)}</span><span class="path-tail">${escapeHtml(pathTail)}</span></span><span class="copy-hint" id="copyHint"><span class="icon-copy">${chromeIcons.copy}</span><span class="icon-check">${chromeIcons.check}</span><span id="copyHintText">Copy</span></span></button></div><div class="menu-rule"></div><button class="menu-item" id="panelCollapse" type="button" aria-pressed="false" title="The older conversation sidebar - the This page chat in the footer replaces it">${chromeIcons.chat}<span>Conversation sidebar</span></button><button class="menu-item" id="reloadArtifact" type="button">${chromeIcons.refresh}<span>Reload artifact</span></button><button class="menu-item" id="copySnapshot" type="button">${chromeIcons.camera}<span>Copy DOM snapshot</span></button><button class="menu-item" id="exportArtifact" type="button">${chromeIcons.download}<span>Export standalone HTML</span></button><button class="menu-item" id="shareArtifact" type="button">${chromeIcons.globe}<span>Publish link</span></button><div class="menu-rule"></div><button class="menu-item danger" id="sendPageAndEnd" type="button" title="Send the page review with the This page chat&#39;s message and images, then end the session">${chromeIcons.exit}<span>Send page and end</span></button><button class="menu-item danger" id="end" type="button">${chromeIcons.exit}<span>End session</span></button></div></div></div>
 <div class="layout"><div class="frame">${newerPageBar}${artifactFrame}</div><div class="panel-scrim" id="panelScrim"></div><aside class="panel" id="panel"><div class="panel-head" id="panelHead"><span class="panel-handle" aria-hidden="true"></span><div class="panel-head-row"><h2>Conversation</h2><span class="panel-summary" id="panelSummary" role="status" aria-live="polite"></span><button class="panel-toggle" id="panelToggle" type="button" aria-expanded="false" aria-controls="panel" aria-label="Show conversation">${chromeIcons.chevronUp}</button></div></div><div class="panel-scroll" id="panelScroll"><div class="chat" id="chatLog"></div><div class="annotation-pills" id="annotationPills"></div></div><div class="composer" id="chatComposer"><div class="presence-banner handoff-banner" id="handoffBanner" hidden><span>This review is open in another Review Surface tab.</span><button class="handoff-takeover" id="handoffTakeover" type="button">Take over here</button></div><div class="presence-banner handoff-banner" id="outdatedBanner" hidden><span id="outdatedText">The Review Surface server this page was connected to is no longer running. Reloading will work once it is running again.</span><span class="outdated-actions"><button class="handoff-takeover" id="outdatedReload" type="button">Check and reload</button><button class="handoff-takeover" id="outdatedDismiss" type="button">Dismiss</button></span></div><div class="presence-banner" id="presenceBanner" hidden>Your agent is not listening. If this persists, ask your agent to poll for updates from Review Surface.</div><textarea id="chatInput" placeholder="Write a message for the agent..."></textarea><div class="chat-attachments" id="chatAttachments"></div><div class="chat-attachment-toolbar"><button class="chat-attach" id="chatAttach" type="button">Attach images</button><input id="chatAttachInput" type="file" accept="${escapeHtml(acceptedMime.join(","))}" multiple hidden><span class="chat-attachment-notice" id="chatAttachmentNotice" role="status"></span></div><div class="send-hint" id="sendHint" hidden>Write a message or annotate an element first.</div><div class="actions" id="sendActions"><button class="button button-danger" id="sendAndEnd" type="button">${chromeIcons.exit}<span>Send &amp; End</span></button><button class="button" id="send">Send to Agent</button></div></div></aside></div>
-<footer class="threads-footer" id="threadsWrap" hidden><button class="threads-button" id="threadsButton" type="button" title="Threads" aria-haspopup="menu" aria-expanded="false" aria-controls="threadsMenu">${chromeIcons.chat}<span>Threads</span><span class="threads-count" id="threadsCount" hidden>0</span></button><div class="threads-tabs" id="threadsTabs"></div><button class="threads-more" id="threadsMore" type="button" title="Every thread" hidden>+0</button><span class="threads-summary" id="threadsSummary"></span><div class="footer-home" id="footerHome"><div class="threads-page-tab" id="threadsPageTab"></div><div class="queue-dock" id="queueDock" hidden><button class="queue-open" id="queueOpen" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="queueMenu" title="See what is queued for this page&#39;s agent">Queued <span class="queue-count" id="queueCount">0</span></button><button class="queue-send" id="queueSend" type="button" title="Send everything queued to this page&#39;s agent now">Send</button><div class="menu queue-menu" id="queueMenu" role="menu" aria-label="Queued for this page" hidden><div class="menu-label">Queued for this page&#39;s agent</div><div class="queue-list" id="queueList"></div><div class="queue-menu-actions"><button class="button" id="queueMenuSend" type="button">Send now</button></div></div></div></div><div class="menu threads-menu" id="threadsMenu" role="menu" aria-label="Threads" hidden><div class="menu-label" id="threadsHereLabel">On this page</div><div class="threads-list" id="threadsList"></div><div class="menu-label" id="threadsOtherLabel" hidden>On other pages</div><div class="threads-list" id="threadsOtherList"></div><form class="threads-new" id="threadsNew" hidden><div class="menu-label">Start a thread on this page</div><textarea id="threadsNewText" rows="2" placeholder="Ask about this page. The page keeps its round."></textarea><div class="threads-new-agents" id="threadsNewAgents"></div></form><div class="menu-rule"></div><button class="menu-item" id="threadsNotify" type="button" hidden>${chromeIcons.bell}<span>Notify me when I am in another tab</span></button></div></footer>
+<footer class="threads-footer" id="threadsWrap" hidden><button class="threads-button" id="threadsButton" type="button" title="Threads" aria-haspopup="menu" aria-expanded="false" aria-controls="threadsMenu">${chromeIcons.chat}<span>Threads</span><span class="threads-count" id="threadsCount" hidden>0</span></button><div class="threads-tabs" id="threadsTabs"></div><button class="threads-more" id="threadsMore" type="button" title="Every thread" hidden>+0</button><span class="threads-summary" id="threadsSummary"></span><div class="footer-home" id="footerHome"><div class="threads-page-tab" id="threadsPageTab"></div><div class="queue-dock" id="queueDock" hidden><button class="queue-open" id="queueOpen" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="queueMenu" title="See what is queued for this page&#39;s agent">Queued <span class="queue-count" id="queueCount">0</span></button><button class="queue-send" id="queueSend" type="button" title="Send everything queued to this page&#39;s agent now">Send</button><div class="menu queue-menu" id="queueMenu" role="menu" aria-label="Queued for this page" hidden><div class="menu-label">Queued for this page&#39;s agent</div><div class="queue-list" id="queueList"></div><div class="queue-menu-actions"><button class="button" id="queueMenuSend" type="button" title="Send everything queued to this page&#39;s agent now">Send</button></div></div></div></div><div class="menu threads-menu" id="threadsMenu" role="menu" aria-label="Threads" hidden><div class="menu-label" id="threadsHereLabel">On this page</div><div class="threads-list" id="threadsList"></div><div class="menu-label" id="threadsOtherLabel" hidden>On other pages</div><div class="threads-list" id="threadsOtherList"></div><form class="threads-new" id="threadsNew" hidden><div class="menu-label">Start a thread on this page</div><textarea id="threadsNewText" rows="2" placeholder="Ask about this page. The page keeps its round."></textarea><div class="threads-new-agents" id="threadsNewAgents"></div></form><div class="menu-rule"></div><button class="menu-item" id="threadsNotify" type="button" hidden>${chromeIcons.bell}<span>Notify me when I am in another tab</span></button></div></footer>
 <div class="chat-pop" id="chatPop" role="dialog" aria-modal="false" aria-labelledby="chatPopTitle" hidden><div class="chat-pop-head"><span class="chat-pop-title" id="chatPopTitle"></span><span class="thread-presence" id="chatPopPresence" role="status" aria-live="polite"></span><button class="thread-action" id="chatPopFull" type="button" title="Full screen, like a terminal" aria-label="Full screen" aria-pressed="false">${chromeIcons.fullscreen}</button><button class="thread-action" id="chatPopExpand" type="button" title="Open the thread with its page" aria-label="Open the thread with its page">${chromeIcons.external}</button><button class="thread-action" id="chatPopClose" type="button" title="Minimize - its tab in the footer tells you when it answers" aria-label="Minimize">${chromeIcons.minimize}</button></div><div class="chat-pop-log" id="chatPopLog" role="log" aria-live="polite"></div><form class="chat-pop-compose" id="chatPopForm"><textarea id="chatPopInput" rows="2" placeholder="Reply\u2026"></textarea><div class="chat-attachments chat-pop-attachments" id="chatPopAttachments"></div><div class="chat-attachment-toolbar chat-pop-attach-bar" id="chatPopAttachBar"><button class="chat-attach" id="chatPopAttach" type="button" title="Attach images - they go with Send page">Attach images</button><input id="chatPopAttachInput" type="file" accept="${escapeHtml(acceptedMime.join(","))}" multiple hidden><span class="chat-attachment-notice" id="chatPopAttachmentNotice" role="status"></span><label class="chat-pop-speed" title="Ask for a fast answer: the agent may use a faster model or a shorter look"><input type="checkbox" id="chatPopQuick"><span>Quick answer</span></label></div><div class="chat-pop-actions"><span class="chat-pop-hint" id="chatPopHint" role="status"></span><button class="button chat-pop-send-page" id="chatPopSendPage" type="button" title="Send the whole page review - your queued notes and the page itself - to this page&#39;s agent" hidden>Send page</button><button class="button" type="submit" id="chatPopSend">Send</button></div></form></div>
 <div class="thread-modal" id="threadModal" role="dialog" aria-modal="false" aria-labelledby="threadModalTitle" hidden><div class="thread-scrim" id="threadScrim"></div><div class="thread-window"><div class="thread-head"><h2 class="thread-title" id="threadModalTitle"></h2><span class="thread-presence" id="threadModalPresence" role="status" aria-live="polite"></span><a class="thread-action" id="threadOpenTab" href="#" target="_blank" rel="noopener" title="Open in its own tab">${chromeIcons.external}</a><button class="thread-action" id="threadMinimize" type="button" title="Minimize - it keeps running, and its tab in the footer tells you when it answers" aria-label="Minimize thread">${chromeIcons.minimize}</button></div><div class="thread-frames" id="threadFrames"></div></div></div>
 <div class="share-overlay" id="shareDialog" role="dialog" aria-modal="true" aria-labelledby="shareTitleText" hidden><form class="share-card" id="shareForm"><div class="share-head"><div><div class="share-kicker">Publish to <a class="share-link" href="https://ht-ml.app" target="_blank" rel="noopener noreferrer">ht-ml.app</a></div><h2 id="shareTitleText">Publish artifact</h2></div><button class="share-close" id="shareClose" type="button" aria-label="Close publish dialog"><svg width="14" height="14" viewBox="0 0 10 10" fill="none" aria-hidden="true" focusable="false"><path d="M1 1L9 9M9 1L1 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button></div><p class="share-note">ht-ml.app is a separate, third-party hosting service, not part of Review Surface. Publishing sends this artifact to its servers.</p><p class="share-copy">This uploads this artifact to ht-ml.app with local assets inlined. Without a password, the page is PUBLIC and anyone with the link can open it. With a password, the page is PRIVATE and viewers must supply the password to view.</p><p class="share-note">Do not publish secrets. The Review Surface annotation SDK is not included.</p><div class="share-grid"><label>Password (optional)<input id="sharePassword" name="password" type="password" autocomplete="new-password" placeholder="Leave blank for a public page"></label></div><div class="share-status" id="shareStatus" role="status"></div><div class="share-result" id="shareResult" hidden><label>Share URL<div class="share-copy-row"><input id="shareUrl" readonly><button class="share-copy-btn" id="copyShareUrl" type="button">Copy URL</button></div></label><label>Update key (secret)<div class="share-copy-row"><input id="shareUpdateKey" readonly><button class="share-copy-btn" id="copyUpdateKey" type="button">Copy key</button></div></label><p class="share-note">Keep the update key private. ht-ml.app returns it once and it is the only way to update or delete this page later.</p></div><div class="share-actions"><button class="share-cancel" id="shareCancel" type="button">Cancel</button><button class="button" id="sharePublish" type="submit">Publish</button></div></form></div>
@@ -11947,6 +12212,7 @@ ${faviconTag}
 <div class="ended-overlay" id="endedOverlay" hidden><div class="ended-card"><div class="ended-title">Session ended. Read-only. <br>Return to your agent to continue.</div><p class="ended-copy">${escapeHtml(session.file)}</p>${endedNewerPage}</div></div>
 <div class="whiteboard-overlay" id="whiteboardOverlay" hidden><div class="whiteboard-shell"><div class="whiteboard-error" id="whiteboardError" hidden></div><button class="whiteboard-close" id="whiteboardClose" type="button" aria-label="Close whiteboard"><svg width="14" height="14" viewBox="0 0 10 10" fill="none" aria-hidden="true" focusable="false"><path d="M1 1L9 9M9 1L1 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button><iframe id="whiteboardFrame" title="Excalidraw whiteboard" sandbox="allow-scripts allow-popups"></iframe></div></div>
 <script id="review-surface-session" type="application/json">${sessionJson}</script>
+<script>${CHROME_THEME_FAVICON_JS}</script>
 <script>${CHROME_BOOT_FAILSAFE_JS}</script>
 <script src="${versioned("/chrome-client.js", assetVersions.client)}" onerror="window.__reviewSurfaceChromeBootFailed()"></script>
 </body>
