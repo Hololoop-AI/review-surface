@@ -1011,6 +1011,59 @@ test("tabbing from a note's editor to a button in the list keeps that button", a
   assert.equal(chrome.queued()[0].prompt, "Use plan B", "the edit is saved");
   assert.equal(chrome.element("queueList").children[0], first, "the row holding the focused button is not rebuilt");
   assert.equal(chrome.element("queueList").children[1], second);
+  assert.equal(
+    chrome.postedToFrame.filter((m) => m.type === "review-surface:annotationMarkers").at(-1).markers[0].text,
+    "Use plan B",
+    "the page's marker shows the edited text",
+  );
+  assert.match(chrome.element("annotationPills").innerHTML, /Use plan B/);
+});
+
+test("a session that ends with Queued open tells the page the panel closed", async () => {
+  const chrome = await createChromeHarness();
+  chrome.sendFrameMessage({
+    type: "review-surface:queuePrompt",
+    prompt: { prompt: "Use plan A", selector: "p#x", tag: "p", text: "x" },
+  });
+  chrome.element("queueOpen").click();
+  chrome.eventSource().listeners.get("ended")({ data: "{}" });
+  assert.equal(chrome.element("queueMenu").hidden, true);
+  assert.equal(
+    JSON.stringify(chrome.postedToFrame.filter((m) => m.type === "review-surface:footerPanel").at(-1)),
+    JSON.stringify({ type: "review-surface:footerPanel", open: false }),
+  );
+});
+
+test("a note edited while its send is in flight is not sent a second time", async () => {
+  const posts = [];
+  let release;
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url, init) => {
+      if (!String(url).endsWith("/prompts")) return { ok: true, json: async () => ({}) };
+      posts.push(JSON.parse(init.body));
+      await new Promise((resolve) => (release = resolve));
+      return { ok: true, json: async () => ({}) };
+    },
+  });
+  chrome.sendFrameMessage({
+    type: "review-surface:queuePrompt",
+    prompt: { prompt: "Use plan A", selector: "p#x", tag: "p", text: "x" },
+  });
+  chrome.element("queueSend").onclick();
+  chrome.sendFrameMessage({ type: "review-surface:snapshot", snapshot: "" });
+  await flushPromises();
+  assert.equal(posts.length, 1, "the send is in flight");
+
+  const row = chrome.element("queueList").children[0];
+  row.querySelectorAll(".queue-item-edit")[0].click({ stopPropagation() {} });
+  const box = row.querySelectorAll(".queue-item-input")[0];
+  box.value = "Use plan B";
+  box.dispatch("keydown", { key: "Enter", preventDefault() {} });
+
+  release();
+  await flushPromises();
+  await flushPromises();
+  assert.deepEqual(chrome.queued(), [], "the delivered note does not stay queued");
 });
 
 test("a note emptied in its editor is gone before the Queued window's Send delivers", async () => {

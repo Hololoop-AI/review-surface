@@ -387,7 +387,8 @@ function promptTargetLabel(prompt) {
   return String(prompt?.selector || "");
 }
 
-function render() {
+/** @param {boolean} [keepRows] leave the Queued window's rows as they are */
+function render(keepRows = false) {
   annotationPills.innerHTML = queued
     .map((prompt, index) => {
       const targetLabel = promptTargetLabel(prompt);
@@ -427,7 +428,7 @@ function render() {
   updateSendState();
   scrollPanelToBottom();
   renderSheetSummary();
-  renderQueueDock();
+  if (!keepRows) renderQueueDock();
   postAnnotationMarkers();
 }
 
@@ -522,7 +523,7 @@ function renderQueueDock() {
       return row;
     }),
   );
-  if (count === 0) setMenuOpen(queueOpen, queueMenu, false);
+  if (count === 0 || ended) setMenuOpen(queueOpen, queueMenu, false);
   if (footerReady) {
     renderThreads();
     syncSendPageLabel();
@@ -1095,7 +1096,7 @@ function editQueuedPrompt(index, row, text, event) {
     const next = box.value.trim();
     const kept = Boolean(next || attachmentCount(prompt));
     if (save && at !== -1) {
-      if (kept) queued[at] = { ...prompt, prompt: next };
+      if (kept) prompt.prompt = next;
       else queued.splice(at, 1);
       persistQueuedPrompts();
     }
@@ -1105,6 +1106,7 @@ function editQueuedPrompt(index, row, text, event) {
     if (inPlace && kept && at !== -1) {
       text.textContent = next || "Image annotation";
       box.replaceWith(text);
+      render(true);
       return;
     }
     render();
