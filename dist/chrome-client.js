@@ -114,6 +114,8 @@ const queueSend = /** @type {HTMLButtonElement} */ (document.getElementById("que
 const queueMenu = /** @type {HTMLDivElement} */ (document.getElementById("queueMenu"));
 const queueList = /** @type {HTMLDivElement} */ (document.getElementById("queueList"));
 const queueMenuSend = /** @type {HTMLButtonElement} */ (document.getElementById("queueMenuSend"));
+// Whether the page was last told a footer panel (This page, Queued) is open: see syncFooterPanel.
+let footerPanelPosted = false;
 // Set once the threads footer has been wired, so render() can ask it to re-show itself.
 let footerReady = false;
 const chatLog = /** @type {HTMLDivElement} */ (document.getElementById("chatLog"));
@@ -426,6 +428,50 @@ function render() {
   scrollPanelToBottom();
   renderSheetSummary();
   renderQueueDock();
+  postAnnotationMarkers();
+}
+
+// The page draws a marker on each element a queued note is about (artifact-sdk.js setNoteMarkers).
+// A note written in the chat, or on the whole page, has no element to sit on.
+// Posted only when the markers change, and to a freshly loaded page only when there are any.
+let lastMarkersJson = "[]";
+/** @param {boolean} [freshPage] the artifact just (re)loaded and has drawn none yet */
+function postAnnotationMarkers(freshPage = false) {
+  const markers = queued
+    .map((prompt, index) => ({
+      index,
+      selector: String(prompt.selector || ""),
+      text: String(prompt.prompt || ""),
+      tag: prompt.tag,
+    }))
+    .filter((m) => m.selector && m.selector !== "html" && m.tag !== "message")
+    .map(({ index, selector, text }) => ({ index, selector, text }));
+  const json = JSON.stringify(markers);
+  const unchanged = freshPage ? !markers.length : json === lastMarkersJson;
+  lastMarkersJson = json;
+  if (!unchanged) postToFrame({ type: "review-surface:annotationMarkers", markers });
+}
+
+/**
+ * A marker's Edit in the page: open that note for editing here, in the Queued window. The page is
+ * untrusted, so it can only ask; the text is changed in the chrome, by the reader. The note is the
+ * one at `index` if it still reads `was`, else the first element note that does.
+ * @param {number} index
+ * @param {string} was
+ */
+function editQueuedFromPage(index, was) {
+  if (ended) return;
+  const onElement = (/** @type {any} */ p) =>
+    Boolean(p?.selector) && p.tag !== "message" && String(p.prompt || "") === was;
+  const at = onElement(queued[index]) ? index : queued.findIndex(onElement);
+  if (at === -1) return;
+  closeChat();
+  setMenuOpen(queueOpen, queueMenu, true);
+  const row = /** @type {HTMLElement | undefined} */ (queueList.children[at]);
+  const text = row?.querySelector(".queue-item-text");
+  if (!row || !text) return;
+  row.scrollIntoView?.({ block: "nearest" });
+  editQueuedPrompt(at, row, /** @type {HTMLElement} */ (text));
 }
 
 function renderQueueDock() {
@@ -451,6 +497,24 @@ function renderQueueDock() {
         row.appendChild(on);
       }
       row.appendChild(text);
+      // Clicking what the note says, or what it is on, shows that element on the page.
+      if (prompt.selector && prompt.tag !== "message") {
+        row.classList.add("can-reveal");
+        row.title = "Show it on the page";
+        row.onclick = (event) => {
+          if (/** @type {Element | null} */ (event?.target)?.closest?.("button, textarea")) return;
+          setMenuOpen(queueOpen, queueMenu, false);
+          postToFrame({ type: "review-surface:revealElement", selector: prompt.selector });
+        };
+      }
+      if (!ended) {
+        const edit = document.createElement("button");
+        edit.type = "button";
+        edit.className = "queue-item-edit";
+        edit.textContent = "Edit";
+        edit.onclick = (event) => editQueuedPrompt(index, row, text, event);
+        row.appendChild(edit);
+      }
       const remove = document.createElement("button");
       remove.type = "button";
       remove.className = "queue-item-remove";
@@ -543,6 +607,7 @@ function hideSendHint() {
 function setMenuOpen(button, menu, open) {
   menu.hidden = !open;
   button.setAttribute("aria-expanded", String(open));
+  if (menu === queueMenu) syncFooterPanel();
 }
 
 function closeMenus() {
@@ -1003,6 +1068,66 @@ syncVisualViewport();
 
 function scrollElementIntoView(el) {
   el.scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+
+/**
+ * Rewrite a queued note in place: its text becomes a box; Enter saves, Shift+Enter is a new line,
+ * Escape keeps the note as it was. Emptied, a note with no images is removed.
+ * @param {number} index
+ * @param {HTMLElement} row
+ * @param {HTMLElement} text
+ * @param {Event} [event]
+ */
+function editQueuedPrompt(index, row, text, event) {
+  if (event) event.stopPropagation();
+  const prompt = queued[index];
+  if (!prompt || row.querySelector(".queue-item-input")) return;
+  const box = document.createElement("textarea");
+  box.className = "queue-item-input";
+  box.rows = 3;
+  box.value = String(prompt.prompt || "");
+  box.setAttribute("aria-label", "Edit this queued note");
+  text.replaceWith(box);
+  let done = false;
+  /** @param {boolean} save @param {boolean} [inPlace] keep the rows: a click is about to land on one */
+  const finish = (save, inPlace = false) => {
+    if (done) return;
+    done = true;
+    const at = queued.indexOf(prompt);
+    const next = box.value.trim();
+    if (inPlace) {
+      // Leaving the box for another button in this window (Remove, Send, another Edit): the
+      // rows must stay as they are, or the click lands on a rebuilt row. Save the text, keep the
+      // note even if emptied (indices stay put), and let that button's own handler redraw.
+      if (save && at !== -1 && next) queued[at] = { ...prompt, prompt: next };
+      persistQueuedPrompts();
+      text.textContent = at !== -1 && next ? next : text.textContent;
+      box.replaceWith(text);
+      return;
+    }
+    if (save && at !== -1) {
+      if (next || attachmentCount(prompt)) queued[at] = { ...prompt, prompt: next };
+      else queued.splice(at, 1);
+      persistQueuedPrompts();
+    }
+    render();
+  };
+  box.addEventListener("keydown", (key) => {
+    if (key.key === "Enter" && !key.shiftKey && !key.isComposing) {
+      key.preventDefault();
+      finish(true);
+    } else if (key.key === "Escape") {
+      key.preventDefault();
+      key.stopPropagation();
+      finish(false);
+    }
+  });
+  box.addEventListener("blur", (blur) => {
+    const to = /** @type {Element | null} */ (blur?.relatedTarget ?? null);
+    finish(true, Boolean(to?.closest?.("button") && queueMenu.contains(to)));
+  });
+  box.focus();
+  box.setSelectionRange(box.value.length, box.value.length);
 }
 
 function removeQueuedPrompt(index, event) {
@@ -3042,6 +3167,8 @@ window.addEventListener("message", (event) => {
     return;
   }
   // The artifact spoke, so it rendered and ran its SDK - there is nothing fatal to probe for.
+  if (msg.type === "review-surface:closeFooterPanels") closeFooterPanels();
+  if (msg.type === "review-surface:editQueued") editQueuedFromPage(Number(msg.index), String(msg.was ?? ""));
   if (msg.type === "review-surface:queuePrompt") {
     enqueuePrompt(msg.prompt);
     // Queued from inside the artifact, where the closed dock is the only sign it landed.
@@ -3463,6 +3590,9 @@ frame.addEventListener("load", () => {
   // Replay the pre-reload scroll position so hot reloads don't jump the artifact to the top.
   postToFrame({ type: "review-surface:restoreScroll", x: lastScroll.x, y: lastScroll.y });
   if (lastReviewState) postToFrame({ type: "review-surface:restoreReviewState", state: lastReviewState });
+  postAnnotationMarkers(true);
+  if (!chatPop.hidden || !queueMenu.hidden) syncFooterPanel(true);
+  else footerPanelPosted = false;
   if (overlayIndex !== null) {
     inlineWhiteboardChannels.delete(overlayIndex);
     postToFrame({ type: "review-surface:suspendWhiteboard", diagramIndex: overlayIndex });
@@ -3797,7 +3927,8 @@ function threadTab(thread) {
   title.className = "thread-tab-title";
   title.textContent = thread.title;
   tab.appendChild(title);
-  tab.onclick = () => openChat(thread.key, tab);
+  // A second click on the open thread's tab folds it away again, like the queue's button.
+  tab.onclick = () => (activeChat === thread.key && !chatPop.hidden ? closeChat() : openChat(thread.key, tab));
   return tab;
 }
 
@@ -4184,6 +4315,9 @@ function openChat(threadKey, anchor = null) {
   if (thread.feed) feedKeep.set(thread.key, thread);
   chatPop.hidden = false;
   setThreadsMenuOpen(false);
+  // One footer popup at a time: the chat and the queue's drop-up share the corner above the footer.
+  setMenuOpen(queueOpen, queueMenu, false);
+  syncFooterPanel();
   markThreadSeen(thread);
   renderThreads();
   void refreshChat();
@@ -4214,6 +4348,7 @@ function placeChatAbove(anchor) {
 function closeChat() {
   if (chatPop.hidden) return;
   chatPop.hidden = true;
+  syncFooterPanel();
   setChatFull(false);
   stashChatDraft();
   activeChat = "";
@@ -4513,11 +4648,42 @@ queueOpen.onclick = () => {
   const open = queueMenu.hidden;
   closeMenus();
   setThreadsMenuOpen(false);
+  if (open) closeChat();
   setMenuOpen(queueOpen, queueMenu, open);
+  // It opens at the newest note, just above Send.
+  if (open) queueList.scrollTop = queueList.scrollHeight;
+  syncFooterPanel();
 };
+
+// This page's chat and the Queued drop-up close on a click anywhere outside them. In the chrome
+// that is a mousedown here; in the page it is the page's next click, which the SDK spends on
+// closing the panel and nothing else (review-surface:footerPanel tells it one is open).
+function syncFooterPanel(force = false) {
+  // Before the footer is wired the chat window does not exist yet, and nothing is open.
+  if (!footerReady) return;
+  const open = !chatPop.hidden || !queueMenu.hidden;
+  if (open === footerPanelPosted && !force) return;
+  footerPanelPosted = open;
+  postToFrame({ type: "review-surface:footerPanel", open });
+}
+function closeFooterPanels() {
+  closeChat();
+  if (!queueMenu.hidden) setMenuOpen(queueOpen, queueMenu, false);
+  syncFooterPanel();
+}
+document.addEventListener("mousedown", (event) => {
+  if (chatPop.hidden) return;
+  const target = /** @type {Element | null} */ (event.target);
+  if (!target || chatPop.contains(target)) return;
+  // its own tab toggles it, and the threads list, a thread window and the queue open their own
+  if (target.closest?.(".thread-tab, #threadsButton, #threadsMenu, #queueDock, .thread-modal")) return;
+  closeChat();
+});
+
 document.addEventListener("mousedown", (event) => {
   if (!queueMenu.hidden && !queueDock.contains(/** @type {Node} */ (event.target))) {
     setMenuOpen(queueOpen, queueMenu, false);
+    syncFooterPanel();
   }
 });
 

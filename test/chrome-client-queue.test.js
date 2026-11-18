@@ -220,6 +220,15 @@ async function createChromeHarness({
         focusLog.push(this.id);
       },
       select() {},
+      setSelectionRange() {},
+      replaceWith(node) {
+        const parent = this.parentElement;
+        if (!parent) return;
+        const at = parent.children.indexOf(this);
+        node.parentElement = parent;
+        parent.children.splice(at, 1, node);
+        this.parentElement = null;
+      },
       scrollIntoView(options) {
         this.scrolledIntoView = options;
       },
@@ -745,6 +754,119 @@ test("chrome client replaces queued prompts with the same internal key", async (
   );
   assert.match(chrome.element("annotationPills").innerHTML, /Use plan B/);
   assert.doesNotMatch(chrome.element("annotationPills").innerHTML, /Use plan A/);
+});
+
+test("a queued note is edited in place: Enter saves, Escape keeps it, emptied it goes", async () => {
+  const chrome = await createChromeHarness();
+  for (const text of ["Use plan A", "Drop the footer"]) {
+    chrome.sendFrameMessage({
+      type: "review-surface:queuePrompt",
+      prompt: { prompt: text, selector: "p#x", tag: "p", text: "x" },
+    });
+  }
+  const editRow = (index) => {
+    const row = chrome.element("queueList").children[index];
+    row.querySelectorAll(".queue-item-edit")[0].click({ stopPropagation() {} });
+    return row.querySelectorAll(".queue-item-input")[0];
+  };
+
+  let box = editRow(0);
+  assert.equal(box.value, "Use plan A");
+  box.value = "Use plan B";
+  box.dispatch("keydown", { key: "Enter", preventDefault() {} });
+  assert.deepEqual(
+    chrome.queued().map((prompt) => prompt.prompt),
+    ["Use plan B", "Drop the footer"],
+  );
+
+  box = editRow(1);
+  box.value = "changed my mind";
+  box.dispatch("keydown", { key: "Escape", preventDefault() {}, stopPropagation() {} });
+  assert.equal(chrome.queued()[1].prompt, "Drop the footer");
+
+  box = editRow(0);
+  box.value = "   ";
+  box.dispatch("keydown", { key: "Enter", preventDefault() {} });
+  assert.deepEqual(
+    chrome.queued().map((prompt) => prompt.prompt),
+    ["Drop the footer"],
+  );
+});
+
+test("queued notes become markers in the page, whose Edit opens the note here, and a row shows its element", async () => {
+  const chrome = await createChromeHarness();
+  chrome.sendFrameMessage({
+    type: "review-surface:queuePrompt",
+    prompt: { prompt: "Shorter", selector: "h1#title", tag: "h1", text: "Title" },
+  });
+  const markers = chrome.postedToFrame.filter((m) => m.type === "review-surface:annotationMarkers").at(-1);
+  assert.equal(JSON.stringify(markers.markers), JSON.stringify([{ index: 0, selector: "h1#title", text: "Shorter" }]));
+
+  // The page can only ask for a note to be opened: a stale ask opens nothing, a current one opens
+  // that note's editor in the Queued window, where the reader changes it.
+  chrome.sendFrameMessage({ type: "review-surface:editQueued", index: 0, was: "Longer" });
+  assert.equal(chrome.element("queueMenu").hidden, true);
+  chrome.sendFrameMessage({ type: "review-surface:editQueued", index: 0, was: "Shorter" });
+  assert.equal(chrome.element("queueMenu").hidden, false);
+  const box = chrome.element("queueList").children[0].querySelectorAll(".queue-item-input")[0];
+  assert.equal(box.value, "Shorter");
+  box.value = "Much shorter";
+  box.dispatch("keydown", { key: "Enter", preventDefault() {} });
+  assert.equal(chrome.queued()[0].prompt, "Much shorter");
+  // ...and a message from the page that tries to change the text itself does nothing
+  chrome.sendFrameMessage({ type: "review-surface:updateQueued", index: 0, was: "Much shorter", text: "forged" });
+  assert.equal(chrome.queued()[0].prompt, "Much shorter");
+
+  const row = chrome.element("queueList").children[0];
+  row.onclick({ target: null });
+  assert.equal(
+    JSON.stringify(chrome.postedToFrame.at(-1)),
+    JSON.stringify({ type: "review-surface:revealElement", selector: "h1#title" }),
+  );
+});
+
+test("an open Queued tells the page, and the page's click closes it", async () => {
+  const chrome = await createChromeHarness();
+  chrome.sendFrameMessage({
+    type: "review-surface:queuePrompt",
+    prompt: { prompt: "Use plan A", selector: "p#x", tag: "p", text: "x" },
+  });
+  chrome.element("queueOpen").click();
+  assert.equal(
+    JSON.stringify(chrome.postedToFrame.filter((m) => m.type === "review-surface:footerPanel").at(-1)),
+    JSON.stringify({ type: "review-surface:footerPanel", open: true }),
+  );
+  chrome.sendFrameMessage({ type: "review-surface:closeFooterPanels" });
+  assert.equal(chrome.element("queueMenu").hidden, true);
+  assert.equal(
+    JSON.stringify(chrome.postedToFrame.filter((m) => m.type === "review-surface:footerPanel").at(-1)),
+    JSON.stringify({ type: "review-surface:footerPanel", open: false }),
+  );
+});
+
+test("the queue's drop-up opens at its newest note, just above Send", async () => {
+  const chrome = await createChromeHarness();
+  chrome.sendFrameMessage({
+    type: "review-surface:queuePrompt",
+    prompt: { prompt: "Use plan A", selector: "p#x", tag: "p", text: "x" },
+  });
+  chrome.element("queueList").scrollHeight = 900;
+  chrome.element("queueOpen").click();
+  assert.equal(chrome.element("queueList").scrollTop, 900);
+});
+
+test("opening the queue's drop-up closes the chat window; a second click folds it", async () => {
+  const chrome = await createChromeHarness();
+  chrome.sendFrameMessage({
+    type: "review-surface:queuePrompt",
+    prompt: { prompt: "Use plan A", selector: "p#x", tag: "p", text: "x" },
+  });
+  chrome.element("chatPop").hidden = false;
+  chrome.element("queueOpen").click();
+  assert.equal(chrome.element("queueMenu").hidden, false);
+  assert.equal(chrome.element("chatPop").hidden, true);
+  chrome.element("queueOpen").click();
+  assert.equal(chrome.element("queueMenu").hidden, true);
 });
 
 test("chrome client shows semantic table coordinates before positional selector", async () => {

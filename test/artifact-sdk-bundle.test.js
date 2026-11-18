@@ -845,3 +845,65 @@ test("an image removed since it was pointed at does not open", () => {
   assert.ok(!lightbox(sdk) || lightbox(sdk).hidden, "nothing opens for a removed image");
   assert.equal(expandButton(sdk).hidden, true);
 });
+
+// Leaving a card that holds nothing is Cancel: a click elsewhere closes it instead of opening a
+// second card, and Escape in its box does the same. A card with text keeps today's behavior.
+test("the served SDK bundle cancels an empty card on a click away and on Escape, and keeps a written one", () => {
+  // The harness's shadow root never removes a closed card, so this counts cards opened: a click
+  // that cancels opens none, and the click after a cancel opens a fresh one.
+  const sdk = bootSdk();
+  const first = appendTo(sdk.body, cell("p", "First"));
+  const second = appendTo(sdk.body, cell("p", "Second"));
+
+  sdk.click(first);
+  assert.equal(sdk.cards().length, 1);
+  sdk.click(second);
+  assert.equal(sdk.cards().length, 1, "a click away from an empty card opens no second card");
+  sdk.click(second);
+  assert.equal(sdk.cards().length, 2, "the cancelled card is gone: the next click opens one");
+
+  const keydown = sdk
+    .card()
+    .querySelector("textarea")
+    .listeners.find((entry) => entry.type === "keydown");
+  keydown.handler({ key: "Escape", preventDefault() {}, stopPropagation() {} });
+  sdk.click(first);
+  assert.equal(sdk.cards().length, 3, "Escape closed the card, so this click opens a new one");
+
+  const kept = sdk.card();
+  kept.querySelector("textarea").value = "tighten this";
+  sdk.click(second);
+  assert.equal(sdk.cards().length, 3, "a card with text is modal: a click away opens no other card");
+  assert.equal(kept.querySelector("textarea").value, "tighten this");
+  kept.querySelector(".review-surface-cancel").onclick();
+  sdk.click(second);
+  assert.equal(sdk.cards().length, 4, "after Cancel, a click opens a card again");
+});
+
+// With This page or Queued open in the chrome, a click in the page only closes it: one action at a
+// time, so the same click never also opens an annotation card.
+test("the served SDK bundle spends a click on closing an open footer panel, and nothing else", () => {
+  const sdk = bootSdk();
+  const paragraph = appendTo(sdk.body, cell("p", "Prose"));
+  sdk.sendChromeMessage({ type: "review-surface:footerPanel", open: true });
+  const event = sdk.click(paragraph);
+  assert.equal(event.defaultPrevented, true);
+  assert.equal(sdk.cards().length, 0, "the closing click opens no card");
+  assert.equal(sdk.posted.at(-1)?.type, "review-surface:closeFooterPanels");
+  sdk.click(paragraph);
+  assert.equal(sdk.cards().length, 1, "the next click annotates again");
+});
+
+// Links are navigation in annotate mode too: a click on one follows it and opens no card, while
+// the paragraph around it stays annotatable.
+test("the served SDK bundle lets a link be followed in annotate mode, and annotates around it", () => {
+  const sdk = bootSdk();
+  const paragraph = appendTo(sdk.body, cell("p", "See the reviews"));
+  const link = appendTo(paragraph, cell("a", "the reviews"));
+  link.setAttribute("href", "#reviews");
+  const followed = sdk.click(link);
+  assert.equal(followed.defaultPrevented, false, "the browser follows the link");
+  assert.equal(sdk.cards().length, 0);
+  sdk.click(paragraph);
+  assert.equal(sdk.cards().length, 1, "the paragraph itself still annotates");
+});

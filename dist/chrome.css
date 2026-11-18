@@ -2018,19 +2018,45 @@ body.host-page #annotation {
   opacity: 0.5;
   cursor: default;
 }
+/* The Queued drop-up is a small window like This page's chat: a head bar, the notes in a list
+   that scrolls on its own, and Send in a footer that always shows. */
+.queue-menu:not([hidden]) {
+  display: flex;
+}
 .queue-menu {
   right: 0;
-  bottom: calc(var(--foot-h) + 4px);
+  bottom: calc(var(--foot-h) + 6px);
   width: min(380px, calc(100vw - 24px));
   max-height: min(60vh, 460px);
-  overflow: auto;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+  border-color: var(--border-strong);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-floating);
 }
 .queue-menu .menu-label {
-  padding: 7px 10px 0;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 10px 12px 9px;
+  border-bottom: var(--hairline-subtle);
+  background: var(--bg-bar);
+  font-size: 10px;
+}
+.queue-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+.queue-item:last-child {
+  border-bottom: 0;
+}
+.queue-item.can-reveal:hover {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
 }
 .queue-item {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr auto auto;
   gap: 2px 8px;
   padding: 8px 10px;
   border-bottom: var(--hairline-subtle);
@@ -2048,6 +2074,25 @@ body.host-page #annotation {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.queue-item.can-reveal {
+  cursor: pointer;
+}
+.queue-item.can-reveal:hover .queue-item-text {
+  color: var(--accent);
+}
+.queue-item-input {
+  width: 100%;
+  min-height: 3.2em;
+  resize: vertical;
+  padding: 4px 6px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+.queue-item-edit,
 .queue-item-remove {
   align-self: start;
   padding: 2px 6px;
@@ -2059,10 +2104,18 @@ body.host-page #annotation {
   font-size: var(--text-xs);
   cursor: pointer;
 }
+.queue-item-edit:hover,
+.queue-item-remove:hover {
+  border-color: var(--border-strong);
+  color: var(--fg);
+}
 .queue-menu-actions {
+  flex: 0 0 auto;
   display: flex;
   justify-content: flex-end;
-  padding: 8px 10px 4px;
+  padding: 8px 10px;
+  border-top: var(--hairline-subtle);
+  background: var(--bg-bar);
 }
 /* The chat window: a thread as a conversation, above the footer, like a message app's. */
 .chat-pop {
