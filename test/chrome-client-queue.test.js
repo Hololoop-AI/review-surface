@@ -1036,7 +1036,8 @@ test("a session that ends with Queued open tells the page the panel closed", asy
 
 test("a note edited while its send is in flight is not sent a second time", async () => {
   const posts = [];
-  let release;
+  /** @type {(value?: unknown) => void} */
+  let release = () => {};
   const chrome = await createChromeHarness({
     fetchImpl: async (url, init) => {
       if (!String(url).endsWith("/prompts")) return { ok: true, json: async () => ({}) };

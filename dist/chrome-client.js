@@ -3941,7 +3941,8 @@ function threadTab(thread) {
   title.textContent = thread.title;
   tab.appendChild(title);
   // A second click on the open This page tab folds it away again, like the queue's button.
-  tab.onclick = () => (thread.pageChat && activeChat === thread.key && !chatPop.hidden ? closeChat() : openChat(thread.key, tab));
+  tab.onclick = () =>
+    thread.pageChat && activeChat === thread.key && !chatPop.hidden ? closeChat() : openChat(thread.key, tab);
   return tab;
 }
 
