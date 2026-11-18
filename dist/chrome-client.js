@@ -1093,20 +1093,19 @@ function editQueuedPrompt(index, row, text, event) {
     done = true;
     const at = queued.indexOf(prompt);
     const next = box.value.trim();
-    if (inPlace) {
-      // Leaving the box for another button in this window (Remove, Send, another Edit): the
-      // rows must stay as they are, or the click lands on a rebuilt row. Save the text, keep the
-      // note even if emptied (indices stay put), and let that button's own handler redraw.
-      if (save && at !== -1 && next) queued[at] = { ...prompt, prompt: next };
-      persistQueuedPrompts();
-      text.textContent = at !== -1 && next ? next : text.textContent;
-      box.replaceWith(text);
-      return;
-    }
+    const kept = Boolean(next || attachmentCount(prompt));
     if (save && at !== -1) {
-      if (next || attachmentCount(prompt)) queued[at] = { ...prompt, prompt: next };
+      if (kept) queued[at] = { ...prompt, prompt: next };
       else queued.splice(at, 1);
       persistQueuedPrompts();
+    }
+    // Leaving the box for a button in this list (Remove, another Edit): the rows must stay as
+    // they are, or the click lands on a rebuilt row; that button's own handler redraws. A note
+    // that was emptied away is removed all the same, and the list redrawn.
+    if (inPlace && kept && at !== -1) {
+      text.textContent = next || "Image annotation";
+      box.replaceWith(text);
+      return;
     }
     render();
   };
@@ -1120,7 +1119,10 @@ function editQueuedPrompt(index, row, text, event) {
       finish(false);
     }
   });
-  box.addEventListener("blur", () => finish(true, queueButtonPressed));
+  box.addEventListener("blur", (blur) => {
+    const to = /** @type {Element | null} */ (blur?.relatedTarget ?? null);
+    finish(true, queueButtonPressed || Boolean(to?.closest?.("button") && queueList.contains(to)));
+  });
   box.focus();
   box.setSelectionRange(box.value.length, box.value.length);
 }

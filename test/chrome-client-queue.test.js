@@ -970,6 +970,49 @@ test("leaving a note's editor by pressing a button in the Queued window keeps th
   assert.notEqual(chrome.element("queueList").children[1], second, "a plain blur redraws the list");
 });
 
+test("a note emptied in its editor is removed even when another row's button was pressed", async () => {
+  const chrome = await createChromeHarness();
+  for (const text of ["Use plan A", "Drop the footer"]) {
+    chrome.sendFrameMessage({
+      type: "review-surface:queuePrompt",
+      prompt: { prompt: text, selector: "p#x", tag: "p", text: "x" },
+    });
+  }
+  const [first, second] = chrome.element("queueList").children;
+  first.querySelectorAll(".queue-item-edit")[0].click({ stopPropagation() {} });
+  const box = first.querySelectorAll(".queue-item-input")[0];
+  box.value = "  ";
+  const pressed = second.querySelectorAll(".queue-item-edit")[0];
+  chrome.element("queueList").dispatch("mousedown", { target: { closest: () => pressed } });
+  box.dispatch("blur", { relatedTarget: null });
+  assert.deepEqual(
+    chrome.queued().map((prompt) => prompt.prompt),
+    ["Drop the footer"],
+    "the emptied note is not kept with its old text",
+  );
+  assert.equal(chrome.element("queueList").children.length, 1);
+});
+
+test("tabbing from a note's editor to a button in the list keeps that button", async () => {
+  const chrome = await createChromeHarness();
+  for (const text of ["Use plan A", "Drop the footer"]) {
+    chrome.sendFrameMessage({
+      type: "review-surface:queuePrompt",
+      prompt: { prompt: text, selector: "p#x", tag: "p", text: "x" },
+    });
+  }
+  const [first, second] = chrome.element("queueList").children;
+  first.querySelectorAll(".queue-item-edit")[0].click({ stopPropagation() {} });
+  const box = first.querySelectorAll(".queue-item-input")[0];
+  box.value = "Use plan B";
+  const focused = first.querySelectorAll(".queue-item-remove")[0];
+  focused.closest = () => focused;
+  box.dispatch("blur", { relatedTarget: focused });
+  assert.equal(chrome.queued()[0].prompt, "Use plan B", "the edit is saved");
+  assert.equal(chrome.element("queueList").children[0], first, "the row holding the focused button is not rebuilt");
+  assert.equal(chrome.element("queueList").children[1], second);
+});
+
 test("a note emptied in its editor is gone before the Queued window's Send delivers", async () => {
   const posts = [];
   const chrome = await createChromeHarness({

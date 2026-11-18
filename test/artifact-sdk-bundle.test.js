@@ -902,6 +902,18 @@ test("the served SDK bundle follows no link while a card holds text", () => {
   assert.equal(sdk.click(link).defaultPrevented, false, "after Cancel the link is followed again");
 });
 
+test("the served SDK bundle closes an empty card when a link is clicked, and still follows the link", () => {
+  const sdk = bootSdk();
+  const paragraph = appendTo(sdk.body, cell("p", "See the reviews"));
+  const link = appendTo(paragraph, cell("a", "the reviews"));
+  link.setAttribute("href", "#reviews");
+  sdk.click(paragraph);
+  assert.equal(sdk.cards().length, 1);
+  assert.equal(sdk.click(link).defaultPrevented, false, "the link is followed");
+  sdk.click(paragraph);
+  assert.equal(sdk.cards().length, 2, "the empty card was closed, so this click opens a new one");
+});
+
 // With This page or Queued open in the chrome, a click in the page only closes it: one action at a
 // time, so the same click never also opens an annotation card.
 test("the served SDK bundle spends a click on closing an open footer panel, and nothing else", () => {
