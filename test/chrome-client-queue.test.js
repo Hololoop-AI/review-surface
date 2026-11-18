@@ -897,12 +897,77 @@ test("opening the queue's drop-up closes the chat window; a second click folds i
     type: "review-surface:queuePrompt",
     prompt: { prompt: "Use plan A", selector: "p#x", tag: "p", text: "x" },
   });
-  chrome.element("chatPop").hidden = false;
+  await flushPromises();
+  chrome.element("threadsPageTab").children[0].onclick();
+  assert.equal(chrome.element("chatPop").hidden, false);
   chrome.element("queueOpen").click();
   assert.equal(chrome.element("queueMenu").hidden, false);
   assert.equal(chrome.element("chatPop").hidden, true);
   chrome.element("queueOpen").click();
   assert.equal(chrome.element("queueMenu").hidden, true);
+});
+
+test("This page's chat folds on its tab's second click and closes on a click outside it", async () => {
+  const chrome = await createChromeHarness();
+  await flushPromises();
+  const panelSignals = () => chrome.postedToFrame.filter((m) => m.type === "review-surface:footerPanel");
+  chrome.element("threadsPageTab").children[0].onclick();
+  assert.equal(chrome.element("chatPop").hidden, false);
+  assert.equal(panelSignals().at(-1).open, true);
+  chrome.element("threadsPageTab").children[0].onclick();
+  assert.equal(chrome.element("chatPop").hidden, true, "the second click folds it");
+
+  chrome.element("threadsPageTab").children[0].onclick();
+  chrome.dispatchDocumentMousedown(chrome.element("frame"));
+  assert.equal(chrome.element("chatPop").hidden, true, "a click outside closes it");
+  assert.equal(panelSignals().at(-1).open, false);
+});
+
+test("a side thread's chat is no footer panel: it stays open through outside clicks and tells the page nothing", async () => {
+  const chrome = await createChromeHarness({ initialThreads: [footerThread({ key: "t1", title: "Side thread" })] });
+  await flushPromises();
+  chrome.sendFrameMessage({
+    type: "review-surface:queuePrompt",
+    prompt: { prompt: "Use plan A", selector: "p#x", tag: "p", text: "x" },
+  });
+  const [sideTab] = chrome.element("threadsTabs").children;
+  sideTab.onclick();
+  assert.equal(chrome.element("chatPop").hidden, false);
+  assert.equal(chrome.postedToFrame.filter((m) => m.type === "review-surface:footerPanel").length, 0);
+
+  chrome.dispatchDocumentMousedown(chrome.element("frame"));
+  assert.equal(chrome.element("chatPop").hidden, false, "a click outside leaves the thread open");
+  chrome.sendFrameMessage({ type: "review-surface:closeFooterPanels" });
+  assert.equal(chrome.element("chatPop").hidden, false, "the page's closing click leaves it open too");
+  [...chrome.element("threadsTabs").children][0].onclick();
+  assert.equal(chrome.element("chatPop").hidden, false, "its tab's second click does not fold it");
+  chrome.element("queueOpen").click();
+  assert.equal(chrome.element("chatPop").hidden, false, "opening Queued leaves it open");
+});
+
+test("leaving a note's editor by pressing a button in the Queued window keeps the rows for that click", async () => {
+  const chrome = await createChromeHarness();
+  for (const text of ["Use plan A", "Drop the footer"]) {
+    chrome.sendFrameMessage({
+      type: "review-surface:queuePrompt",
+      prompt: { prompt: text, selector: "p#x", tag: "p", text: "x" },
+    });
+  }
+  const rows = chrome.element("queueList").children;
+  const [first, second] = rows;
+  first.querySelectorAll(".queue-item-edit")[0].click({ stopPropagation() {} });
+  const box = first.querySelectorAll(".queue-item-input")[0];
+  box.value = "Use plan B";
+  const pressed = second.querySelectorAll(".queue-item-edit")[0];
+  chrome.element("queueMenu").dispatch("mousedown", { target: { closest: () => pressed } });
+  box.dispatch("blur", { relatedTarget: null });
+  assert.equal(chrome.queued()[0].prompt, "Use plan B", "the edit is saved");
+  assert.equal(chrome.element("queueList").children[1], second, "the pressed row was not rebuilt under the click");
+
+  chrome.dispatchDocumentEvent("mouseup");
+  first.querySelectorAll(".queue-item-edit")[0].click({ stopPropagation() {} });
+  first.querySelectorAll(".queue-item-input")[0].dispatch("blur", { relatedTarget: null });
+  assert.notEqual(chrome.element("queueList").children[1], second, "a plain blur redraws the list");
 });
 
 test("chrome client shows semantic table coordinates before positional selector", async () => {

@@ -463,7 +463,7 @@ function editQueuedFromPage(index, was) {
   if (ended) return;
   const note = /** @type {any} */ (queued[index]);
   if (!note?.selector || note.tag === "message" || String(note.prompt || "") !== was) return;
-  closeChat();
+  closePageChat();
   setMenuOpen(queueOpen, queueMenu, true);
   const row = /** @type {HTMLElement | undefined} */ (queueList.children[index]);
   const text = row?.querySelector(".queue-item-text");
@@ -1120,13 +1120,22 @@ function editQueuedPrompt(index, row, text, event) {
       finish(false);
     }
   });
-  box.addEventListener("blur", (blur) => {
-    const to = /** @type {Element | null} */ (blur?.relatedTarget ?? null);
-    finish(true, Boolean(to?.closest?.("button") && queueMenu.contains(to)));
-  });
+  box.addEventListener("blur", () => finish(true, queueButtonPressed));
   box.focus();
   box.setSelectionRange(box.value.length, box.value.length);
 }
+
+let queueButtonPressed = false;
+queueMenu.addEventListener("mousedown", (event) => {
+  queueButtonPressed = Boolean(/** @type {Element | null} */ (event.target)?.closest?.("button"));
+});
+document.addEventListener(
+  "mouseup",
+  () => {
+    queueButtonPressed = false;
+  },
+  true,
+);
 
 function removeQueuedPrompt(index, event) {
   if (event) event.stopPropagation();
@@ -3591,7 +3600,7 @@ frame.addEventListener("load", () => {
   postToFrame({ type: "review-surface:restoreScroll", x: lastScroll.x, y: lastScroll.y });
   if (lastReviewState) postToFrame({ type: "review-surface:restoreReviewState", state: lastReviewState });
   postAnnotationMarkers(true);
-  if (!chatPop.hidden || !queueMenu.hidden) syncFooterPanel(true);
+  if (footerPanelOpen()) syncFooterPanel(true);
   else footerPanelPosted = false;
   if (overlayIndex !== null) {
     inlineWhiteboardChannels.delete(overlayIndex);
@@ -3927,8 +3936,8 @@ function threadTab(thread) {
   title.className = "thread-tab-title";
   title.textContent = thread.title;
   tab.appendChild(title);
-  // A second click on the open thread's tab folds it away again, like the queue's button.
-  tab.onclick = () => (activeChat === thread.key && !chatPop.hidden ? closeChat() : openChat(thread.key, tab));
+  // A second click on the open This page tab folds it away again, like the queue's button.
+  tab.onclick = () => (thread.pageChat && activeChat === thread.key && !chatPop.hidden ? closeChat() : openChat(thread.key, tab));
   return tab;
 }
 
@@ -4648,7 +4657,7 @@ queueOpen.onclick = () => {
   const open = queueMenu.hidden;
   closeMenus();
   setThreadsMenuOpen(false);
-  if (open) closeChat();
+  if (open) closePageChat();
   setMenuOpen(queueOpen, queueMenu, open);
   // It opens at the newest note, just above Send.
   if (open) queueList.scrollTop = queueList.scrollHeight;
@@ -4661,23 +4670,28 @@ queueOpen.onclick = () => {
 function syncFooterPanel(force = false) {
   // Before the footer is wired the chat window does not exist yet, and nothing is open.
   if (!footerReady) return;
-  const open = !chatPop.hidden || !queueMenu.hidden;
+  const open = footerPanelOpen();
   if (open === footerPanelPosted && !force) return;
   footerPanelPosted = open;
   postToFrame({ type: "review-surface:footerPanel", open });
 }
+function footerPanelOpen() {
+  return footerReady && ((activeChat === pageChatKey && !chatPop.hidden) || !queueMenu.hidden);
+}
+function closePageChat() {
+  if (activeChat === pageChatKey) closeChat();
+}
 function closeFooterPanels() {
-  closeChat();
+  closePageChat();
   if (!queueMenu.hidden) setMenuOpen(queueOpen, queueMenu, false);
   syncFooterPanel();
 }
 document.addEventListener("mousedown", (event) => {
-  if (chatPop.hidden) return;
   const target = /** @type {Element | null} */ (event.target);
   if (!target || chatPop.contains(target)) return;
   // its own tab toggles it, and the threads list, a thread window and the queue open their own
   if (target.closest?.(".thread-tab, #threadsButton, #threadsMenu, #queueDock, .thread-modal")) return;
-  closeChat();
+  closePageChat();
 });
 
 document.addEventListener("mousedown", (event) => {
