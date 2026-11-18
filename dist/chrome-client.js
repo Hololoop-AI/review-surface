@@ -1126,7 +1126,7 @@ function editQueuedPrompt(index, row, text, event) {
 }
 
 let queueButtonPressed = false;
-queueMenu.addEventListener("mousedown", (event) => {
+queueList.addEventListener("mousedown", (event) => {
   queueButtonPressed = Boolean(/** @type {Element | null} */ (event.target)?.closest?.("button"));
 });
 document.addEventListener(

@@ -959,7 +959,7 @@ test("leaving a note's editor by pressing a button in the Queued window keeps th
   const box = first.querySelectorAll(".queue-item-input")[0];
   box.value = "Use plan B";
   const pressed = second.querySelectorAll(".queue-item-edit")[0];
-  chrome.element("queueMenu").dispatch("mousedown", { target: { closest: () => pressed } });
+  chrome.element("queueList").dispatch("mousedown", { target: { closest: () => pressed } });
   box.dispatch("blur", { relatedTarget: null });
   assert.equal(chrome.queued()[0].prompt, "Use plan B", "the edit is saved");
   assert.equal(chrome.element("queueList").children[1], second, "the pressed row was not rebuilt under the click");
@@ -968,6 +968,42 @@ test("leaving a note's editor by pressing a button in the Queued window keeps th
   first.querySelectorAll(".queue-item-edit")[0].click({ stopPropagation() {} });
   first.querySelectorAll(".queue-item-input")[0].dispatch("blur", { relatedTarget: null });
   assert.notEqual(chrome.element("queueList").children[1], second, "a plain blur redraws the list");
+});
+
+test("a note emptied in its editor is gone before the Queued window's Send delivers", async () => {
+  const posts = [];
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url, init) => {
+      if (String(url).endsWith("/prompts")) posts.push(JSON.parse(init.body));
+      return { ok: true, json: async () => ({}) };
+    },
+  });
+  for (const text of ["Use plan A", "Drop the footer"]) {
+    chrome.sendFrameMessage({
+      type: "review-surface:queuePrompt",
+      prompt: { prompt: text, selector: "p#x", tag: "p", text: "x" },
+    });
+  }
+  const first = chrome.element("queueList").children[0];
+  first.querySelectorAll(".queue-item-edit")[0].click({ stopPropagation() {} });
+  const box = first.querySelectorAll(".queue-item-input")[0];
+  box.value = "";
+  const send = chrome.element("queueMenuSend");
+  chrome.element("queueMenu").dispatch("mousedown", { target: { closest: () => send } });
+  box.dispatch("blur", { relatedTarget: send });
+  assert.deepEqual(
+    chrome.queued().map((prompt) => prompt.prompt),
+    ["Drop the footer"],
+    "the emptied note is removed, not kept with its old text",
+  );
+  send.onclick();
+  chrome.sendFrameMessage({ type: "review-surface:snapshot", snapshot: "" });
+  await flushPromises();
+  await flushPromises();
+  assert.deepEqual(
+    posts.flatMap((body) => body.prompts.map((prompt) => prompt.prompt)),
+    ["Drop the footer"],
+  );
 });
 
 test("chrome client shows semantic table coordinates before positional selector", async () => {

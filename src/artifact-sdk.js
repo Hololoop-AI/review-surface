@@ -2918,7 +2918,10 @@ export function createArtifactSdk(
       markerEls.push(marker);
     }
     placeNoteMarkers();
-    if (previewFor && !groups.has(previewFor)) closeNotePreview();
+    if (!previewFor) return;
+    const open = markerEls.find((m) => markerInfo.get(m)?.selector === previewFor);
+    if (!open) closeNotePreview();
+    else if (notePreview && !notePreview.hidden) showNotePreview(open, groups.get(previewFor));
   }
 
   function placeNoteMarkers() {
