@@ -912,6 +912,100 @@ test("a marker's Edit opens the chrome's own editor where the preview was; Enter
   assert.equal(chrome.queued()[0].prompt, "Much shorter");
 });
 
+// An open in-place editor holding an edit that has not been saved yet.
+async function openEditedNote(harnessOptions = {}) {
+  const chrome = await createChromeHarness(harnessOptions);
+  chrome.sendFrameMessage({
+    type: "review-surface:queuePrompt",
+    prompt: { prompt: "Shorter", selector: "h1#title", tag: "h1", text: "Title" },
+  });
+  chrome.sendFrameMessage({ type: "review-surface:editQueued", index: 0, was: "Shorter", rect: { left: 40, top: 60 } });
+  const editor = noteEditorOf(chrome);
+  editor.children[0].value = "Much shorter";
+  return { chrome, editor };
+}
+
+// Intent (5): the page only hints where; the chrome keeps its editor inside the visible frame.
+// The frame sits below a 50px bar in a 1000px-wide window, and the editor is at most 300px wide
+// (its CSS width), so wherever the page points, the editor's box must stay within the frame.
+test("the page's position hint for the note editor is kept inside the visible page frame", async () => {
+  const chrome = await createChromeHarness({ viewportWidth: 1000 });
+  const area = { left: 0, top: 50, width: 1000, height: 600 };
+  chrome.frame.getBoundingClientRect = () => area;
+  chrome.sendFrameMessage({
+    type: "review-surface:queuePrompt",
+    prompt: { prompt: "Shorter", selector: "h1#title", tag: "h1", text: "Title" },
+  });
+  const placedAt = (rect) => {
+    chrome.sendFrameMessage({ type: "review-surface:editQueued", index: 0, was: "Shorter", rect });
+    const editor = noteEditorOf(chrome);
+    assert.equal(editor.hidden, false);
+    return { left: parseFloat(editor.style.left), top: parseFloat(editor.style.top) };
+  };
+
+  assert.deepEqual(placedAt({ left: 40, top: 60 }), { left: 40, top: 110 }, "a hint inside the frame is honoured");
+  for (const rect of [
+    { left: 1e9, top: 1e9 },
+    { left: -1e9, top: -1e9 },
+    { left: 1e9, top: -1e9 },
+    { left: 990, top: 640 },
+  ]) {
+    const at = placedAt(rect);
+    assert.ok(at.left >= area.left && at.left + 300 <= area.left + area.width, `left ${at.left} is in the frame`);
+    assert.ok(at.top >= area.top && at.top < area.top + area.height, `top ${at.top} is in the frame`);
+  }
+});
+
+test("a click outside the note editor saves the edit; a click inside it keeps editing", async () => {
+  const { chrome, editor } = await openEditedNote();
+  chrome.dispatchDocumentMousedown(editor.children[0]);
+  assert.equal(editor.hidden, false, "a click in the editor is not outside it");
+  assert.equal(chrome.queued()[0].prompt, "Shorter");
+
+  chrome.dispatchDocumentMousedown(chrome.element("body"));
+  assert.equal(editor.hidden, true);
+  assert.equal(chrome.queued()[0].prompt, "Much shorter");
+});
+
+test("a click in the page closes the note editor and saves the edit", async () => {
+  const { chrome, editor } = await openEditedNote();
+  assert.equal(
+    JSON.stringify(chrome.postedToFrame.filter((m) => m.type === "review-surface:footerPanel").at(-1)),
+    JSON.stringify({ type: "review-surface:footerPanel", open: true }),
+    "the page is told a floating window is open",
+  );
+  chrome.sendFrameMessage({ type: "review-surface:closeFooterPanels" });
+  assert.equal(editor.hidden, true);
+  assert.equal(chrome.queued()[0].prompt, "Much shorter");
+});
+
+test("Send saves the open note edit first, so the agent gets the edited text", async () => {
+  const posts = [];
+  const { chrome, editor } = await openEditedNote({
+    fetchImpl: async (url, init) => {
+      if (String(url).endsWith("/prompts")) posts.push(JSON.parse(init.body));
+      return { ok: true, json: async () => ({}) };
+    },
+  });
+  chrome.element("queueSend").onclick();
+  chrome.sendFrameMessage({ type: "review-surface:snapshot", snapshot: "" });
+  await flushPromises();
+  await flushPromises();
+
+  assert.equal(editor.hidden, true);
+  assert.deepEqual(
+    posts.map((post) => post.prompts.map((prompt) => prompt.prompt)),
+    [["Much shorter"]],
+  );
+});
+
+test("a session that ends with the note editor open discards the unsaved edit", async () => {
+  const { chrome, editor } = await openEditedNote();
+  chrome.eventSource().listeners.get("ended")({ data: "{}" });
+  assert.equal(editor.hidden, true);
+  assert.equal(chrome.queued()[0].prompt, "Shorter");
+});
+
 test("every floating window closes the same way: the More menu tells the page, and the page's click closes it", async () => {
   const chrome = await createChromeHarness();
   chrome.element("moreButton").onclick();
