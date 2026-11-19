@@ -7264,9 +7264,19 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     if (!href.startsWith("#")) return;
     event.preventDefault();
     restoreScrollBehavior?.();
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    const name = href.slice(1);
+    const toTop = (name === "" || name.toLowerCase() === "top") && !document.getElementById(name) && !document.getElementsByName?.(name)?.length;
+    if (toTop) {
+      window.scrollTo({ left: 0, top: 0, behavior: reduced ? "instant" : "smooth" });
+      try {
+        window.history.replaceState(window.history.state, "", href);
+      } catch {
+      }
+      return;
+    }
     const root = document.documentElement;
     const previous = root.style.scrollBehavior;
-    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
     root.style.scrollBehavior = reduced ? "auto" : "smooth";
     const restore = () => {
       if (restoreScrollBehavior !== restore) return;
@@ -7278,14 +7288,7 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     const timer = window.setTimeout(restore, 1e3);
     window.addEventListener("scrollend", restore);
     restoreScrollBehavior = restore;
-    const name = href.slice(1);
-    const toTop = (name === "" || name.toLowerCase() === "top") && !document.getElementById(name) && !document.getElementsByName?.(name)?.length;
-    const left = window.scrollX;
-    const top = window.scrollY;
     window.location.replace(href);
-    if (!toTop) return;
-    window.scrollTo({ left, top, behavior: "instant" });
-    window.scrollTo({ left: 0, top: 0, behavior: reduced ? "instant" : "smooth" });
   }
   window.addEventListener("click", followInPageLink);
   document.addEventListener(

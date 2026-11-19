@@ -3365,7 +3365,8 @@ export function createArtifactSdk(
   // A link to a place on this same page ("#section", or "#" and "#top" for the top) scrolls there
   // smoothly instead of jumping, and replaces the address rather than adding a history entry, so
   // the browser's back (and the host's) is not spent stepping through sections. Reduced motion
-  // jumps, as asked. The navigation stays the browser's own, so :target and hashchange still work.
+  // jumps, as asked. To a real element the navigation stays the browser's own, so :target and
+  // hashchange still work.
   let restoreScrollBehavior = null;
   function followInPageLink(event) {
     if (event.defaultPrevented) return;
@@ -3378,9 +3379,26 @@ export function createArtifactSdk(
     // only the jump is replaced: the page's own handlers on the link still see the click
     event.preventDefault();
     restoreScrollBehavior?.();
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    // "#" and "#top" with no element of that name mean the top of the page, and nothing there can
+    // be :target. Browsers do not agree on animating that navigation (Firefox jumps whatever
+    // scroll-behavior says), so the scroll is made here and only the address is replaced.
+    const name = href.slice(1);
+    const toTop =
+      (name === "" || name.toLowerCase() === "top") &&
+      !document.getElementById(name) &&
+      !document.getElementsByName?.(name)?.length;
+    if (toTop) {
+      window.scrollTo({ left: 0, top: 0, behavior: reduced ? "instant" : "smooth" });
+      try {
+        window.history.replaceState(window.history.state, "", href);
+      } catch {
+        // the address is a nicety; the scroll is what was asked for
+      }
+      return;
+    }
     const root = document.documentElement;
     const previous = root.style.scrollBehavior;
-    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
     root.style.scrollBehavior = reduced ? "auto" : "smooth";
     const restore = () => {
       if (restoreScrollBehavior !== restore) return;
@@ -3392,20 +3410,7 @@ export function createArtifactSdk(
     const timer = window.setTimeout(restore, 1000);
     window.addEventListener("scrollend", restore);
     restoreScrollBehavior = restore;
-    // "#" and "#top" with no element of that name mean the top of the page. Browsers do not agree
-    // on animating that one (Firefox jumps whatever scroll-behavior says), so the scroll is put
-    // back where it was and made here.
-    const name = href.slice(1);
-    const toTop =
-      (name === "" || name.toLowerCase() === "top") &&
-      !document.getElementById(name) &&
-      !document.getElementsByName?.(name)?.length;
-    const left = window.scrollX;
-    const top = window.scrollY;
     window.location.replace(href);
-    if (!toTop) return;
-    window.scrollTo({ left, top, behavior: "instant" });
-    window.scrollTo({ left: 0, top: 0, behavior: reduced ? "instant" : "smooth" });
   }
 
   window.addEventListener("click", followInPageLink);

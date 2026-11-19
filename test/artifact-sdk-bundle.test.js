@@ -991,7 +991,7 @@ test("the served SDK bundle lets a link be followed in annotate mode, and annota
 // `replaced` records the fragment navigated to and the root's inline scroll-behavior at that
 // moment, which is what decides whether the browser animates the scroll it then performs.
 function bootSectionPage({ reducedMotion = false, inlineScrollBehavior = "" } = {}) {
-  const page = { replaced: [], assigned: [], scrolled: [], ids: new Set() };
+  const page = { replaced: [], assigned: [], scrolled: [], addressed: [], ids: new Set() };
   const sdk = bootSdk({
     setup(sandbox) {
       page.root = sandbox.document.documentElement;
@@ -1005,6 +1005,13 @@ function bootSectionPage({ reducedMotion = false, inlineScrollBehavior = "" } = 
           origin: "http://127.0.0.1",
           replace: (url) => page.replaced.push({ url, scrollBehavior: page.root.style.scrollBehavior }),
           assign: (url) => page.assigned.push(url),
+        },
+        history: {
+          state: null,
+          replaceState: (state, unused, url) => {
+            if (page.refuseReplaceState) throw new Error("SecurityError");
+            page.addressed.push(url);
+          },
         },
         matchMedia: () => ({ matches: reducedMotion }),
       });
@@ -1029,27 +1036,20 @@ test("a same-page section link is navigated by the browser, smoothly, replacing 
 });
 
 for (const href of ["#", "#top"]) {
-  test(`a back-to-top link (${href}) gets the same smooth, history-free navigation`, () => {
+  // Firefox jumps to the top for a fragment that names no element, whatever scroll-behavior says
+  // (seen live: scrollY went 1627 -> 0 in one frame). Nothing can be :target there, so the SDK
+  // scrolls to the top itself and replaces the address without navigating: history.replaceState
+  // changes the URL of the current entry and adds none.
+  test(`a back-to-top link (${href}) that names no element is scrolled smoothly by the SDK, history-free`, () => {
     const { sdk, page } = bootSectionPage();
     page.link.setAttribute("href", href);
     const event = sdk.pageClick(page.link);
 
     assert.equal(event.defaultPrevented, true);
-    assert.deepEqual(page.replaced, [{ url: href, scrollBehavior: "smooth" }]);
-  });
-
-  // Firefox jumps to the top for a fragment that names no element, whatever scroll-behavior says
-  // (seen live: scrollY went 1627 -> 0 in one frame). So the reader must be put back where they
-  // were and then scrolled to the top by an explicit, animated scroll.
-  test(`a back-to-top link (${href}) that names no element is scrolled to the top by the SDK`, () => {
-    const { sdk, page } = bootSectionPage();
-    page.link.setAttribute("href", href);
-    sdk.pageClick(page.link);
-
-    assert.deepEqual(page.scrolled, [
-      { left: 0, top: 1600, behavior: "instant" },
-      { left: 0, top: 0, behavior: "smooth" },
-    ]);
+    assert.deepEqual(page.scrolled, [{ left: 0, top: 0, behavior: "smooth" }]);
+    assert.deepEqual(page.addressed, [href]);
+    assert.deepEqual(page.replaced, [], "the browser's own jump to the top is never started");
+    assert.deepEqual(page.assigned, [], "nothing adds a history entry");
   });
 
   test(`a back-to-top link (${href}) jumps to the top under reduced motion`, () => {
@@ -1057,7 +1057,17 @@ for (const href of ["#", "#top"]) {
     page.link.setAttribute("href", href);
     sdk.pageClick(page.link);
 
-    assert.deepEqual(page.scrolled.at(-1), { left: 0, top: 0, behavior: "instant" });
+    assert.deepEqual(page.scrolled, [{ left: 0, top: 0, behavior: "instant" }]);
+  });
+
+  test(`a back-to-top link (${href}) still scrolls when the address cannot be replaced`, () => {
+    const { sdk, page } = bootSectionPage();
+    page.refuseReplaceState = true;
+    page.link.setAttribute("href", href);
+    sdk.pageClick(page.link);
+
+    assert.deepEqual(page.scrolled, [{ left: 0, top: 0, behavior: "smooth" }]);
+    assert.deepEqual(page.replaced, []);
   });
 }
 
@@ -1070,6 +1080,7 @@ test("a section link, and a #top link whose element exists, are scrolled by the 
 
   assert.equal(page.replaced.length, 2);
   assert.deepEqual(page.scrolled, []);
+  assert.deepEqual(page.addressed, []);
 });
 
 test("a same-page section link jumps without animation under reduced motion", () => {
