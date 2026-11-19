@@ -460,10 +460,15 @@ function postAnnotationMarkers(freshPage = false) {
  * @param {number} index
  * @param {string} was
  */
-function editQueuedFromPage(index, was) {
+function editQueuedFromPage(index, was, rect = null) {
   if (ended) return;
   const note = /** @type {any} */ (queued[index]);
   if (!note?.selector || note.tag === "message" || String(note.prompt || "") !== was) return;
+  // Where the page's preview was: the editor opens right there, drawn by the chrome over the page.
+  if (rect && Number.isFinite(Number(rect.left)) && Number.isFinite(Number(rect.top))) {
+    openNoteEditor(note, Number(rect.left), Number(rect.top));
+    return;
+  }
   closePageChat();
   setMenuOpen(queueOpen, queueMenu, true);
   const row = /** @type {HTMLElement | undefined} */ (queueList.children[index]);
@@ -472,6 +477,99 @@ function editQueuedFromPage(index, was) {
   row.scrollIntoView?.({ block: "nearest" });
   editQueuedPrompt(index, row, /** @type {HTMLElement} */ (text));
 }
+
+// The in-place editor for a queued note, opened from its marker's preview. It is the chrome's own
+// element laid over the page frame where the preview was, so the reader edits the note right
+// there while the untrusted page never touches its text. Enter saves, Shift+Enter is a new line,
+// Escape keeps the note as it was, a click anywhere else saves; emptied, a note with no image goes.
+/** @type {HTMLDivElement | null} */
+let noteEditor = null;
+/** @type {((save: boolean) => void) | null} */
+let finishNoteEditor = null;
+function noteEditorOpen() {
+  return Boolean(noteEditor && !noteEditor.hidden);
+}
+/** @param {boolean} save */
+function closeNoteEditor(save) {
+  if (finishNoteEditor) finishNoteEditor(save);
+}
+/**
+ * @param {any} prompt
+ * @param {number} left the preview's left, in the page frame
+ * @param {number} top the preview's top, in the page frame
+ */
+function openNoteEditor(prompt, left, top) {
+  closeNoteEditor(true);
+  closePageChat();
+  if (!queueMenu.hidden) setMenuOpen(queueOpen, queueMenu, false);
+  if (!noteEditor) {
+    noteEditor = document.createElement("div");
+    noteEditor.className = "note-editor";
+    noteEditor.setAttribute("role", "dialog");
+    noteEditor.setAttribute("aria-label", "Edit this queued note");
+    document.body.appendChild(noteEditor);
+  }
+  const box = document.createElement("textarea");
+  box.className = "note-editor-input";
+  box.rows = 3;
+  box.value = String(prompt.prompt || "");
+  box.setAttribute("aria-label", "Edit this queued note");
+  const hint = document.createElement("div");
+  hint.className = "note-editor-hint";
+  hint.textContent = "Enter saves · Shift+Enter new line · Esc keeps it";
+  noteEditor.replaceChildren(box, hint);
+  const area = frame.getBoundingClientRect?.() || {
+    left: 0,
+    top: 0,
+    width: window.innerWidth,
+    height: window.innerHeight,
+  };
+  // The page only hints where: the editor is always kept inside the visible part of the page
+  // frame, never offscreen and never over the bar above it.
+  const viewW = window.innerWidth || area.width || 320;
+  const viewH = window.innerHeight || area.height || 480;
+  const width = Math.min(300, viewW - 24);
+  const height = 120;
+  const minTop = Math.max(12, area.top);
+  const maxTop = Math.max(minTop, Math.min(area.top + area.height, viewH) - height - 12);
+  const minLeft = Math.max(12, area.left);
+  const maxLeft = Math.max(minLeft, Math.min(area.left + area.width, viewW) - width - 12);
+  noteEditor.style.left = Math.round(Math.min(maxLeft, Math.max(minLeft, area.left + left))) + "px";
+  noteEditor.style.top = Math.round(Math.min(maxTop, Math.max(minTop, area.top + top))) + "px";
+  noteEditor.hidden = false;
+  finishNoteEditor = (save) => {
+    finishNoteEditor = null;
+    if (noteEditor) noteEditor.hidden = true;
+    // focus goes back to the page rather than nowhere
+    frame.focus?.();
+    const at = queued.indexOf(prompt);
+    if (save && !ended && at !== -1) {
+      const next = box.value.trim();
+      if (next || attachmentCount(prompt)) prompt.prompt = next;
+      else queued.splice(at, 1);
+      persistQueuedPrompts();
+    }
+    render();
+    syncFooterPanel();
+  };
+  box.addEventListener("keydown", (key) => {
+    if (key.key === "Enter" && !key.shiftKey && !key.isComposing) {
+      key.preventDefault();
+      closeNoteEditor(true);
+    } else if (key.key === "Escape") {
+      key.preventDefault();
+      key.stopPropagation();
+      closeNoteEditor(false);
+    }
+  });
+  syncFooterPanel();
+  box.focus();
+  box.setSelectionRange?.(box.value.length, box.value.length);
+}
+document.addEventListener("mousedown", (event) => {
+  if (!noteEditorOpen() || noteEditor?.contains(/** @type {Node} */ (event.target))) return;
+  closeNoteEditor(true);
+});
 
 function renderQueueDock() {
   if (!queueDock) return;
@@ -606,7 +704,7 @@ function hideSendHint() {
 function setMenuOpen(button, menu, open) {
   menu.hidden = !open;
   button.setAttribute("aria-expanded", String(open));
-  if (menu === queueMenu) syncFooterPanel();
+  syncFooterPanel();
 }
 
 function closeMenus() {
@@ -1420,6 +1518,8 @@ const sidebarComposer = {
 /** @param {boolean} [endAfter] @param {RoundComposer} [composer] whose message and images go with the queue */
 function sendQueued(endAfter, composer = sidebarComposer) {
   if (ended) return false;
+  // a note still open in the in-place editor is saved first, so Send sends what it says now
+  closeNoteEditor(true);
   closeMenus();
 
   if (endAfter) {
@@ -2082,6 +2182,7 @@ function setWarningsDrawerOpen(open) {
   warningsDrawerOpen = open && !ended;
   warningsDrawer.hidden = !warningsDrawerOpen;
   warningsButton.setAttribute("aria-expanded", String(warningsDrawerOpen));
+  syncFooterPanel();
   if (warningsDrawerOpen) {
     closeMenus();
     warningsSelectAll.focus();
@@ -2171,6 +2272,8 @@ async function endSession() {
 
 function markSessionEnded() {
   if (ended) return;
+  // an editor still open saves nothing once the session is over
+  closeNoteEditor(false);
   ended = true;
   cancelArtifactLoadRecovery();
   closeMenus();
@@ -3180,7 +3283,12 @@ window.addEventListener("message", (event) => {
   // The artifact spoke, so it rendered and ran its SDK - there is nothing fatal to probe for.
   if (navigator.userActivation?.isActive !== false) {
     if (msg.type === "review-surface:closeFooterPanels") closeFooterPanels();
-    if (msg.type === "review-surface:editQueued") editQueuedFromPage(Number(msg.index), String(msg.was ?? ""));
+    if (msg.type === "review-surface:editQueued")
+      editQueuedFromPage(
+        Number(msg.index),
+        String(msg.was ?? ""),
+        msg.rect && typeof msg.rect === "object" ? msg.rect : null,
+      );
   }
   if (msg.type === "review-surface:queuePrompt") {
     enqueuePrompt(msg.prompt);
@@ -4680,15 +4788,44 @@ function syncFooterPanel(force = false) {
   footerPanelPosted = open;
   postToFrame({ type: "review-surface:footerPanel", open });
 }
+// Every floating window behaves the same: a click anywhere outside it closes it, and a click in
+// the page that closes one does nothing else. That is This page's chat, Queued, and the bar's
+// menus (More, Notifications, the threads list) and the layout-issues drawer. Looked up by id,
+// so this works whichever of them is declared further down the file.
+const POPOVER_MENUS = [
+  ["moreButton", "moreMenu"],
+  ["notifyButton", "notifyMenu"],
+  ["threadsButton", "threadsMenu"],
+];
+function popoverMenuOpen() {
+  return POPOVER_MENUS.some(([, menu]) => {
+    const el = document.getElementById(menu);
+    return Boolean(el && !el.hidden);
+  });
+}
 function footerPanelOpen() {
-  return footerReady && ((activeChat === pageChatKey && !chatPop.hidden) || !queueMenu.hidden);
+  return (
+    footerReady &&
+    ((activeChat === pageChatKey && !chatPop.hidden) ||
+      !queueMenu.hidden ||
+      popoverMenuOpen() ||
+      warningsDrawerOpen ||
+      noteEditorOpen())
+  );
 }
 function closePageChat() {
   if (activeChat === pageChatKey) closeChat();
 }
 function closeFooterPanels() {
+  closeNoteEditor(true);
   closePageChat();
   if (!queueMenu.hidden) setMenuOpen(queueOpen, queueMenu, false);
+  for (const [buttonId, menuId] of POPOVER_MENUS) {
+    const button = document.getElementById(buttonId);
+    const menu = document.getElementById(menuId);
+    if (button && menu && !menu.hidden) setMenuOpen(button, menu, false);
+  }
+  closeWarningsDrawer();
   syncFooterPanel();
 }
 document.addEventListener("mousedown", (event) => {

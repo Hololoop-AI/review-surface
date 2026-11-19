@@ -861,6 +861,48 @@ test("the page's Edit and panel-closing asks are ignored without a real click", 
   assert.equal(chrome.element("queueMenu").hidden, false, "the reader's open panel stays open");
 });
 
+test("a marker's Edit opens the chrome's own editor where the preview was; Enter saves, Escape keeps", async () => {
+  const chrome = await createChromeHarness();
+  chrome.sendFrameMessage({
+    type: "review-surface:queuePrompt",
+    prompt: { prompt: "Shorter", selector: "h1#title", tag: "h1", text: "Title" },
+  });
+  chrome.sendFrameMessage({ type: "review-surface:editQueued", index: 0, was: "Shorter", rect: { left: 40, top: 60 } });
+  const editor = chrome.element("body").children.find((el) => el.className === "note-editor");
+  assert.ok(editor, "the editor is the chrome's own element");
+  assert.equal(editor.hidden, false);
+  assert.equal(chrome.element("queueMenu").hidden, true, "it opens in place, not in Queued");
+  const box = editor.children[0];
+  assert.equal(box.value, "Shorter");
+  box.value = "Much shorter";
+  box.dispatch("keydown", { key: "Enter", preventDefault() {} });
+  assert.equal(chrome.queued()[0].prompt, "Much shorter");
+  assert.equal(editor.hidden, true);
+
+  chrome.sendFrameMessage({
+    type: "review-surface:editQueued",
+    index: 0,
+    was: "Much shorter",
+    rect: { left: 40, top: 60 },
+  });
+  const again = editor.children[0];
+  again.value = "changed my mind";
+  again.dispatch("keydown", { key: "Escape", preventDefault() {}, stopPropagation() {} });
+  assert.equal(chrome.queued()[0].prompt, "Much shorter");
+});
+
+test("every floating window closes the same way: the More menu tells the page, and the page's click closes it", async () => {
+  const chrome = await createChromeHarness();
+  chrome.element("moreButton").onclick();
+  assert.equal(chrome.element("moreMenu").hidden, false);
+  assert.equal(
+    JSON.stringify(chrome.postedToFrame.filter((m) => m.type === "review-surface:footerPanel").at(-1)),
+    JSON.stringify({ type: "review-surface:footerPanel", open: true }),
+  );
+  chrome.sendFrameMessage({ type: "review-surface:closeFooterPanels" });
+  assert.equal(chrome.element("moreMenu").hidden, true);
+});
+
 test("an open Queued tells the page, and the page's click closes it", async () => {
   const chrome = await createChromeHarness();
   chrome.sendFrameMessage({
