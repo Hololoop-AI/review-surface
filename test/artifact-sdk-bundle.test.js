@@ -991,12 +991,16 @@ test("the served SDK bundle lets a link be followed in annotate mode, and annota
 // `replaced` records the fragment navigated to and the root's inline scroll-behavior at that
 // moment, which is what decides whether the browser animates the scroll it then performs.
 function bootSectionPage({ reducedMotion = false, inlineScrollBehavior = "" } = {}) {
-  const page = { replaced: [], assigned: [] };
+  const page = { replaced: [], assigned: [], scrolled: [], ids: new Set() };
   const sdk = bootSdk({
     setup(sandbox) {
       page.root = sandbox.document.documentElement;
       page.root.style.scrollBehavior = inlineScrollBehavior;
+      sandbox.document.getElementById = (id) => (page.ids.has(id) ? {} : null);
       Object.assign(sandbox.window, {
+        scrollX: 0,
+        scrollY: 1600,
+        scrollTo: (options) => page.scrolled.push({ ...options }),
         location: {
           origin: "http://127.0.0.1",
           replace: (url) => page.replaced.push({ url, scrollBehavior: page.root.style.scrollBehavior }),
@@ -1033,7 +1037,40 @@ for (const href of ["#", "#top"]) {
     assert.equal(event.defaultPrevented, true);
     assert.deepEqual(page.replaced, [{ url: href, scrollBehavior: "smooth" }]);
   });
+
+  // Firefox jumps to the top for a fragment that names no element, whatever scroll-behavior says
+  // (seen live: scrollY went 1627 -> 0 in one frame). So the reader must be put back where they
+  // were and then scrolled to the top by an explicit, animated scroll.
+  test(`a back-to-top link (${href}) that names no element is scrolled to the top by the SDK`, () => {
+    const { sdk, page } = bootSectionPage();
+    page.link.setAttribute("href", href);
+    sdk.pageClick(page.link);
+
+    assert.deepEqual(page.scrolled, [
+      { left: 0, top: 1600, behavior: "instant" },
+      { left: 0, top: 0, behavior: "smooth" },
+    ]);
+  });
+
+  test(`a back-to-top link (${href}) jumps to the top under reduced motion`, () => {
+    const { sdk, page } = bootSectionPage({ reducedMotion: true });
+    page.link.setAttribute("href", href);
+    sdk.pageClick(page.link);
+
+    assert.deepEqual(page.scrolled.at(-1), { left: 0, top: 0, behavior: "instant" });
+  });
 }
+
+test("a section link, and a #top link whose element exists, are scrolled by the browser alone", () => {
+  const { sdk, page } = bootSectionPage();
+  sdk.pageClick(page.link);
+  page.ids.add("top");
+  page.link.setAttribute("href", "#top");
+  sdk.pageClick(page.link);
+
+  assert.equal(page.replaced.length, 2);
+  assert.deepEqual(page.scrolled, []);
+});
 
 test("a same-page section link jumps without animation under reduced motion", () => {
   const { sdk, page } = bootSectionPage({ reducedMotion: true, inlineScrollBehavior: "smooth" });

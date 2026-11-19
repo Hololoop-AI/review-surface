@@ -3392,7 +3392,20 @@ export function createArtifactSdk(
     const timer = window.setTimeout(restore, 1000);
     window.addEventListener("scrollend", restore);
     restoreScrollBehavior = restore;
+    // "#" and "#top" with no element of that name mean the top of the page. Browsers do not agree
+    // on animating that one (Firefox jumps whatever scroll-behavior says), so the scroll is put
+    // back where it was and made here.
+    const name = href.slice(1);
+    const toTop =
+      (name === "" || name.toLowerCase() === "top") &&
+      !document.getElementById(name) &&
+      !document.getElementsByName?.(name)?.length;
+    const left = window.scrollX;
+    const top = window.scrollY;
     window.location.replace(href);
+    if (!toTop) return;
+    window.scrollTo({ left, top, behavior: "instant" });
+    window.scrollTo({ left: 0, top: 0, behavior: reduced ? "instant" : "smooth" });
   }
 
   window.addEventListener("click", followInPageLink);
