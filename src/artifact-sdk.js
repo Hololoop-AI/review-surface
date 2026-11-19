@@ -3362,15 +3362,25 @@ export function createArtifactSdk(
     return true;
   }
 
-  function pageStylesUseTarget(rules) {
+  function targetRuleStyles(el, rules) {
+    const target = /:target(?![-\w])/g;
     for (const rule of rules || []) {
-      if (/:target(?![-\w])/.test(rule.selectorText || "")) return true;
-      if (rule.cssRules && pageStylesUseTarget(rule.cssRules)) return true;
+      const selector = rule.selectorText || "";
+      if (selector.search(target) !== -1) {
+        try {
+          if (el.matches(selector.replace(target, ":is(*)")) && !el.matches(selector.replace(target, ":not(*)")))
+            return true;
+        } catch {
+          // a selector this cannot rewrite decides nothing
+        }
+      }
+      if (rule.cssRules && targetRuleStyles(el, rule.cssRules)) return true;
     }
     return false;
   }
 
-  function pageUsesTargetSelector() {
+  function styledAsTarget(el) {
+    if (!el) return false;
     for (const sheet of document.styleSheets || []) {
       let rules = null;
       try {
@@ -3378,14 +3388,16 @@ export function createArtifactSdk(
       } catch {
         // a cross-origin sheet cannot be read
       }
-      if (pageStylesUseTarget(rules)) return true;
+      if (targetRuleStyles(el, rules)) return true;
     }
     return false;
   }
 
   // A link to a place on this same page ("#section") scrolls there smoothly instead of jumping,
   // and replaces the address rather than adding a history entry, so the browser's back (and
-  // the host's) is not spent stepping through sections. Reduced motion jumps, as asked.
+  // the host's) is not spent stepping through sections. Reduced motion jumps, as asked. "#" and
+  // "#top" are the top of the page. Only the browser's own navigation moves :target, so a link
+  // to or away from an element the page styles as :target is left to the browser.
   function followInPageLink(event) {
     if (event.defaultPrevented) return;
     if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -3393,7 +3405,7 @@ export function createArtifactSdk(
     if (!link || isReviewSurfaceUi(link)) return;
     if (link.hasAttribute?.("download") || (link.getAttribute("target") || "_self") !== "_self") return;
     const href = link.getAttribute("href") || "";
-    if (!href.startsWith("#") || href.length < 2) return;
+    if (!href.startsWith("#")) return;
     let id = href.slice(1);
     try {
       id = decodeURIComponent(id);
@@ -3401,11 +3413,14 @@ export function createArtifactSdk(
       // keep the raw id
     }
     const place = document.getElementById(id);
-    if (!place || pageUsesTargetSelector()) return;
+    if (!place && id && id.toLowerCase() !== "top") return;
+    if (styledAsTarget(place) || styledAsTarget(document.querySelector(":target"))) return;
     // only the jump is replaced: the page's own handlers on the link still see the click
     event.preventDefault();
     const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
-    place.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
+    const behavior = reduced ? "auto" : "smooth";
+    if (place) place.scrollIntoView({ behavior, block: "start" });
+    else window.scrollTo({ top: 0, left: 0, behavior });
     const oldURL = window.location.href;
     try {
       window.history.replaceState(window.history.state, "", href);

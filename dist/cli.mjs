@@ -7253,21 +7253,30 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     postArtifactMessage("review-surface:openPage", { href: path11 });
     return true;
   }
-  function pageStylesUseTarget(rules) {
+  function targetRuleStyles(el, rules) {
+    const target = /:target(?![-\w])/g;
     for (const rule of rules || []) {
-      if (/:target(?![-\w])/.test(rule.selectorText || "")) return true;
-      if (rule.cssRules && pageStylesUseTarget(rule.cssRules)) return true;
+      const selector2 = rule.selectorText || "";
+      if (selector2.search(target) !== -1) {
+        try {
+          if (el.matches(selector2.replace(target, ":is(*)")) && !el.matches(selector2.replace(target, ":not(*)")))
+            return true;
+        } catch {
+        }
+      }
+      if (rule.cssRules && targetRuleStyles(el, rule.cssRules)) return true;
     }
     return false;
   }
-  function pageUsesTargetSelector() {
+  function styledAsTarget(el) {
+    if (!el) return false;
     for (const sheet of document.styleSheets || []) {
       let rules = null;
       try {
         rules = sheet.cssRules;
       } catch {
       }
-      if (pageStylesUseTarget(rules)) return true;
+      if (targetRuleStyles(el, rules)) return true;
     }
     return false;
   }
@@ -7278,17 +7287,20 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     if (!link || isReviewSurfaceUi(link)) return;
     if (link.hasAttribute?.("download") || (link.getAttribute("target") || "_self") !== "_self") return;
     const href = link.getAttribute("href") || "";
-    if (!href.startsWith("#") || href.length < 2) return;
+    if (!href.startsWith("#")) return;
     let id = href.slice(1);
     try {
       id = decodeURIComponent(id);
     } catch {
     }
     const place = document.getElementById(id);
-    if (!place || pageUsesTargetSelector()) return;
+    if (!place && id && id.toLowerCase() !== "top") return;
+    if (styledAsTarget(place) || styledAsTarget(document.querySelector(":target"))) return;
     event.preventDefault();
     const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
-    place.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
+    const behavior = reduced ? "auto" : "smooth";
+    if (place) place.scrollIntoView({ behavior, block: "start" });
+    else window.scrollTo({ top: 0, left: 0, behavior });
     const oldURL = window.location.href;
     try {
       window.history.replaceState(window.history.state, "", href);
