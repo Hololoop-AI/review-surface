@@ -793,6 +793,9 @@ test("a queued note is edited in place: Enter saves, Escape keeps it, emptied it
   );
 });
 
+const noteEditorOf = (chrome) => chrome.element("body").children.find((el) => el.className === "note-editor");
+const noteEditorShown = (chrome) => Boolean(noteEditorOf(chrome) && !noteEditorOf(chrome).hidden);
+
 test("queued notes become markers in the page, whose Edit opens the note here, and a row shows its element", async () => {
   const chrome = await createChromeHarness();
   chrome.sendFrameMessage({
@@ -803,12 +806,13 @@ test("queued notes become markers in the page, whose Edit opens the note here, a
   assert.equal(JSON.stringify(markers.markers), JSON.stringify([{ index: 0, selector: "h1#title", text: "Shorter" }]));
 
   // The page can only ask for a note to be opened: a stale ask opens nothing, a current one opens
-  // that note's editor in the Queued window, where the reader changes it.
-  chrome.sendFrameMessage({ type: "review-surface:editQueued", index: 0, was: "Longer" });
-  assert.equal(chrome.element("queueMenu").hidden, true);
-  chrome.sendFrameMessage({ type: "review-surface:editQueued", index: 0, was: "Shorter" });
-  assert.equal(chrome.element("queueMenu").hidden, false);
-  const box = chrome.element("queueList").children[0].querySelectorAll(".queue-item-input")[0];
+  // that note in the chrome's own editor, where the reader changes it.
+  const rect = { left: 40, top: 60 };
+  chrome.sendFrameMessage({ type: "review-surface:editQueued", index: 0, was: "Longer", rect });
+  assert.equal(noteEditorShown(chrome), false);
+  chrome.sendFrameMessage({ type: "review-surface:editQueued", index: 0, was: "Shorter", rect });
+  assert.equal(noteEditorShown(chrome), true);
+  const box = noteEditorOf(chrome).children[0];
   assert.equal(box.value, "Shorter");
   box.value = "Much shorter";
   box.dispatch("keydown", { key: "Enter", preventDefault() {} });
@@ -817,6 +821,7 @@ test("queued notes become markers in the page, whose Edit opens the note here, a
   chrome.sendFrameMessage({ type: "review-surface:updateQueued", index: 0, was: "Much shorter", text: "forged" });
   assert.equal(chrome.queued()[0].prompt, "Much shorter");
 
+  chrome.element("queueOpen").click();
   const row = chrome.element("queueList").children[0];
   row.onclick({ target: null });
   assert.equal(
@@ -833,8 +838,9 @@ test("a page's Edit ask opens only the note it names, and a stale ask opens noth
       prompt: { prompt, selector: "h1#title", tag: "h1", text: "Title" },
     });
   }
-  chrome.sendFrameMessage({ type: "review-surface:editQueued", index: 0, was: "Second" });
-  assert.equal(chrome.element("queueMenu").hidden, true, "the note at that index reads otherwise");
+  const rect = { left: 40, top: 60 };
+  chrome.sendFrameMessage({ type: "review-surface:editQueued", index: 0, was: "Second", rect });
+  assert.equal(noteEditorShown(chrome), false, "the note at that index reads otherwise");
 
   const long = "x".repeat(5000);
   chrome.sendFrameMessage({
@@ -842,9 +848,24 @@ test("a page's Edit ask opens only the note it names, and a stale ask opens noth
     prompt: { prompt: long, selector: "p#long", tag: "p", text: "Long" },
   });
   const sent = chrome.postedToFrame.filter((m) => m.type === "review-surface:annotationMarkers").at(-1).markers[2];
-  chrome.sendFrameMessage({ type: "review-surface:editQueued", index: sent.index, was: sent.text });
-  assert.equal(chrome.element("queueMenu").hidden, false);
-  assert.equal(chrome.element("queueList").children[2].querySelectorAll(".queue-item-input")[0].value, long);
+  chrome.sendFrameMessage({ type: "review-surface:editQueued", index: sent.index, was: sent.text, rect });
+  assert.equal(noteEditorShown(chrome), true);
+  assert.equal(noteEditorOf(chrome).children[0].value, long);
+});
+
+// Intent (5): Edit edits in place, and the jump to the Queued panel was a regression. An ask that
+// does not say where the preview was has no place to edit in, so it opens nothing at all.
+test("a page's Edit ask without a usable position opens nothing, not the Queued window", async () => {
+  const chrome = await createChromeHarness();
+  chrome.sendFrameMessage({
+    type: "review-surface:queuePrompt",
+    prompt: { prompt: "Shorter", selector: "h1#title", tag: "h1", text: "Title" },
+  });
+  for (const rect of [undefined, null, {}, { left: "x", top: 60 }, { left: 40 }]) {
+    chrome.sendFrameMessage({ type: "review-surface:editQueued", index: 0, was: "Shorter", rect });
+    assert.equal(chrome.element("queueMenu").hidden, true, "Queued stays closed");
+    assert.equal(noteEditorShown(chrome), false, "and no editor opens");
+  }
 });
 
 test("the page's Edit and panel-closing asks are ignored without a real click", async () => {
@@ -853,12 +874,177 @@ test("the page's Edit and panel-closing asks are ignored without a real click", 
     type: "review-surface:queuePrompt",
     prompt: { prompt: "Shorter", selector: "h1#title", tag: "h1", text: "Title" },
   });
-  chrome.sendFrameMessage({ type: "review-surface:editQueued", index: 0, was: "Shorter" });
-  assert.equal(chrome.element("queueMenu").hidden, true, "no editor opens on a script's ask");
+  chrome.sendFrameMessage({ type: "review-surface:editQueued", index: 0, was: "Shorter", rect: { left: 40, top: 60 } });
+  assert.equal(noteEditorShown(chrome), false, "no editor opens on a script's ask");
 
   chrome.element("queueOpen").click();
   chrome.sendFrameMessage({ type: "review-surface:closeFooterPanels" });
   assert.equal(chrome.element("queueMenu").hidden, false, "the reader's open panel stays open");
+});
+
+test("a marker's Edit opens the chrome's own editor where the preview was; Enter saves, Escape keeps", async () => {
+  const chrome = await createChromeHarness();
+  chrome.sendFrameMessage({
+    type: "review-surface:queuePrompt",
+    prompt: { prompt: "Shorter", selector: "h1#title", tag: "h1", text: "Title" },
+  });
+  chrome.sendFrameMessage({ type: "review-surface:editQueued", index: 0, was: "Shorter", rect: { left: 40, top: 60 } });
+  const editor = chrome.element("body").children.find((el) => el.className === "note-editor");
+  assert.ok(editor, "the editor is the chrome's own element");
+  assert.equal(editor.hidden, false);
+  assert.equal(chrome.element("queueMenu").hidden, true, "it opens in place, not in Queued");
+  const box = editor.children[0];
+  assert.equal(box.value, "Shorter");
+  box.value = "Much shorter";
+  box.dispatch("keydown", { key: "Enter", preventDefault() {} });
+  assert.equal(chrome.queued()[0].prompt, "Much shorter");
+  assert.equal(editor.hidden, true);
+
+  chrome.sendFrameMessage({
+    type: "review-surface:editQueued",
+    index: 0,
+    was: "Much shorter",
+    rect: { left: 40, top: 60 },
+  });
+  const again = editor.children[0];
+  again.value = "changed my mind";
+  again.dispatch("keydown", { key: "Escape", preventDefault() {}, stopPropagation() {} });
+  assert.equal(chrome.queued()[0].prompt, "Much shorter");
+});
+
+// An open in-place editor holding an edit that has not been saved yet.
+async function openEditedNote(harnessOptions = {}) {
+  const chrome = await createChromeHarness(harnessOptions);
+  chrome.sendFrameMessage({
+    type: "review-surface:queuePrompt",
+    prompt: { prompt: "Shorter", selector: "h1#title", tag: "h1", text: "Title" },
+  });
+  chrome.sendFrameMessage({ type: "review-surface:editQueued", index: 0, was: "Shorter", rect: { left: 40, top: 60 } });
+  const editor = noteEditorOf(chrome);
+  editor.children[0].value = "Much shorter";
+  return { chrome, editor };
+}
+
+// Intent (5): the page only hints where; the chrome keeps its editor inside the visible frame.
+// The frame sits below a 50px bar in a 1000px-wide window, and the editor is at most 300px wide
+// (its CSS width), so wherever the page points, the editor's box must stay within the frame.
+test("the page's position hint for the note editor is kept inside the visible page frame", async () => {
+  const chrome = await createChromeHarness({ viewportWidth: 1000 });
+  const area = { left: 0, top: 50, width: 1000, height: 600 };
+  chrome.frame.getBoundingClientRect = () => area;
+  chrome.sendFrameMessage({
+    type: "review-surface:queuePrompt",
+    prompt: { prompt: "Shorter", selector: "h1#title", tag: "h1", text: "Title" },
+  });
+  const placedAt = (rect) => {
+    chrome.sendFrameMessage({ type: "review-surface:editQueued", index: 0, was: "Shorter", rect });
+    const editor = noteEditorOf(chrome);
+    assert.equal(editor.hidden, false);
+    return { left: parseFloat(editor.style.left), top: parseFloat(editor.style.top) };
+  };
+
+  assert.deepEqual(placedAt({ left: 40, top: 60 }), { left: 40, top: 110 }, "a hint inside the frame is honoured");
+  for (const rect of [
+    { left: 1e9, top: 1e9 },
+    { left: -1e9, top: -1e9 },
+    { left: 1e9, top: -1e9 },
+    { left: 990, top: 640 },
+  ]) {
+    const at = placedAt(rect);
+    assert.ok(at.left >= area.left && at.left + 300 <= area.left + area.width, `left ${at.left} is in the frame`);
+    assert.ok(at.top >= area.top && at.top < area.top + area.height, `top ${at.top} is in the frame`);
+  }
+});
+
+// Intent (1): floating windows behave consistently, one at a time. A marker's Edit is a click on
+// the SDK's own UI, which does not close an open chrome window by itself, so opening the editor
+// has to.
+test("opening the note editor closes every other floating window", async () => {
+  const chrome = await createChromeHarness();
+  chrome.sendFrameMessage({
+    type: "review-surface:queuePrompt",
+    prompt: { prompt: "Shorter", selector: "h1#title", tag: "h1", text: "Title" },
+  });
+  const edit = () =>
+    chrome.sendFrameMessage({
+      type: "review-surface:editQueued",
+      index: 0,
+      was: "Shorter",
+      rect: { left: 40, top: 60 },
+    });
+  for (const [button, menu] of [
+    ["moreButton", "moreMenu"],
+    ["notifyButton", "notifyMenu"],
+    ["queueOpen", "queueMenu"],
+  ]) {
+    chrome.element(button).onclick();
+    assert.equal(chrome.element(menu).hidden, false, `${menu} opens`);
+    edit();
+    assert.equal(chrome.element(menu).hidden, true, `${menu} closes when the editor opens`);
+    assert.equal(noteEditorShown(chrome), true);
+  }
+});
+
+test("a click outside the note editor saves the edit; a click inside it keeps editing", async () => {
+  const { chrome, editor } = await openEditedNote();
+  chrome.dispatchDocumentMousedown(editor.children[0]);
+  assert.equal(editor.hidden, false, "a click in the editor is not outside it");
+  assert.equal(chrome.queued()[0].prompt, "Shorter");
+
+  chrome.dispatchDocumentMousedown(chrome.element("body"));
+  assert.equal(editor.hidden, true);
+  assert.equal(chrome.queued()[0].prompt, "Much shorter");
+});
+
+test("a click in the page closes the note editor and saves the edit", async () => {
+  const { chrome, editor } = await openEditedNote();
+  assert.equal(
+    JSON.stringify(chrome.postedToFrame.filter((m) => m.type === "review-surface:footerPanel").at(-1)),
+    JSON.stringify({ type: "review-surface:footerPanel", open: true }),
+    "the page is told a floating window is open",
+  );
+  chrome.sendFrameMessage({ type: "review-surface:closeFooterPanels" });
+  assert.equal(editor.hidden, true);
+  assert.equal(chrome.queued()[0].prompt, "Much shorter");
+});
+
+test("Send saves the open note edit first, so the agent gets the edited text", async () => {
+  const posts = [];
+  const { chrome, editor } = await openEditedNote({
+    fetchImpl: async (url, init) => {
+      if (String(url).endsWith("/prompts")) posts.push(JSON.parse(init.body));
+      return { ok: true, json: async () => ({}) };
+    },
+  });
+  chrome.element("queueSend").onclick();
+  chrome.sendFrameMessage({ type: "review-surface:snapshot", snapshot: "" });
+  await flushPromises();
+  await flushPromises();
+
+  assert.equal(editor.hidden, true);
+  assert.deepEqual(
+    posts.map((post) => post.prompts.map((prompt) => prompt.prompt)),
+    [["Much shorter"]],
+  );
+});
+
+test("a session that ends with the note editor open discards the unsaved edit", async () => {
+  const { chrome, editor } = await openEditedNote();
+  chrome.eventSource().listeners.get("ended")({ data: "{}" });
+  assert.equal(editor.hidden, true);
+  assert.equal(chrome.queued()[0].prompt, "Shorter");
+});
+
+test("every floating window closes the same way: the More menu tells the page, and the page's click closes it", async () => {
+  const chrome = await createChromeHarness();
+  chrome.element("moreButton").onclick();
+  assert.equal(chrome.element("moreMenu").hidden, false);
+  assert.equal(
+    JSON.stringify(chrome.postedToFrame.filter((m) => m.type === "review-surface:footerPanel").at(-1)),
+    JSON.stringify({ type: "review-surface:footerPanel", open: true }),
+  );
+  chrome.sendFrameMessage({ type: "review-surface:closeFooterPanels" });
+  assert.equal(chrome.element("moreMenu").hidden, true);
 });
 
 test("an open Queued tells the page, and the page's click closes it", async () => {
@@ -6377,6 +6563,11 @@ test("the bell counts other pages that moved, clears on open, and refetches when
   assert.equal(chrome.element("notifyMenu").hidden, false);
   assert.equal(chrome.element("notifyCount").hidden, true, "opening it clears the count");
   assert.equal(chrome.localStore.get("review-surface:notifications-seen-at"), "2026-11-03T06:00:00.000Z");
+  assert.match(chrome.element("notifyList").children[0].className, /\bunread\b/, "rows keep their mark while open");
+  // a click in the page closes it like a click anywhere else, and the seen rows lose their mark
+  chrome.sendFrameMessage({ type: "review-surface:closeFooterPanels" });
+  assert.equal(chrome.element("notifyMenu").hidden, true);
+  assert.doesNotMatch(chrome.element("notifyList").children[0].className, /\bunread\b/);
 
   // another page comes back: the page's own stream says so, and the bell refetches
   rows = [
