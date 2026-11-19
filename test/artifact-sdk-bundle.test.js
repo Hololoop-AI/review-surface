@@ -107,6 +107,11 @@ function cell(tag, text) {
   return element;
 }
 
+// addEventListener's third argument, as DOM reads it: `true` or `{ capture: true }` is capture.
+function isCapture(options) {
+  return options === true || Boolean(options && typeof options === "object" && options.capture);
+}
+
 function bootSdk({ querySelectorAll = () => [], sdkOptions = {}, setup = (/** @type {any} */ _sandbox) => {} } = {}) {
   const posted = [];
   const documentListeners = [];
@@ -155,7 +160,8 @@ function bootSdk({ querySelectorAll = () => [], sdkOptions = {}, setup = (/** @t
       body,
       activeElement: body,
       baseURI: "http://127.0.0.1/artifact/abc/index.html",
-      addEventListener: (type, handler) => documentListeners.push({ type, handler }),
+      addEventListener: (type, handler, options) =>
+        documentListeners.push({ type, handler, capture: isCapture(options) }),
       removeEventListener() {},
       createElement,
       getElementById: () => null,
@@ -166,7 +172,7 @@ function bootSdk({ querySelectorAll = () => [], sdkOptions = {}, setup = (/** @t
   };
   const windowListeners = [];
   sandbox.window = {
-    addEventListener: (type, handler) => windowListeners.push({ type, handler }),
+    addEventListener: (type, handler, options) => windowListeners.push({ type, handler, capture: isCapture(options) }),
     removeEventListener() {},
     setTimeout: scheduleTimer,
     clearTimeout: cancelTimer,
@@ -212,12 +218,39 @@ function bootSdk({ querySelectorAll = () => [], sdkOptions = {}, setup = (/** @t
       listener.handler(event);
       return event;
     },
-    // A whole click as the browser delivers it: the SDK's capture listener on the document, then
-    // the page's own handler on the link, then whatever listens on the window as it bubbles out.
+    // A whole click on an element of the page, in DOM dispatch order: capture listeners from the
+    // window down to the document, the page's own handler on the element, then bubble listeners
+    // from the document back out to the window. stopPropagation ends delivery after the node it
+    // was called on.
     pageClick(target, pageHandler = (/** @type {any} */ _event) => {}, extra = {}) {
-      const event = this.click(target, extra);
-      pageHandler(event);
-      for (const entry of windowListeners.filter((listener) => listener.type === "click")) entry.handler(event);
+      let stopped = false;
+      const event = {
+        target,
+        defaultPrevented: false,
+        preventDefault() {
+          event.defaultPrevented = true;
+        },
+        stopPropagation() {
+          stopped = true;
+        },
+        ...extra,
+      };
+      const on = (listeners, capture) => () => {
+        for (const entry of listeners) {
+          if (entry.type === "click" && entry.capture === capture) entry.handler(event);
+        }
+      };
+      const path = [
+        on(windowListeners, true),
+        on(documentListeners, true),
+        () => pageHandler(event),
+        on(documentListeners, false),
+        on(windowListeners, false),
+      ];
+      for (const deliver of path) {
+        if (stopped) break;
+        deliver();
+      }
       return event;
     },
     fireWindow(type) {
