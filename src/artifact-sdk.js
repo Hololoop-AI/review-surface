@@ -3362,42 +3362,11 @@ export function createArtifactSdk(
     return true;
   }
 
-  function targetRuleStyles(el, rules) {
-    const target = /:target(?![-\w])/g;
-    for (const rule of rules || []) {
-      const selector = rule.selectorText || "";
-      if (selector.search(target) !== -1) {
-        try {
-          if (el.matches(selector.replace(target, ":is(*)")) && !el.matches(selector.replace(target, ":not(*)")))
-            return true;
-        } catch {
-          // a selector this cannot rewrite decides nothing
-        }
-      }
-      if (rule.cssRules && targetRuleStyles(el, rule.cssRules)) return true;
-    }
-    return false;
-  }
-
-  function styledAsTarget(el) {
-    if (!el) return false;
-    for (const sheet of document.styleSheets || []) {
-      let rules = null;
-      try {
-        rules = sheet.cssRules;
-      } catch {
-        // a cross-origin sheet cannot be read
-      }
-      if (targetRuleStyles(el, rules)) return true;
-    }
-    return false;
-  }
-
-  // A link to a place on this same page ("#section") scrolls there smoothly instead of jumping,
-  // and replaces the address rather than adding a history entry, so the browser's back (and
-  // the host's) is not spent stepping through sections. Reduced motion jumps, as asked. "#" and
-  // "#top" are the top of the page. Only the browser's own navigation moves :target, so a link
-  // to or away from an element the page styles as :target is left to the browser.
+  // A link to a place on this same page ("#section", or "#" and "#top" for the top) scrolls there
+  // smoothly instead of jumping, and replaces the address rather than adding a history entry, so
+  // the browser's back (and the host's) is not spent stepping through sections. Reduced motion
+  // jumps, as asked. The navigation stays the browser's own, so :target and hashchange still work.
+  let restoreScrollBehavior = null;
   function followInPageLink(event) {
     if (event.defaultPrevented) return;
     if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -3406,30 +3375,24 @@ export function createArtifactSdk(
     if (link.hasAttribute?.("download") || (link.getAttribute("target") || "_self") !== "_self") return;
     const href = link.getAttribute("href") || "";
     if (!href.startsWith("#")) return;
-    let id = href.slice(1);
-    try {
-      id = decodeURIComponent(id);
-    } catch {
-      // keep the raw id
-    }
-    const place = document.getElementById(id);
-    if (!place && id && id.toLowerCase() !== "top") return;
-    if (styledAsTarget(place) || styledAsTarget(document.querySelector(":target"))) return;
     // only the jump is replaced: the page's own handlers on the link still see the click
     event.preventDefault();
+    restoreScrollBehavior?.();
+    const root = document.documentElement;
+    const previous = root.style.scrollBehavior;
     const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
-    const behavior = reduced ? "auto" : "smooth";
-    if (place) place.scrollIntoView({ behavior, block: "start" });
-    else window.scrollTo({ top: 0, left: 0, behavior });
-    const oldURL = window.location.href;
-    try {
-      window.history.replaceState(window.history.state, "", href);
-    } catch {
-      // a sandboxed frame may refuse; the scroll already happened
-      return;
-    }
-    const newURL = window.location.href;
-    if (newURL !== oldURL) window.dispatchEvent(new window.HashChangeEvent("hashchange", { oldURL, newURL }));
+    root.style.scrollBehavior = reduced ? "auto" : "smooth";
+    const restore = () => {
+      if (restoreScrollBehavior !== restore) return;
+      restoreScrollBehavior = null;
+      window.clearTimeout(timer);
+      window.removeEventListener("scrollend", restore);
+      root.style.scrollBehavior = previous;
+    };
+    const timer = window.setTimeout(restore, 1000);
+    window.addEventListener("scrollend", restore);
+    restoreScrollBehavior = restore;
+    window.location.replace(href);
   }
 
   window.addEventListener("click", followInPageLink);

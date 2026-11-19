@@ -214,11 +214,14 @@ function bootSdk({ querySelectorAll = () => [], sdkOptions = {}, setup = (/** @t
     },
     // A whole click as the browser delivers it: the SDK's capture listener on the document, then
     // the page's own handler on the link, then whatever listens on the window as it bubbles out.
-    pageClick(target, pageHandler = (/** @type {any} */ _event) => {}) {
-      const event = this.click(target);
+    pageClick(target, pageHandler = (/** @type {any} */ _event) => {}, extra = {}) {
+      const event = this.click(target, extra);
       pageHandler(event);
       for (const entry of windowListeners.filter((listener) => listener.type === "click")) entry.handler(event);
       return event;
+    },
+    fireWindow(type) {
+      for (const entry of windowListeners.filter((listener) => listener.type === type)) entry.handler({ type });
     },
     setDocumentQuery(query) {
       documentQuery = query;
@@ -951,94 +954,91 @@ test("the served SDK bundle lets a link be followed in annotate mode, and annota
   assert.equal(sdk.cards().length, 1, "the paragraph itself still annotates");
 });
 
-// A page with a section link to an element that exists, in a frame whose address and history the
-// test can read back. `styleSheets` is what the page's own CSS would expose.
-// Just enough of selector matching for these pages: comma lists of compounds made of a tag,
-// classes, and the two pseudo-classes whose answer is the same for every element, :is(*) (always)
-// and :not(*) (never). Anything else throws, as an unparseable selector does in a browser.
-function matchesSelector(tag, classes, selectorList) {
-  return String(selectorList)
-    .split(",")
-    .some((compound) => {
-      const parts = compound.trim().match(/^([a-z0-9]*)((?:\.[\w-]+|:is\(\*\)|:not\(\*\))*)$/);
-      if (!parts || !compound.trim()) throw new SyntaxError("unsupported selector: " + compound);
-      const [, wantedTag, rest] = parts;
-      if (wantedTag && wantedTag !== tag) return false;
-      if (rest.includes(":not(*)")) return false;
-      return [...rest.matchAll(/\.([\w-]+)/g)].every(([, name]) => classes.includes(name));
-    });
-}
-
-function bootSectionPage({ styleSheets = [], reducedMotion = false, currentTarget = null } = {}) {
-  const page = { scrolls: [], topScrolls: [], replaced: [], hashChanges: [] };
-  const section = createElement("section");
-  section.scrollIntoView = (options) => page.scrolls.push({ ...options });
-  section.matches = (selectorList) => matchesSelector("section", ["tab"], selectorList);
+// A page with a section link, in a frame whose navigations the test can read back. Each entry of
+// `replaced` records the fragment navigated to and the root's inline scroll-behavior at that
+// moment, which is what decides whether the browser animates the scroll it then performs.
+function bootSectionPage({ reducedMotion = false, inlineScrollBehavior = "" } = {}) {
+  const page = { replaced: [], assigned: [] };
   const sdk = bootSdk({
     setup(sandbox) {
-      sandbox.document.getElementById = (id) => (id === "reviews" ? section : null);
-      sandbox.document.querySelector = (selector) => (selector === ":target" ? currentTarget : null);
-      sandbox.document.styleSheets = styleSheets;
+      page.root = sandbox.document.documentElement;
+      page.root.style.scrollBehavior = inlineScrollBehavior;
       Object.assign(sandbox.window, {
-        scrollTo: (options) => page.topScrolls.push({ ...options }),
-        HashChangeEvent: class HashChangeEvent {
-          constructor(type, init) {
-            Object.assign(this, { type }, init);
-          }
+        location: {
+          origin: "http://127.0.0.1",
+          replace: (url) => page.replaced.push({ url, scrollBehavior: page.root.style.scrollBehavior }),
+          assign: (url) => page.assigned.push(url),
         },
-        location: { origin: "http://127.0.0.1", href: "http://127.0.0.1/artifact/abc/index.html" },
         matchMedia: () => ({ matches: reducedMotion }),
-        dispatchEvent: (event) => page.hashChanges.push(event),
-        history: {
-          state: null,
-          replaceState(_state, _title, url) {
-            page.replaced.push(url);
-            sandbox.window.location.href = new URL(url, sandbox.window.location.href).href;
-          },
-        },
       });
     },
   });
   page.link = appendTo(appendTo(sdk.body, cell("p", "See the reviews")), cell("a", "the reviews"));
   page.link.setAttribute("href", "#reviews");
-  page.section = section;
   return { sdk, page };
 }
 
-// Intent (2): same-page section links scroll smoothly and replace the address rather than adding
-// a history entry. The round-1 decision adds that script listeners still hear a hashchange.
-test("a same-page section link scrolls smoothly, adds no history entry, and still fires hashchange", () => {
+// Intent (2): same-page section links scroll smoothly and add no history entry. HTML's
+// location.replace() of a fragment is a same-document navigation that replaces the current entry,
+// moves :target and fires hashchange; CSS scroll-behavior on the root decides whether the scroll
+// it performs is animated.
+test("a same-page section link is navigated by the browser, smoothly, replacing the history entry", () => {
   const { sdk, page } = bootSectionPage();
   const event = sdk.pageClick(page.link);
 
-  assert.equal(event.defaultPrevented, true, "the browser's own jump is replaced");
-  assert.deepEqual(page.scrolls, [{ behavior: "smooth", block: "start" }]);
-  assert.deepEqual(page.replaced, ["#reviews"]);
-  assert.deepEqual(
-    page.hashChanges.map((change) => ({ ...change })),
-    [
-      {
-        type: "hashchange",
-        oldURL: "http://127.0.0.1/artifact/abc/index.html",
-        newURL: "http://127.0.0.1/artifact/abc/index.html#reviews",
-      },
-    ],
-  );
-
-  sdk.pageClick(page.link);
-  assert.equal(page.hashChanges.length, 1, "the same section again changes no hash, as in a browser");
+  assert.equal(event.defaultPrevented, true, "the history-adding jump is replaced");
+  assert.deepEqual(page.replaced, [{ url: "#reviews", scrollBehavior: "smooth" }]);
+  assert.deepEqual(page.assigned, [], "nothing adds a history entry");
 });
 
+for (const href of ["#", "#top"]) {
+  test(`a back-to-top link (${href}) gets the same smooth, history-free navigation`, () => {
+    const { sdk, page } = bootSectionPage();
+    page.link.setAttribute("href", href);
+    const event = sdk.pageClick(page.link);
+
+    assert.equal(event.defaultPrevented, true);
+    assert.deepEqual(page.replaced, [{ url: href, scrollBehavior: "smooth" }]);
+  });
+}
+
 test("a same-page section link jumps without animation under reduced motion", () => {
-  const { sdk, page } = bootSectionPage({ reducedMotion: true });
+  const { sdk, page } = bootSectionPage({ reducedMotion: true, inlineScrollBehavior: "smooth" });
   sdk.pageClick(page.link);
-  assert.deepEqual(page.scrolls, [{ behavior: "auto", block: "start" }]);
+  assert.deepEqual(page.replaced, [{ url: "#reviews", scrollBehavior: "auto" }]);
+});
+
+// The smooth scroll is borrowed for one navigation only: the page's own inline scroll-behavior
+// comes back once the scroll ends, or after a moment when no scroll happens at all.
+test("the page's own scroll-behavior is restored when the scroll ends", () => {
+  const { sdk, page } = bootSectionPage({ inlineScrollBehavior: "auto" });
+  sdk.pageClick(page.link);
+  assert.equal(page.root.style.scrollBehavior, "smooth");
+  sdk.fireWindow("scrollend");
+  assert.equal(page.root.style.scrollBehavior, "auto");
+});
+
+test("the page's own scroll-behavior is restored even when no scroll ever ends", () => {
+  const { sdk, page } = bootSectionPage();
+  sdk.pageClick(page.link);
+  sdk.runTimers();
+  assert.equal(page.root.style.scrollBehavior, "");
+});
+
+test("two section links clicked in quick succession still leave the page's own scroll-behavior", () => {
+  const { sdk, page } = bootSectionPage({ inlineScrollBehavior: "auto" });
+  sdk.pageClick(page.link);
+  sdk.pageClick(page.link);
+  assert.equal(page.replaced.length, 2);
+  sdk.fireWindow("scrollend");
+  sdk.runTimers();
+  assert.equal(page.root.style.scrollBehavior, "auto");
 });
 
 // Intent (2): defaultPrevented links are left alone. The page's handler runs after the SDK's
 // capture listener, so a tab link such as <a href="#panel2" onclick="show(); return false"> must
 // still be the page's to cancel.
-test("a section link the page's own handler cancels is neither scrolled nor written to the address", () => {
+test("a section link the page's own handler cancels is not navigated", () => {
   const { sdk, page } = bootSectionPage();
   let pageHandlerRan = false;
   sdk.pageClick(page.link, (event) => {
@@ -1047,90 +1047,24 @@ test("a section link the page's own handler cancels is neither scrolled nor writ
   });
 
   assert.equal(pageHandlerRan, true, "the page's handler gets the click first, uncancelled");
-  assert.deepEqual(page.scrolls, []);
   assert.deepEqual(page.replaced, []);
-  assert.deepEqual(page.hashChanges, []);
+  assert.equal(page.root.style.scrollBehavior, "");
 });
 
-// Only the browser's own fragment navigation moves :target, so a link whose own destination the
-// page styles as :target (CSS-only tabs, lightboxes) keeps that navigation.
-test("a link to an element the page styles as :target keeps the browser's own navigation", () => {
-  const unreadable = {
-    get cssRules() {
-      throw new Error("SecurityError");
-    },
-  };
-  const nested = { cssRules: [{ cssRules: [{ selectorText: "h2, .tab:target" }] }] };
-  const { sdk, page } = bootSectionPage({ styleSheets: [unreadable, nested] });
-  const event = sdk.pageClick(page.link);
-
-  assert.equal(event.defaultPrevented, false, "the browser follows the link itself");
-  assert.deepEqual(page.scrolls, []);
-  assert.deepEqual(page.replaced, []);
-});
-
-// Intent (2) holds on the rest of such a page: a :target rule for other elements, or one whose
-// styling this element gets with or without being the target, takes nothing from this link.
-test("a :target rule that does not style the link's own destination does not stop the smooth scroll", () => {
-  const sheet = {
-    cssRules: [
-      { selectorText: "h2:target" },
-      { selectorText: ".lightbox:target, .tab" },
-      { selectorText: "p::target-text" },
-      { selectorText: ":target > [data-x]" },
-    ],
-  };
-  const { sdk, page } = bootSectionPage({ styleSheets: [sheet] });
-  const event = sdk.pageClick(page.link);
-
-  assert.equal(event.defaultPrevented, true);
-  assert.deepEqual(page.scrolls, [{ behavior: "smooth", block: "start" }]);
-  assert.deepEqual(page.replaced, ["#reviews"]);
-});
-
-// HTML's fragment rules: an empty fragment, and "top" in any case when no element has that id,
-// are the top of the document. They get the same smooth scroll and no history entry.
-for (const href of ["#", "#top", "#TOP"]) {
-  test(`a back-to-top link (${href}) scrolls smoothly to the top and adds no history entry`, () => {
-    const { sdk, page } = bootSectionPage();
-    page.link.setAttribute("href", href);
-    const event = sdk.pageClick(page.link);
-
-    assert.equal(event.defaultPrevented, true, "the browser's own jump is replaced");
-    assert.deepEqual(page.topScrolls, [{ top: 0, left: 0, behavior: "smooth" }]);
-    assert.deepEqual(page.scrolls, [], "no section is scrolled to");
-    assert.deepEqual(page.replaced, [href]);
-  });
-}
-
-test("a back-to-top link jumps without animation under reduced motion", () => {
-  const { sdk, page } = bootSectionPage({ reducedMotion: true });
-  page.link.setAttribute("href", "#top");
-  sdk.pageClick(page.link);
-  assert.deepEqual(page.topScrolls, [{ top: 0, left: 0, behavior: "auto" }]);
-});
-
-test("a fragment that names nothing on the page is left to the browser", () => {
+// Intent (2): target/download links and modified clicks are left alone.
+test("a section link opened elsewhere, downloaded, or clicked with a modifier is left to the browser", () => {
   const { sdk, page } = bootSectionPage();
-  page.link.setAttribute("href", "#missing");
-  const event = sdk.pageClick(page.link);
 
-  assert.equal(event.defaultPrevented, false);
-  assert.deepEqual(page.topScrolls, []);
-  assert.deepEqual(page.replaced, []);
-});
+  const modified = sdk.pageClick(page.link, undefined, { ctrlKey: true });
+  page.link.setAttribute("target", "_blank");
+  const elsewhere = sdk.pageClick(page.link);
+  page.link.removeAttribute("target");
+  page.link.hasAttribute = (name) => name === "download";
+  const download = sdk.pageClick(page.link);
 
-// A CSS-only lightbox closes through <a href="#">: leaving the element that is :target now needs
-// the browser's navigation just as arriving at it did.
-test("a link away from an element shown by :target keeps the browser's own navigation", () => {
-  const lightbox = createElement("div");
-  lightbox.matches = (selectorList) => matchesSelector("div", ["lightbox"], selectorList);
-  const sheet = { cssRules: [{ selectorText: ".lightbox:target" }] };
-  const { sdk, page } = bootSectionPage({ styleSheets: [sheet], currentTarget: lightbox });
-  page.link.setAttribute("href", "#");
-  const event = sdk.pageClick(page.link);
-
-  assert.equal(event.defaultPrevented, false, "the browser clears :target itself");
-  assert.deepEqual(page.topScrolls, []);
+  assert.deepEqual(
+    [modified.defaultPrevented, elsewhere.defaultPrevented, download.defaultPrevented],
+    [false, false, false],
+  );
   assert.deepEqual(page.replaced, []);
 });

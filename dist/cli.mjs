@@ -7253,33 +7253,7 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     postArtifactMessage("review-surface:openPage", { href: path11 });
     return true;
   }
-  function targetRuleStyles(el, rules) {
-    const target = /:target(?![-\w])/g;
-    for (const rule of rules || []) {
-      const selector2 = rule.selectorText || "";
-      if (selector2.search(target) !== -1) {
-        try {
-          if (el.matches(selector2.replace(target, ":is(*)")) && !el.matches(selector2.replace(target, ":not(*)")))
-            return true;
-        } catch {
-        }
-      }
-      if (rule.cssRules && targetRuleStyles(el, rule.cssRules)) return true;
-    }
-    return false;
-  }
-  function styledAsTarget(el) {
-    if (!el) return false;
-    for (const sheet of document.styleSheets || []) {
-      let rules = null;
-      try {
-        rules = sheet.cssRules;
-      } catch {
-      }
-      if (targetRuleStyles(el, rules)) return true;
-    }
-    return false;
-  }
+  let restoreScrollBehavior = null;
   function followInPageLink(event) {
     if (event.defaultPrevented) return;
     if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -7288,27 +7262,23 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     if (link.hasAttribute?.("download") || (link.getAttribute("target") || "_self") !== "_self") return;
     const href = link.getAttribute("href") || "";
     if (!href.startsWith("#")) return;
-    let id = href.slice(1);
-    try {
-      id = decodeURIComponent(id);
-    } catch {
-    }
-    const place = document.getElementById(id);
-    if (!place && id && id.toLowerCase() !== "top") return;
-    if (styledAsTarget(place) || styledAsTarget(document.querySelector(":target"))) return;
     event.preventDefault();
+    restoreScrollBehavior?.();
+    const root = document.documentElement;
+    const previous = root.style.scrollBehavior;
     const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
-    const behavior = reduced ? "auto" : "smooth";
-    if (place) place.scrollIntoView({ behavior, block: "start" });
-    else window.scrollTo({ top: 0, left: 0, behavior });
-    const oldURL = window.location.href;
-    try {
-      window.history.replaceState(window.history.state, "", href);
-    } catch {
-      return;
-    }
-    const newURL = window.location.href;
-    if (newURL !== oldURL) window.dispatchEvent(new window.HashChangeEvent("hashchange", { oldURL, newURL }));
+    root.style.scrollBehavior = reduced ? "auto" : "smooth";
+    const restore = () => {
+      if (restoreScrollBehavior !== restore) return;
+      restoreScrollBehavior = null;
+      window.clearTimeout(timer);
+      window.removeEventListener("scrollend", restore);
+      root.style.scrollBehavior = previous;
+    };
+    const timer = window.setTimeout(restore, 1e3);
+    window.addEventListener("scrollend", restore);
+    restoreScrollBehavior = restore;
+    window.location.replace(href);
   }
   window.addEventListener("click", followInPageLink);
   document.addEventListener(
