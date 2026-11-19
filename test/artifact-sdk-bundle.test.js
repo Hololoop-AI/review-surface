@@ -107,7 +107,7 @@ function cell(tag, text) {
   return element;
 }
 
-function bootSdk({ querySelectorAll = () => [], sdkOptions = {} } = {}) {
+function bootSdk({ querySelectorAll = () => [], sdkOptions = {}, setup = (/** @type {any} */ _sandbox) => {} } = {}) {
   const posted = [];
   const documentListeners = [];
   // Deferred work the SDK schedules, run only when a test asks for it: the draft-anchor settle
@@ -179,6 +179,7 @@ function bootSdk({ querySelectorAll = () => [], sdkOptions = {} } = {}) {
     URL: sandbox.URL,
   };
   sandbox.globalThis = sandbox;
+  setup(sandbox);
 
   vm.runInNewContext(createSdkJs("abc", 3, "load-token", sdkOptions), sandbox);
 
@@ -209,6 +210,14 @@ function bootSdk({ querySelectorAll = () => [], sdkOptions = {} } = {}) {
         ...extra,
       };
       listener.handler(event);
+      return event;
+    },
+    // A whole click as the browser delivers it: the SDK's capture listener on the document, then
+    // the page's own handler on the link, then whatever listens on the window as it bubbles out.
+    pageClick(target, pageHandler = (/** @type {any} */ _event) => {}) {
+      const event = this.click(target);
+      pageHandler(event);
+      for (const entry of windowListeners.filter((listener) => listener.type === "click")) entry.handler(event);
       return event;
     },
     setDocumentQuery(query) {
@@ -940,4 +949,111 @@ test("the served SDK bundle lets a link be followed in annotate mode, and annota
   assert.equal(sdk.cards().length, 0);
   sdk.click(paragraph);
   assert.equal(sdk.cards().length, 1, "the paragraph itself still annotates");
+});
+
+// A page with a section link to an element that exists, in a frame whose address and history the
+// test can read back. `styleSheets` is what the page's own CSS would expose.
+function bootSectionPage({ styleSheets = [], reducedMotion = false } = {}) {
+  const page = { scrolls: [], replaced: [], hashChanges: [] };
+  const section = createElement("section");
+  section.scrollIntoView = (options) => page.scrolls.push({ ...options });
+  const sdk = bootSdk({
+    setup(sandbox) {
+      sandbox.document.getElementById = (id) => (id === "reviews" ? section : null);
+      sandbox.document.styleSheets = styleSheets;
+      Object.assign(sandbox.window, {
+        HashChangeEvent: class HashChangeEvent {
+          constructor(type, init) {
+            Object.assign(this, { type }, init);
+          }
+        },
+        location: { origin: "http://127.0.0.1", href: "http://127.0.0.1/artifact/abc/index.html" },
+        matchMedia: () => ({ matches: reducedMotion }),
+        dispatchEvent: (event) => page.hashChanges.push(event),
+        history: {
+          state: null,
+          replaceState(_state, _title, url) {
+            page.replaced.push(url);
+            sandbox.window.location.href = new URL(url, sandbox.window.location.href).href;
+          },
+        },
+      });
+    },
+  });
+  page.link = appendTo(appendTo(sdk.body, cell("p", "See the reviews")), cell("a", "the reviews"));
+  page.link.setAttribute("href", "#reviews");
+  return { sdk, page };
+}
+
+// Intent (2): same-page section links scroll smoothly and replace the address rather than adding
+// a history entry. The round-1 decision adds that script listeners still hear a hashchange.
+test("a same-page section link scrolls smoothly, adds no history entry, and still fires hashchange", () => {
+  const { sdk, page } = bootSectionPage();
+  const event = sdk.pageClick(page.link);
+
+  assert.equal(event.defaultPrevented, true, "the browser's own jump is replaced");
+  assert.deepEqual(page.scrolls, [{ behavior: "smooth", block: "start" }]);
+  assert.deepEqual(page.replaced, ["#reviews"]);
+  assert.deepEqual(
+    page.hashChanges.map((change) => ({ ...change })),
+    [
+      {
+        type: "hashchange",
+        oldURL: "http://127.0.0.1/artifact/abc/index.html",
+        newURL: "http://127.0.0.1/artifact/abc/index.html#reviews",
+      },
+    ],
+  );
+
+  sdk.pageClick(page.link);
+  assert.equal(page.hashChanges.length, 1, "the same section again changes no hash, as in a browser");
+});
+
+test("a same-page section link jumps without animation under reduced motion", () => {
+  const { sdk, page } = bootSectionPage({ reducedMotion: true });
+  sdk.pageClick(page.link);
+  assert.deepEqual(page.scrolls, [{ behavior: "auto", block: "start" }]);
+});
+
+// Intent (2): defaultPrevented links are left alone. The page's handler runs after the SDK's
+// capture listener, so a tab link such as <a href="#panel2" onclick="show(); return false"> must
+// still be the page's to cancel.
+test("a section link the page's own handler cancels is neither scrolled nor written to the address", () => {
+  const { sdk, page } = bootSectionPage();
+  let pageHandlerRan = false;
+  sdk.pageClick(page.link, (event) => {
+    pageHandlerRan = !event.defaultPrevented;
+    event.preventDefault();
+  });
+
+  assert.equal(pageHandlerRan, true, "the page's handler gets the click first, uncancelled");
+  assert.deepEqual(page.scrolls, []);
+  assert.deepEqual(page.replaced, []);
+  assert.deepEqual(page.hashChanges, []);
+});
+
+// Only the browser's own fragment navigation sets :target, so a page styled with it (CSS-only
+// tabs, lightboxes, highlights) keeps that navigation.
+test("a page whose styles use :target keeps the browser's own fragment navigation", () => {
+  const unreadable = {
+    get cssRules() {
+      throw new Error("SecurityError");
+    },
+  };
+  const nested = { cssRules: [{ cssRules: [{ selectorText: ".tab:target" }] }] };
+  const { sdk, page } = bootSectionPage({ styleSheets: [unreadable, nested] });
+  const event = sdk.pageClick(page.link);
+
+  assert.equal(event.defaultPrevented, false, "the browser follows the link itself");
+  assert.deepEqual(page.scrolls, []);
+  assert.deepEqual(page.replaced, []);
+});
+
+test("styles that never use :target do not stop the smooth scroll", () => {
+  const sheet = { cssRules: [{ selectorText: "p::target-text" }, { selectorText: ".tab" }] };
+  const { sdk, page } = bootSectionPage({ styleSheets: [sheet] });
+  const event = sdk.pageClick(page.link);
+
+  assert.equal(event.defaultPrevented, true);
+  assert.equal(page.scrolls.length, 1);
 });

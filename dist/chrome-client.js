@@ -454,28 +454,22 @@ function postAnnotationMarkers(freshPage = false) {
 }
 
 /**
- * A marker's Edit in the page: open that note for editing here, in the Queued window. The page is
- * untrusted, so it can only ask; the text is changed in the chrome, by the reader. The note is the
- * one at `index`, and only while it still reads `was`: a stale ask opens nothing.
+ * A marker's Edit in the page: open that note for editing in the chrome's own editor, where the
+ * page's preview was. The page is untrusted, so it can only ask; the text is changed in the
+ * chrome, by the reader. The note is the one at `index`, and only while it still reads `was`: a
+ * stale ask opens nothing, and so does one that does not say where.
  * @param {number} index
  * @param {string} was
+ * @param {{ left?: unknown, top?: unknown } | null} rect
  */
-function editQueuedFromPage(index, was, rect = null) {
+function editQueuedFromPage(index, was, rect) {
   if (ended) return;
   const note = /** @type {any} */ (queued[index]);
   if (!note?.selector || note.tag === "message" || String(note.prompt || "") !== was) return;
-  // Where the page's preview was: the editor opens right there, drawn by the chrome over the page.
-  if (rect && Number.isFinite(Number(rect.left)) && Number.isFinite(Number(rect.top))) {
-    openNoteEditor(note, Number(rect.left), Number(rect.top));
-    return;
-  }
-  closePageChat();
-  setMenuOpen(queueOpen, queueMenu, true);
-  const row = /** @type {HTMLElement | undefined} */ (queueList.children[index]);
-  const text = row?.querySelector(".queue-item-text");
-  if (!row || !text) return;
-  row.scrollIntoView?.({ block: "nearest" });
-  editQueuedPrompt(index, row, /** @type {HTMLElement} */ (text));
+  const left = Number(rect?.left);
+  const top = Number(rect?.top);
+  if (!rect || !Number.isFinite(left) || !Number.isFinite(top)) return;
+  openNoteEditor(note, left, top);
 }
 
 // The in-place editor for a queued note, opened from its marker's preview. It is the chrome's own
@@ -4823,7 +4817,9 @@ function closeFooterPanels() {
   for (const [buttonId, menuId] of POPOVER_MENUS) {
     const button = document.getElementById(buttonId);
     const menu = document.getElementById(menuId);
-    if (button && menu && !menu.hidden) setMenuOpen(button, menu, false);
+    if (!button || !menu || menu.hidden) continue;
+    setMenuOpen(button, menu, false);
+    if (menuId === "notifyMenu") renderNotifications();
   }
   closeWarningsDrawer();
   syncFooterPanel();

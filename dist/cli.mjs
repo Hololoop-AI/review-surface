@@ -7253,30 +7253,52 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     postArtifactMessage("review-surface:openPage", { href: path11 });
     return true;
   }
+  function pageStylesUseTarget(rules) {
+    for (const rule of rules || []) {
+      if (/:target(?![-\w])/.test(rule.selectorText || "")) return true;
+      if (rule.cssRules && pageStylesUseTarget(rule.cssRules)) return true;
+    }
+    return false;
+  }
+  function pageUsesTargetSelector() {
+    for (const sheet of document.styleSheets || []) {
+      let rules = null;
+      try {
+        rules = sheet.cssRules;
+      } catch {
+      }
+      if (pageStylesUseTarget(rules)) return true;
+    }
+    return false;
+  }
   function followInPageLink(event) {
-    if (event.defaultPrevented) return false;
-    if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return false;
+    if (event.defaultPrevented) return;
+    if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     const link = event.target?.closest?.("a");
-    if (!link || isReviewSurfaceUi(link)) return false;
-    if (link.hasAttribute?.("download") || (link.getAttribute("target") || "_self") !== "_self") return false;
+    if (!link || isReviewSurfaceUi(link)) return;
+    if (link.hasAttribute?.("download") || (link.getAttribute("target") || "_self") !== "_self") return;
     const href = link.getAttribute("href") || "";
-    if (!href.startsWith("#") || href.length < 2) return false;
+    if (!href.startsWith("#") || href.length < 2) return;
     let id = href.slice(1);
     try {
       id = decodeURIComponent(id);
     } catch {
     }
     const place = document.getElementById(id);
-    if (!place) return false;
+    if (!place || pageUsesTargetSelector()) return;
     event.preventDefault();
     const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
     place.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
+    const oldURL = window.location.href;
     try {
       window.history.replaceState(window.history.state, "", href);
     } catch {
+      return;
     }
-    return true;
+    const newURL = window.location.href;
+    if (newURL !== oldURL) window.dispatchEvent(new window.HashChangeEvent("hashchange", { oldURL, newURL }));
   }
+  window.addEventListener("click", followInPageLink);
   document.addEventListener(
     "click",
     (event) => {
@@ -7299,7 +7321,6 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
       }
       if (annotating && isNavigationLink(event.target) && activeCardIsEmpty()) closeCard();
       if (followReviewPageLink(event)) return;
-      if (followInPageLink(event)) return;
       if (!annotating || isNavigationLink(event.target)) return;
       event.preventDefault();
       event.stopPropagation();
