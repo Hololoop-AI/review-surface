@@ -493,9 +493,7 @@ function closeNoteEditor(save) {
  * @param {number} top the preview's top, in the page frame
  */
 function openNoteEditor(prompt, left, top) {
-  closeNoteEditor(true);
-  closePageChat();
-  if (!queueMenu.hidden) setMenuOpen(queueOpen, queueMenu, false);
+  closeFooterPanels();
   if (!noteEditor) {
     noteEditor = document.createElement("div");
     noteEditor.className = "note-editor";

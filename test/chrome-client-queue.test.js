@@ -956,6 +956,35 @@ test("the page's position hint for the note editor is kept inside the visible pa
   }
 });
 
+// Intent (1): floating windows behave consistently, one at a time. A marker's Edit is a click on
+// the SDK's own UI, which does not close an open chrome window by itself, so opening the editor
+// has to.
+test("opening the note editor closes every other floating window", async () => {
+  const chrome = await createChromeHarness();
+  chrome.sendFrameMessage({
+    type: "review-surface:queuePrompt",
+    prompt: { prompt: "Shorter", selector: "h1#title", tag: "h1", text: "Title" },
+  });
+  const edit = () =>
+    chrome.sendFrameMessage({
+      type: "review-surface:editQueued",
+      index: 0,
+      was: "Shorter",
+      rect: { left: 40, top: 60 },
+    });
+  for (const [button, menu] of [
+    ["moreButton", "moreMenu"],
+    ["notifyButton", "notifyMenu"],
+    ["queueOpen", "queueMenu"],
+  ]) {
+    chrome.element(button).onclick();
+    assert.equal(chrome.element(menu).hidden, false, `${menu} opens`);
+    edit();
+    assert.equal(chrome.element(menu).hidden, true, `${menu} closes when the editor opens`);
+    assert.equal(noteEditorShown(chrome), true);
+  }
+});
+
 test("a click outside the note editor saves the edit; a click inside it keeps editing", async () => {
   const { chrome, editor } = await openEditedNote();
   chrome.dispatchDocumentMousedown(editor.children[0]);
