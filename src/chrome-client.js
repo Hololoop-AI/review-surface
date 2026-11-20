@@ -3667,10 +3667,6 @@ document.addEventListener("keydown", (event) => {
     } else if (!threadsMenu.hidden) {
       setThreadsMenuOpen(false);
       threadsButton.focus();
-    } else if (!notifyMenu.hidden) {
-      setMenuOpen(notifyButton, notifyMenu, false);
-      renderNotifications();
-      notifyButton.focus();
     } else if (!threadModal.hidden) {
       minimizeThread();
     } else if (activeChat) {
@@ -3818,7 +3814,6 @@ function openLiveStream() {
   stream.addEventListener("layout-warnings", (event) => setLayoutWarnings(JSON.parse(event.data).warnings || []));
   stream.addEventListener("ended", () => markSessionEnded());
   stream.addEventListener("thread-linked", () => openThreadsStream());
-  stream.addEventListener("activity", () => scheduleNotificationsRefresh());
   // A reconnecting stream means this chrome may have missed updates while it was away.
   let checkedOutage = false;
   stream.addEventListener("open", () => {
@@ -4782,11 +4777,10 @@ function syncFooterPanel(force = false) {
 }
 // Every floating window behaves the same: a click anywhere outside it closes it, and a click in
 // the page that closes one does nothing else. That is This page's chat, Queued, and the bar's
-// menus (More, Notifications, the threads list) and the layout-issues drawer. Looked up by id,
+// menus (More, the threads list) and the layout-issues drawer. Looked up by id,
 // so this works whichever of them is declared further down the file.
 const POPOVER_MENUS = [
   ["moreButton", "moreMenu"],
-  ["notifyButton", "notifyMenu"],
   ["threadsButton", "threadsMenu"],
 ];
 function popoverMenuOpen() {
@@ -4817,7 +4811,6 @@ function closeFooterPanels() {
     const menu = document.getElementById(menuId);
     if (!button || !menu || menu.hidden) continue;
     setMenuOpen(button, menu, false);
-    if (menuId === "notifyMenu") renderNotifications();
   }
   closeWarningsDrawer();
   syncFooterPanel();
@@ -4836,123 +4829,6 @@ document.addEventListener("mousedown", (event) => {
     syncFooterPanel();
   }
 });
-
-// The bell: other pages that moved since you last opened it - a page that came back with a new
-// version, an agent reply, a new page. The server keeps no read state; the newest time you have
-// seen lives in localStorage, so it is one count across every page in this browser. The page's
-// own stream says when something moved; the list itself is fetched, so a hidden tab costs nothing.
-const notifyWrap = /** @type {HTMLDivElement} */ (document.getElementById("notifyWrap"));
-const notifyButton = /** @type {HTMLButtonElement} */ (document.getElementById("notifyButton"));
-const notifyCount = /** @type {HTMLSpanElement} */ (document.getElementById("notifyCount"));
-const notifyMenu = /** @type {HTMLDivElement} */ (document.getElementById("notifyMenu"));
-const notifyList = /** @type {HTMLDivElement} */ (document.getElementById("notifyList"));
-const notifyEmpty = /** @type {HTMLParagraphElement} */ (document.getElementById("notifyEmpty"));
-const NOTIFY_SEEN_KEY = "review-surface:notifications-seen-at";
-/** @type {any[]} */
-let notifications = [];
-let notifyTimer = /** @type {ReturnType<typeof setTimeout> | null} */ (null);
-
-function notificationsSeenAt() {
-  try {
-    return window.localStorage.getItem(NOTIFY_SEEN_KEY);
-  } catch {
-    return "";
-  }
-}
-
-/** @param {string} at */
-function markNotificationsSeen(at) {
-  try {
-    window.localStorage.setItem(NOTIFY_SEEN_KEY, at);
-  } catch {
-    // storage unavailable: the count simply forgets across reloads
-  }
-}
-
-/** @param {string} at */
-function relativeTime(at) {
-  const ms = Date.now() - Date.parse(at);
-  if (!Number.isFinite(ms)) return "";
-  const minutes = Math.round(ms / 60000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return minutes + " min ago";
-  const hours = Math.round(minutes / 60);
-  return hours < 24 ? hours + " h ago" : Math.round(hours / 24) + " d ago";
-}
-
-function renderNotifications() {
-  notifyWrap.hidden = embeddedThread;
-  const seen = notificationsSeenAt() || "";
-  const unread = notifications.filter((item) => item.at > seen);
-  notifyCount.hidden = unread.length === 0;
-  notifyCount.textContent = String(unread.length);
-  notifyButton.classList.toggle("has-unread", unread.length > 0);
-  notifyButton.setAttribute("aria-label", unread.length ? `Notifications, ${unread.length} new` : "Notifications");
-  notifyEmpty.hidden = notifications.length > 0;
-  notifyList.replaceChildren(
-    ...notifications.map((item) => {
-      const row = document.createElement("button");
-      row.type = "button";
-      row.className = "menu-item notify-item" + (item.at > seen ? " unread" : "");
-      row.setAttribute("role", "menuitem");
-      const title = document.createElement("span");
-      title.className = "thread-item-title";
-      title.textContent = item.title;
-      const meta = document.createElement("span");
-      meta.className = "thread-item-meta";
-      meta.textContent = item.label + " · " + relativeTime(item.at);
-      row.appendChild(title);
-      row.appendChild(meta);
-      row.onclick = () => location.assign(item.url);
-      return row;
-    }),
-  );
-}
-
-async function refreshNotifications() {
-  notifyTimer = null;
-  if (embeddedThread) return;
-  try {
-    const response = await fetch("/api/notifications?page=" + encodeURIComponent(key));
-    if (!response.ok) return;
-    notifications = (await response.json()).notifications || [];
-  } catch {
-    return;
-  }
-  // First visit in this browser: everything already logged is history, not news.
-  if (notificationsSeenAt() === null) markNotificationsSeen(notifications[0]?.at || "1970-01-01T00:00:00.000Z");
-  renderNotifications();
-}
-
-function scheduleNotificationsRefresh() {
-  if (!notifyTimer) notifyTimer = setTimeout(() => void refreshNotifications(), 400);
-}
-
-notifyButton.onclick = () => {
-  const open = notifyMenu.hidden;
-  closeMenus();
-  setThreadsMenuOpen(false);
-  setMenuOpen(notifyButton, notifyMenu, open);
-  if (open && notifications[0]) {
-    markNotificationsSeen(notifications[0].at);
-    // the rows keep their unread mark while the menu is open; the badge clears
-    notifyCount.hidden = true;
-    notifyButton.classList.remove("has-unread");
-  } else if (!open) {
-    renderNotifications();
-  }
-};
-document.addEventListener("mousedown", (event) => {
-  if (!notifyMenu.hidden && !notifyWrap.contains(/** @type {Node} */ (event.target))) {
-    setMenuOpen(notifyButton, notifyMenu, false);
-    renderNotifications();
-  }
-});
-document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) scheduleNotificationsRefresh();
-});
-renderNotifications();
-void refreshNotifications();
 
 applySheetState();
 render();
