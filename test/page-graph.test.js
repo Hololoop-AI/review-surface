@@ -496,68 +496,6 @@ test("the thread list carries every live thread, marked for this page, and conti
   }
 });
 
-// The bell (round 2): other pages that moved, one row each, thread pages and this page left out.
-test("the bell lists other pages that moved, and only to its own origin", async () => {
-  const { dir, server, base, post, page } = await served();
-  try {
-    const review = await page("review.html");
-    const other = await page("other.html");
-    const study = await page("study.html");
-    const reviewKey = (await (await post("/api/sessions", { file: review })).json()).key;
-    const otherKey = (await (await post("/api/sessions", { file: other })).json()).key;
-    const studyKey = (await (await post("/api/sessions", { file: study })).json()).key;
-    await post("/api/links", { type: "thread-of", from: study, to: review });
-    await post(`/api/${otherKey}/agent-reply`, { text: "Done." });
-    await post(`/api/${studyKey}/agent-reply`, { text: "A thread reply." });
-    const { notifications } = await (await fetch(`${base}/api/notifications?page=${reviewKey}`)).json();
-    assert.deepEqual(
-      notifications.map((row) => [row.key, row.label, row.title, row.url]),
-      [[otherKey, "Agent replied", "other.html", `/session/${otherKey}`]],
-    );
-    const crossOrigin = { headers: { origin: "http://evil.test" } };
-    assert.equal((await fetch(`${base}/api/notifications`, crossOrigin)).status, 403);
-  } finally {
-    await server.close();
-    await rm(dir, { recursive: true, force: true });
-  }
-});
-
-test("another page coming back pings this page's stream so the bell refetches", async () => {
-  const { dir, server, base, post, page } = await served();
-  const controller = new AbortController();
-  const readUntil = async (reader, pattern, state) => {
-    const decoder = new TextDecoder();
-    while (!pattern.test(state.buffer)) {
-      const { value, done } = await reader.read();
-      if (done) throw new Error("stream closed");
-      state.buffer += decoder.decode(value, { stream: true });
-    }
-  };
-  try {
-    const review = await page("review.html");
-    const other = await page("other.html");
-    const reviewKey = (await (await post("/api/sessions", { file: review })).json()).key;
-    const otherKey = (await (await post("/api/sessions", { file: other })).json()).key;
-    const pageStream = (await fetch(`${base}/events/${reviewKey}`, { signal: controller.signal })).body.getReader();
-    const logStream = (await fetch(`${base}/api/events`, { signal: controller.signal })).body.getReader();
-    const pageState = { buffer: "" };
-    await readUntil(pageStream, /^event: /m, pageState);
-
-    await post(`/api/${reviewKey}/agent-reply`, { text: "own news" });
-    await readUntil(logStream, new RegExp(`"type":"page\\.agent_reply","subject":"${reviewKey}"`), { buffer: "" });
-    await post(`/api/${reviewKey}/agent-reply`, { text: "own marker" });
-    await readUntil(pageStream, /own marker/, pageState);
-    assert.doesNotMatch(pageState.buffer, /^event: activity$/m, "its own reply is not a ping");
-
-    await post(`/api/${otherKey}/agent-reply`, { text: "Done." });
-    await readUntil(pageStream, /^event: activity$/m, pageState);
-  } finally {
-    controller.abort();
-    await server.close();
-    await rm(dir, { recursive: true, force: true });
-  }
-});
-
 test("linking a thread tells the page's own stream, so its chrome can open the thread list", async () => {
   const { dir, server, base, post, page } = await served();
   const controller = new AbortController();

@@ -49,8 +49,6 @@ async function createChromeHarness({
   notificationPermission = undefined,
   // What `GET /api/<key>/threads` answers at boot: the page's existing study threads.
   initialThreads = [],
-  // What `GET /api/notifications` answers, read on every request so a test can change it.
-  notificationRows = () => [],
   // Opt-in `window.innerWidth`: left off, the chat window keeps the CSS's own placement.
   viewportWidth = undefined,
 } = {}) {
@@ -63,7 +61,6 @@ async function createChromeHarness({
   const inlineWhiteboards = [];
   const eventSources = [];
   const localStore = new Map();
-  const notificationRequests = [];
   const sessionStreams = () => eventSources.filter((source) => !String(source.url).endsWith("/threads"));
   const windowListeners = new Map();
   const documentListeners = new Map();
@@ -268,7 +265,6 @@ async function createChromeHarness({
   element("warningsDrawer").hidden = true;
   // Shipped hidden by the markup, like the menus above.
   element("threadsMenu").hidden = true;
-  element("notifyMenu").hidden = true;
   element("chatPop").hidden = true;
   element("queueMenu").hidden = true;
   element("threadModal").hidden = true;
@@ -287,10 +283,6 @@ async function createChromeHarness({
         ok: true,
         json: async () => ({ chrome_load_token: "harness-chrome-refresh", artifact_revision: artifactRevision }),
       };
-    }
-    if (String(url).startsWith("/api/notifications")) {
-      notificationRequests.push(String(url));
-      return { ok: true, json: async () => ({ notifications: notificationRows() }) };
     }
     if (String(url) === `/api/${sessionData.key}/threads`) {
       return { ok: true, json: async () => ({ threads: initialThreads }) };
@@ -567,7 +559,6 @@ async function createChromeHarness({
       for (const { handler } of documentListeners.get("mousedown") || []) handler({ target });
     },
     runTimers,
-    notificationRequests,
     advanceClock(ms) {
       clockNow += ms;
     },
@@ -974,7 +965,6 @@ test("opening the note editor closes every other floating window", async () => {
     });
   for (const [button, menu] of [
     ["moreButton", "moreMenu"],
-    ["notifyButton", "notifyMenu"],
     ["queueOpen", "queueMenu"],
   ]) {
     chrome.element(button).onclick();
@@ -6533,82 +6523,6 @@ test("a side thread's chat opens above its tab; This page's chat keeps the fixed
   assert.equal(chrome.element("chatPop").style.right, "");
 });
 
-test("the bell counts other pages that moved, clears on open, and refetches when a page moves", async () => {
-  let rows = [
-    {
-      key: "p1",
-      type: "page.version",
-      label: "New version",
-      at: "2026-11-03T06:00:00.000Z",
-      title: "Runner design",
-      url: "/session/p1",
-    },
-  ];
-  const chrome = await createChromeHarness({ notificationRows: () => rows });
-  chrome.localStore.set("review-surface:notifications-seen-at", "2026-11-03T05:00:00.000Z");
-  await flushPromises();
-  await flushPromises();
-  // the boot fetch may have landed before the seen mark was set; ask again with it in place
-  chrome.eventSource().listeners.get("activity")({ data: "{}" });
-  chrome.runTimers(400);
-  await flushPromises();
-  await flushPromises();
-  assert.equal(chrome.notificationRequests[0], "/api/notifications?page=abc", "this page's own news is left out");
-  assert.equal(chrome.element("notifyWrap").hidden, false);
-  assert.equal(chrome.element("notifyCount").textContent, "1");
-  assert.equal(chrome.element("notifyList").children.length, 1);
-  assert.match(chrome.element("notifyList").children[0].children[1].textContent, /^New version · /);
-
-  chrome.element("notifyButton").onclick();
-  assert.equal(chrome.element("notifyMenu").hidden, false);
-  assert.equal(chrome.element("notifyCount").hidden, true, "opening it clears the count");
-  assert.equal(chrome.localStore.get("review-surface:notifications-seen-at"), "2026-11-03T06:00:00.000Z");
-  assert.match(chrome.element("notifyList").children[0].className, /\bunread\b/, "rows keep their mark while open");
-  // a click in the page closes it like a click anywhere else, and the seen rows lose their mark
-  chrome.sendFrameMessage({ type: "review-surface:closeFooterPanels" });
-  assert.equal(chrome.element("notifyMenu").hidden, true);
-  assert.doesNotMatch(chrome.element("notifyList").children[0].className, /\bunread\b/);
-
-  // another page comes back: the page's own stream says so, and the bell refetches
-  rows = [
-    {
-      key: "p2",
-      type: "page.agent_reply",
-      label: "Agent replied",
-      at: "2026-11-03T07:00:00.000Z",
-      title: "Living map",
-      url: "/session/p2",
-    },
-    ...rows,
-  ];
-  const before = chrome.notificationRequests.length;
-  chrome.eventSource().listeners.get("activity")({ data: "{}" });
-  chrome.runTimers(400);
-  await flushPromises();
-  await flushPromises();
-  assert.equal(chrome.notificationRequests.length, before + 1);
-  assert.equal(chrome.element("notifyCount").textContent, "1");
-});
-
-test("a first visit treats everything already logged as seen", async () => {
-  const chrome = await createChromeHarness({
-    notificationRows: () => [
-      {
-        key: "p1",
-        type: "page.version",
-        label: "New version",
-        at: "2026-11-01T06:00:00.000Z",
-        title: "Old",
-        url: "/session/p1",
-      },
-    ],
-  });
-  await flushPromises();
-  await flushPromises();
-  assert.equal(chrome.element("notifyCount").hidden, true);
-  assert.equal(chrome.localStore.get("review-surface:notifications-seen-at"), "2026-11-01T06:00:00.000Z");
-});
-
 // Round 3 (2026-11-03): "it doesn't need to be a page. It would be a message right? So footer ui."
 test("an agent's question waits in the footer unread, opens as a chat, and the reply can ask for speed", async () => {
   const sent = [];
@@ -6673,8 +6587,8 @@ test("an agent's question waits in the footer unread, opens as a chat, and the r
 });
 
 // Round 4 (2026-11-03): a host page - Cadre's fleet - shows under the same frame, loaded straight
-// from its own address, with the threads footer and the bell working as on any page.
-test("a host page skips the artifact load handshake but keeps the footer and the bell", async () => {
+// from its own address, with the threads footer working as on any page.
+test("a host page skips the artifact load handshake but keeps the footer", async () => {
   const chrome = await createChromeHarness({
     sessionData: { ...defaultSessionData, hostUrl: "/fleet", layoutGateEnabled: false },
     artifactSrc: "/fleet",
@@ -6685,7 +6599,6 @@ test("a host page skips the artifact load handshake but keeps the footer and the
   assert.equal(chrome.artifactBeginRequests.length, 0, "no handshake for the host's own page");
   assert.equal(chrome.element("threadsWrap").hidden, false);
   assert.equal(chrome.element("threadsOtherList").children.length, 1);
-  assert.equal(chrome.notificationRequests.length, 1, "the bell asks for news");
 });
 
 // Round 5 (2026-11-04). The driver: "the current page's chats should take priority on the footer."
