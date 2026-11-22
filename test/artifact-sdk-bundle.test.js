@@ -344,6 +344,19 @@ test("the served SDK bundle keeps the clicked element's own identity inside a ta
   assert.equal(message.prompt.target.columnLabel, "Database evidence");
 });
 
+test("an annotation's selector grows past five levels while the short one matches another element", () => {
+  // Two tables with the same shape: the five-level path fits both, and the first match would be
+  // the wrong table, so the selector keeps the level that tells them apart.
+  const ambiguous = "table > tbody > tr > td:nth-of-type(3) > code";
+  const sdk = bootSdk({ querySelectorAll: (selector) => (selector === ambiguous ? [{}, {}] : []) });
+  const { badge } = buildTable(sdk);
+
+  sdk.click(badge);
+  const message = sdk.queue("Rename this app");
+
+  assert.equal(message.prompt.selector, "body > " + ambiguous);
+});
+
 test("the annotation card names the cell it annotates when the cell itself is clicked", () => {
   const sdk = bootSdk();
   const { evidence } = buildTable(sdk);

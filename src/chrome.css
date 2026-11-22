@@ -2061,9 +2061,16 @@ body.host-page #annotation {
   padding: 8px 10px;
   border-bottom: var(--hairline-subtle);
 }
+/* What the note is on reads as a quote of the page, set apart from the note itself: smaller,
+   quieter, behind a thin bar (the usual mark for quoted text, as in mail and chat replies), and cut
+   to one line. The note below it is full size, in the body colour. */
 .queue-item-target {
   grid-column: 1 / -1;
+  margin-bottom: 4px;
+  padding-left: 8px;
+  border-left: 2px solid var(--border-strong);
   font-size: var(--text-xs);
+  line-height: 1.45;
   color: var(--fg-faint);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2071,6 +2078,7 @@ body.host-page #annotation {
 }
 .queue-item-text {
   font-size: var(--text-sm);
+  color: var(--fg);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -2092,22 +2100,82 @@ body.host-page #annotation {
   font: inherit;
   font-size: var(--text-sm);
 }
+/* the pair sits at the foot of its note, so it lines up the same whatever the note's length */
 .queue-item-edit,
 .queue-item-remove {
-  align-self: start;
-  padding: 2px 6px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 6px;
+  align-self: end;
+  margin-bottom: -2px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
   background: transparent;
+  color: var(--fg-faint);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease, background-color 0.12s ease;
+}
+.queue-item:hover .queue-item-edit,
+.queue-item:hover .queue-item-remove,
+.queue-item:focus-within .queue-item-edit,
+.queue-item:focus-within .queue-item-remove {
+  opacity: 1;
+}
+@media (hover: none) {
+  .queue-item-edit,
+  .queue-item-remove {
+    opacity: 1;
+  }
+}
+/* icons alone: no box on hover, only the colour changes; keyboard focus still gets its ring */
+.queue-item-edit:hover,
+.queue-item-edit:focus-visible {
+  color: var(--accent);
+}
+.queue-item-remove:hover,
+.queue-item-remove:focus-visible {
+  color: var(--danger);
+}
+.queue-item-remove {
+  margin-left: -6px;
+  margin-right: -3px;
+}
+.queue-item-removed .queue-item-text {
   color: var(--fg-dim);
+}
+.queue-item-countdown {
+  grid-column: 1 / -1;
+  height: 2px;
+  margin-top: 4px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+  transform-origin: left center;
+  animation: queue-undo-countdown linear forwards;
+}
+@keyframes queue-undo-countdown {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .queue-item-countdown { animation: none; opacity: 0.5; }
+}
+.queue-item-undo {
+  grid-column: 2 / -1;
+  align-self: start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
   font: inherit;
   font-size: var(--text-xs);
   cursor: pointer;
 }
-.queue-item-edit:hover,
-.queue-item-remove:hover {
-  border-color: var(--border-strong);
-  color: var(--fg);
+.queue-item-undo:hover,
+.queue-item-undo:focus-visible {
+  text-decoration: underline;
 }
 .queue-menu-actions {
   flex: 0 0 auto;
