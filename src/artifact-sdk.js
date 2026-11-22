@@ -840,9 +840,17 @@ export function createArtifactSdk(
   function selector(el) {
     if (!el || !el.tagName) return "";
 
+    // Short where it can be: five levels, and more only while the path still matches some other
+    // element too, since the first match of an ambiguous path is often an earlier block.
     const parts = [];
     let node = el;
-    while (node && node.nodeType === 1 && parts.length < 5) {
+    // at most 12 levels: each level past five costs a query over the whole page
+    while (
+      node &&
+      node.nodeType === 1 &&
+      parts.length < 12 &&
+      (parts.length < 5 || !selectorIsUnique(parts.join(" > ")))
+    ) {
       let part = node.tagName.toLowerCase();
       if (node.id) {
         part += "#" + CSS.escape(node.id);
@@ -860,6 +868,14 @@ export function createArtifactSdk(
     }
 
     return parts.join(" > ");
+  }
+
+  function selectorIsUnique(text) {
+    try {
+      return document.querySelectorAll(text).length <= 1;
+    } catch {
+      return true;
+    }
   }
 
   // `table` is opt-in because resolving a cell's row and column walks the whole table, while
@@ -1224,7 +1240,22 @@ export function createArtifactSdk(
   }
 
   function clearHighlight(el) {
-    if (el) el.style.outline = "";
+    if (!el) return;
+    el.style.outline = "";
+    // a pinned or edited note keeps its element outlined after the pointer passes over it
+    if (el === noteOutlined) highlightElement(el);
+  }
+
+  // The element of the note being read (its preview pinned) or edited is outlined, as it was
+  // while the note was written. One at a time; null clears it.
+  /** @type {Element | null} */
+  let noteOutlined = null;
+  function outlineNoteTarget(el) {
+    if (noteOutlined === el) return;
+    const was = noteOutlined;
+    noteOutlined = el instanceof Element ? el : null;
+    clearHighlight(was);
+    highlightElement(noteOutlined);
   }
 
   function clearTextHighlight() {
@@ -2462,7 +2493,7 @@ export function createArtifactSdk(
 
     shadow = host.attachShadow({ mode: "open" });
     const style = document.createElement("style");
-    style.textContent = `:host{all:initial;position:fixed;z-index:2147483647;left:0;top:0;color-scheme:dark;--ink-900:#0f1115;--ink-800:#11141a;--ink-700:#171a21;--ink-600:#1c212b;--steel-700:#2a2f3a;--steel-600:#303745;--steel-500:#3c4557;--steel-400:#8c96aa;--steel-300:#aeb6c6;--steel-200:#b9c0cf;--steel-100:#d8deea;--cream-50:#fffbf3;--cream-100:#f7f3ea;--cream-200:#e8e1cf;--brass-500:#f4c95d;--brass-400:#ffd877;--brass-ink:#17130a;--bg:var(--ink-900);--bg-panel:var(--ink-800);--bg-elevated:var(--ink-600);--fg:var(--cream-100);--fg-faint:var(--steel-300);--border:var(--steel-600);--accent:#f4c95d;--accent-hover:#ffd877;--font-sans:Geist,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--font-mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--radius-md:10px;--radius-xl:14px;--shadow-floating:0 20px 70px rgba(0,0,0,.35);font-family:var(--font-sans)}*{box-sizing:border-box}:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.review-surface-text-highlight{position:fixed;pointer-events:none;background:color-mix(in srgb,var(--accent) 28%,transparent);border-radius:2px;box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 45%,transparent)}.review-surface-annotation-card{position:fixed;width:min(320px,calc(100vw - 24px));padding:12px;border-radius:var(--radius-xl);background:var(--bg-panel);color:var(--fg);border:1px solid var(--accent);box-shadow:var(--shadow-floating);font:14px/1.4 var(--font-sans)}.review-surface-heading{font-weight:700;margin-bottom:6px}.review-surface-annotation-card textarea{width:100%;min-height:86px;resize:vertical;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg);color:var(--fg);padding:9px;font:inherit;font-family:var(--font-sans)}.review-surface-annotation-card textarea::placeholder{color:var(--fg-faint)}.review-surface-annotation-card .review-surface-hint{margin-top:6px;font-size:11px;color:var(--fg-faint)}.review-surface-annotation-card .review-surface-hint-alert{color:var(--danger-fg,#ff9d7a);font-weight:700}.review-surface-annotation-card .review-surface-row{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}.review-surface-annotation-card button{border:0;border-radius:var(--radius-md);padding:8px 10px;font-family:var(--font-sans);font-size:13px;font-weight:700;cursor:pointer}.review-surface-annotation-card button:active{opacity:.85}.review-surface-annotation-card .review-surface-send{background:var(--accent);color:var(--brass-ink)}.review-surface-annotation-card .review-surface-send:hover{background:var(--accent-hover)}.review-surface-annotation-card .review-surface-cancel{background:var(--steel-700);color:var(--fg)}.review-surface-annotation-card .review-surface-action{background:var(--steel-700);color:var(--accent)}.review-surface-annotation-card .review-surface-action:hover{background:var(--steel-600)}.review-surface-annotation-card.is-dropping{outline:2px dashed var(--accent);outline-offset:3px}.review-surface-attachments{display:flex;flex-direction:column;gap:6px;margin-top:8px;max-height:176px;overflow-y:auto}.review-surface-attachment-chip{display:flex;align-items:center;gap:8px;padding:6px;border-radius:var(--radius-md);background:var(--bg);border:1px solid var(--border)}.review-surface-attachment-chip.is-error{border-color:var(--danger,#e0623d)}.review-surface-attachment-thumb{width:32px;height:32px;border-radius:6px;object-fit:cover;background:var(--ink-700);flex:0 0 auto}.review-surface-attachment-thumb-empty{display:inline-block}.review-surface-attachment-body{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1 1 auto}.review-surface-attachment-name{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.review-surface-attachment-status{font-size:11px;color:var(--fg-faint)}.review-surface-attachment-status-error{color:var(--danger-fg,#ff9d7a)}.review-surface-attachment-retry{flex:0 0 auto;padding:4px 8px;font-size:11px;font-weight:700;border-radius:8px;background:var(--steel-700);color:var(--fg);cursor:pointer;border:0}.review-surface-attachment-remove{flex:0 0 auto;display:flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0!important;border-radius:50%;background:transparent;color:color-mix(in srgb,var(--fg) 85%,transparent);cursor:pointer;border:0}.review-surface-attachment-remove:hover{background:color-mix(in srgb,var(--fg) 14%,transparent);color:var(--fg)}.review-surface-attach-row{margin-top:8px}.review-surface-attach{display:inline-flex;align-items:center;gap:6px;padding:6px 9px!important;background:var(--steel-700)!important;color:var(--fg)!important;font-size:12px!important}.review-surface-attach:hover{background:var(--steel-600)!important}.review-surface-reveal-marker{position:fixed;pointer-events:none;border:2px solid var(--accent);border-radius:4px;box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 22%,transparent);animation:review-surface-reveal-pulse 2.4s var(--ease,ease-out) forwards}@keyframes review-surface-reveal-pulse{0%{opacity:0}12%{opacity:1}70%{opacity:1}100%{opacity:0}}.review-surface-image-expand{position:fixed;width:32px;height:32px;display:flex;align-items:center;justify-content:center;padding:0;border:1px solid var(--border);border-radius:var(--radius-md);background:color-mix(in srgb,var(--bg-panel) 88%,transparent);color:var(--fg);cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.35)}.review-surface-image-expand:hover{color:var(--accent);border-color:var(--accent)}.review-surface-image-expand[hidden],.review-surface-lightbox[hidden]{display:none}.review-surface-lightbox{position:fixed;left:0;top:0;width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;padding:2vmin;background:rgba(0,0,0,.86);cursor:zoom-out;overscroll-behavior:contain;touch-action:pinch-zoom}.review-surface-lightbox img{width:100%;height:100%;object-fit:contain;border-radius:4px;box-shadow:var(--shadow-floating)}.review-surface-annotation-card.is-nudged{animation:review-surface-nudge .32s ease-out}@keyframes review-surface-nudge{0%,100%{transform:translateX(0)}25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}.review-surface-note-marker{position:absolute;width:14px;height:14px;padding:0;display:flex;align-items:center;justify-content:center;border:0;background:transparent;color:var(--accent);cursor:pointer;filter:drop-shadow(0 1px 2px rgba(0,0,0,.6));opacity:.9}.review-surface-note-marker:hover,.review-surface-note-marker[aria-expanded=true]{opacity:1;transform:scale(1.15)}.review-surface-note-preview{position:fixed;width:min(300px,calc(100vw - 24px));max-height:min(320px,calc(100vh - 24px));overflow:auto;padding:8px;border-radius:var(--radius-md);background:var(--bg-panel);color:var(--fg);border:1px solid var(--accent);box-shadow:var(--shadow-floating);font:13px/1.4 var(--font-sans)}.review-surface-note-preview[hidden],.review-surface-note-marker[hidden]{display:none}.review-surface-note-row{display:grid;grid-template-columns:1fr auto;gap:4px 8px;align-items:start;padding:4px 2px}.review-surface-note-row+.review-surface-note-row{border-top:1px solid var(--border)}.review-surface-note-text{white-space:pre-wrap;overflow-wrap:anywhere}.review-surface-note-row button{border:0;border-radius:6px;padding:3px 7px;background:var(--steel-700);color:var(--fg);font:600 11px var(--font-sans);cursor:pointer}`;
+    style.textContent = `:host{all:initial;position:fixed;z-index:2147483647;left:0;top:0;color-scheme:dark;--ink-900:#0f1115;--ink-800:#11141a;--ink-700:#171a21;--ink-600:#1c212b;--steel-700:#2a2f3a;--steel-600:#303745;--steel-500:#3c4557;--steel-400:#8c96aa;--steel-300:#aeb6c6;--steel-200:#b9c0cf;--steel-100:#d8deea;--cream-50:#fffbf3;--cream-100:#f7f3ea;--cream-200:#e8e1cf;--brass-500:#f4c95d;--brass-400:#ffd877;--brass-ink:#17130a;--bg:var(--ink-900);--bg-panel:var(--ink-800);--bg-elevated:var(--ink-600);--fg:var(--cream-100);--fg-faint:var(--steel-300);--border:var(--steel-600);--accent:#f4c95d;--accent-hover:#ffd877;--font-sans:Geist,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--font-mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--radius-md:10px;--radius-xl:14px;--shadow-floating:0 20px 70px rgba(0,0,0,.35);font-family:var(--font-sans)}*{box-sizing:border-box}:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.review-surface-text-highlight{position:fixed;pointer-events:none;background:color-mix(in srgb,var(--accent) 28%,transparent);border-radius:2px;box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 45%,transparent)}.review-surface-annotation-card{position:fixed;width:min(320px,calc(100vw - 24px));padding:12px;border-radius:var(--radius-xl);background:var(--bg-panel);color:var(--fg);border:1px solid var(--accent);box-shadow:var(--shadow-floating);font:14px/1.4 var(--font-sans)}.review-surface-heading{font-weight:700;margin-bottom:6px}.review-surface-annotation-card textarea{width:100%;min-height:86px;resize:vertical;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg);color:var(--fg);padding:9px;font:inherit;font-family:var(--font-sans)}.review-surface-annotation-card textarea::placeholder{color:var(--fg-faint)}.review-surface-annotation-card .review-surface-hint{margin-top:6px;font-size:11px;color:var(--fg-faint)}.review-surface-annotation-card .review-surface-hint-alert{color:var(--danger-fg,#ff9d7a);font-weight:700}.review-surface-annotation-card .review-surface-row{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}.review-surface-annotation-card button{border:0;border-radius:var(--radius-md);padding:8px 10px;font-family:var(--font-sans);font-size:13px;font-weight:700;cursor:pointer}.review-surface-annotation-card button:active{opacity:.85}.review-surface-annotation-card .review-surface-send{background:var(--accent);color:var(--brass-ink)}.review-surface-annotation-card .review-surface-send:hover{background:var(--accent-hover)}.review-surface-annotation-card .review-surface-cancel{background:var(--steel-700);color:var(--fg)}.review-surface-annotation-card .review-surface-action{background:var(--steel-700);color:var(--accent)}.review-surface-annotation-card .review-surface-action:hover{background:var(--steel-600)}.review-surface-annotation-card.is-dropping{outline:2px dashed var(--accent);outline-offset:3px}.review-surface-attachments{display:flex;flex-direction:column;gap:6px;margin-top:8px;max-height:176px;overflow-y:auto}.review-surface-attachment-chip{display:flex;align-items:center;gap:8px;padding:6px;border-radius:var(--radius-md);background:var(--bg);border:1px solid var(--border)}.review-surface-attachment-chip.is-error{border-color:var(--danger,#e0623d)}.review-surface-attachment-thumb{width:32px;height:32px;border-radius:6px;object-fit:cover;background:var(--ink-700);flex:0 0 auto}.review-surface-attachment-thumb-empty{display:inline-block}.review-surface-attachment-body{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1 1 auto}.review-surface-attachment-name{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.review-surface-attachment-status{font-size:11px;color:var(--fg-faint)}.review-surface-attachment-status-error{color:var(--danger-fg,#ff9d7a)}.review-surface-attachment-retry{flex:0 0 auto;padding:4px 8px;font-size:11px;font-weight:700;border-radius:8px;background:var(--steel-700);color:var(--fg);cursor:pointer;border:0}.review-surface-attachment-remove{flex:0 0 auto;display:flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0!important;border-radius:50%;background:transparent;color:color-mix(in srgb,var(--fg) 85%,transparent);cursor:pointer;border:0}.review-surface-attachment-remove:hover{background:color-mix(in srgb,var(--fg) 14%,transparent);color:var(--fg)}.review-surface-attach-row{margin-top:8px}.review-surface-attach{display:inline-flex;align-items:center;gap:6px;padding:6px 9px!important;background:var(--steel-700)!important;color:var(--fg)!important;font-size:12px!important}.review-surface-attach:hover{background:var(--steel-600)!important}.review-surface-reveal-marker{position:fixed;pointer-events:none;border:2px solid var(--accent);border-radius:4px;box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 22%,transparent);animation:review-surface-reveal-pulse 2.4s var(--ease,ease-out) forwards}@keyframes review-surface-reveal-pulse{0%{opacity:0}12%{opacity:1}70%{opacity:1}100%{opacity:0}}.review-surface-image-expand{position:fixed;width:32px;height:32px;display:flex;align-items:center;justify-content:center;padding:0;border:1px solid var(--border);border-radius:var(--radius-md);background:color-mix(in srgb,var(--bg-panel) 88%,transparent);color:var(--fg);cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.35)}.review-surface-image-expand:hover{color:var(--accent);border-color:var(--accent)}.review-surface-image-expand[hidden],.review-surface-lightbox[hidden]{display:none}.review-surface-lightbox{position:fixed;left:0;top:0;width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;padding:2vmin;background:rgba(0,0,0,.86);cursor:zoom-out;overscroll-behavior:contain;touch-action:pinch-zoom}.review-surface-lightbox img{width:100%;height:100%;object-fit:contain;border-radius:4px;box-shadow:var(--shadow-floating)}.review-surface-annotation-card.is-nudged{animation:review-surface-nudge .32s ease-out}@keyframes review-surface-nudge{0%,100%{transform:translateX(0)}25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}.review-surface-note-marker{position:absolute;width:14px;height:14px;padding:0;display:flex;align-items:center;justify-content:center;border:0;background:transparent;color:var(--accent);cursor:pointer;filter:drop-shadow(0 1px 2px rgba(0,0,0,.6));opacity:.9}.review-surface-note-marker:hover,.review-surface-note-marker[aria-expanded=true]{opacity:1;transform:scale(1.15)}.review-surface-note-preview{position:fixed;width:min(300px,calc(100vw - 24px));max-height:min(320px,calc(100vh - 24px));overflow:auto;padding:8px;border-radius:var(--radius-md);background:var(--bg-panel);color:var(--fg);border:1px solid var(--accent);box-shadow:var(--shadow-floating);font:13px/1.4 var(--font-sans)}.review-surface-note-preview[hidden],.review-surface-note-marker[hidden]{display:none}.review-surface-note-row{display:block;padding:4px 2px}.review-surface-note-row+.review-surface-note-row{border-top:1px solid var(--border)}.review-surface-note-text{white-space:pre-wrap;overflow-wrap:anywhere}.review-surface-note-row{position:relative;padding-right:22px;cursor:pointer;border-radius:6px}.review-surface-note-row:hover{background:color-mix(in srgb,var(--fg) 6%,transparent)}.review-surface-note-row .review-surface-note-edit{position:absolute;top:3px;right:0;width:20px;height:20px;display:grid;place-items:center;border:0;border-radius:5px;padding:0;background:transparent;color:var(--fg-faint);cursor:pointer}.review-surface-note-row .review-surface-note-edit:hover,.review-surface-note-row .review-surface-note-edit:focus-visible{background:var(--steel-700);color:var(--accent)}`;
     // The host's theme (createSdkJs's hostThemeCss) comes last so its custom properties win.
     style.textContent += String(options.hostThemeCss || "");
     shadow.appendChild(style);
@@ -2825,6 +2856,8 @@ export function createArtifactSdk(
     }
     if (msg.type === "review-surface:restoreReviewState") restoreReviewState(msg.state);
     if (msg.type === "review-surface:revealElement") revealElement(msg.selector);
+    if (msg.type === "review-surface:outlineElement")
+      outlineNoteTarget(msg.selector ? safeQuerySelector(msg.selector) : null);
     if (msg.type === "review-surface:annotationMarkers") setNoteMarkers(msg.markers);
     if (msg.type === "review-surface:footerPanel") footerPanelOpen = msg.open === true;
     if (msg.type === "review-surface:visibleArea") {
@@ -2835,11 +2868,12 @@ export function createArtifactSdk(
   });
 
   // Queued notes, drawn where they were written: the chrome owns the queue and sends its notes'
-  // targets here (review-surface:annotationMarkers); each annotated element gets a small numbered
-  // marker at its top-right corner. Pointing at a marker previews its notes; clicking pins the
-  // preview, whose Edit asks the chrome to open that note in its own editor
-  // (review-surface:editQueued); the chrome owns the queue and the editing. Markers live in the shadow root, so a click on one never
-  // reaches the annotation handlers.
+  // targets here (review-surface:annotationMarkers); each annotated element gets a small outlined
+  // speech-bubble marker at its top-right corner (no number: how many notes sit there is in its
+  // label and its preview). Pointing at a marker previews its notes; clicking pins the preview.
+  // Each note's pencil, in the top-right corner of its row, asks the chrome to open that note in
+  // its own editor (review-surface:editQueued); the chrome owns the queue and the editing.
+  // Markers live in the shadow root, so a click on one never reaches the annotation handlers.
   let noteMarkers = [];
   let markerEls = [];
   /** @type {WeakMap<Element, { target: Element, selector: string }>} */
@@ -2915,6 +2949,7 @@ export function createArtifactSdk(
         if (previewPinned && previewFor === selectorText) return closeNotePreview();
         previewPinned = true;
         showNotePreview(marker, notes);
+        outlineNoteTarget(target);
         marker.setAttribute("aria-expanded", "true");
       });
       root.appendChild(marker);
@@ -3000,16 +3035,31 @@ export function createArtifactSdk(
     text.textContent = note.text.slice(0, 2000) || "(an image)";
     const edit = document.createElement("button");
     edit.type = "button";
-    edit.textContent = "Edit";
+    // a small pencil in the row's top-right corner, where a card's edit action is expected
+    edit.className = "review-surface-note-edit";
+    edit.setAttribute("aria-label", "Edit this note");
+    edit.title = "Edit";
+    // the same pencil as the chrome's Queued list (QUEUE_ICON_EDIT): keep the two alike
+    edit.innerHTML =
+      '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21l1-4.5L15.5 5a2.1 2.1 0 0 1 3 3L7 19.5 3 21z"/><path d="M13.5 7l3 3"/></svg>';
     // The text is edited by the chrome, never here: this page is untrusted, so it may ask the
     // chrome to open a note for editing but cannot change one itself. It says where the preview
     // was, so the chrome's editor opens right there, over the page.
-    edit.addEventListener("click", (event) => {
+    const openEditor = (event) => {
       event.stopPropagation();
       const box = notePreview?.getBoundingClientRect?.();
       const rect = box ? { left: box.left, top: box.top } : null;
       closeNotePreview();
       postArtifactMessage("review-surface:editQueued", { index: note.index, was: note.text, rect });
+    };
+    edit.addEventListener("click", openEditor);
+    // Clicking the note itself edits it too, unless the click ended a text selection: someone
+    // selecting words to copy them is not asking to edit.
+    row.addEventListener("click", (event) => {
+      // the preview sits in a shadow root, whose selection Chromium reports only on the root
+      const inPreview = String(/** @type {any} */ (shadow)?.getSelection?.() || "").trim();
+      if (inPreview || String(window.getSelection?.() || "").trim()) return;
+      openEditor(event);
     });
     row.append(text, edit);
     return row;
@@ -3027,6 +3077,7 @@ export function createArtifactSdk(
   function closeNotePreview() {
     previewPinned = false;
     previewFor = null;
+    outlineNoteTarget(null);
     if (notePreview) notePreview.hidden = true;
     for (const marker of markerEls) marker.setAttribute("aria-expanded", "false");
   }
@@ -3060,14 +3111,25 @@ export function createArtifactSdk(
     target.scrollIntoView({ block: "center", inline: "center", behavior: "smooth" });
     const root = ensureShadow();
     for (const el of [...root.querySelectorAll(".review-surface-reveal-marker")]) el.remove();
-    const rect = target.getBoundingClientRect();
     const marker = document.createElement("div");
     marker.className = "review-surface-reveal-marker";
-    marker.style.left = rect.left + "px";
-    marker.style.top = rect.top + "px";
-    marker.style.width = Math.max(rect.width, 4) + "px";
-    marker.style.height = Math.max(rect.height, 4) + "px";
+    // The scroll is smooth, so the element is still moving when the box appears: the box is
+    // placed again every frame until it fades, or it is left where the element started.
+    const place = () => {
+      const rect = target.getBoundingClientRect();
+      marker.style.left = rect.left + "px";
+      marker.style.top = rect.top + "px";
+      marker.style.width = Math.max(rect.width, 4) + "px";
+      marker.style.height = Math.max(rect.height, 4) + "px";
+    };
+    place();
     root.appendChild(marker);
+    const follow = () => {
+      if (!marker.isConnected) return;
+      place();
+      window.requestAnimationFrame(follow);
+    };
+    if (typeof window.requestAnimationFrame === "function") window.requestAnimationFrame(follow);
     window.setTimeout(() => marker.remove(), 2400);
   }
 

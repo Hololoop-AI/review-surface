@@ -821,6 +821,64 @@ test("queued notes become markers in the page, whose Edit opens the note here, a
   );
 });
 
+test("while a note is edited, here or in Queued, the page outlines its element, and the outline goes when editing ends", async () => {
+  const chrome = await createChromeHarness();
+  chrome.sendFrameMessage({
+    type: "review-surface:queuePrompt",
+    prompt: { prompt: "Shorter", selector: "h1#title", tag: "h1", text: "Title" },
+  });
+  const outlines = () =>
+    chrome.postedToFrame.filter((m) => m.type === "review-surface:outlineElement").map((m) => m.selector);
+
+  chrome.sendFrameMessage({ type: "review-surface:editQueued", index: 0, was: "Shorter", rect: { left: 40, top: 60 } });
+  assert.deepEqual(outlines(), ["h1#title"]);
+  noteEditorOf(chrome).children[0].dispatch("keydown", { key: "Escape", preventDefault() {}, stopPropagation() {} });
+  assert.deepEqual(outlines(), ["h1#title", ""]);
+
+  chrome.element("queueOpen").click();
+  const row = chrome.element("queueList").children[0];
+  row.querySelector(".queue-item-edit").onclick({ stopPropagation() {} });
+  assert.deepEqual(outlines().slice(2), ["h1#title"]);
+  row
+    .querySelector(".queue-item-input")
+    .dispatch("keydown", { key: "Escape", preventDefault() {}, stopPropagation() {} });
+  assert.deepEqual(outlines().slice(2), ["h1#title", ""]);
+});
+
+test("a click on a note's row while it is being edited does not send the page scrolling to it", async () => {
+  const chrome = await createChromeHarness();
+  chrome.sendFrameMessage({
+    type: "review-surface:queuePrompt",
+    prompt: { prompt: "Shorter", selector: "h1#title", tag: "h1", text: "Title" },
+  });
+  chrome.element("queueOpen").click();
+  const row = chrome.element("queueList").children[0];
+  row.querySelector(".queue-item-edit").onclick({ stopPropagation() {} });
+  const reveals = () => chrome.postedToFrame.filter((m) => m.type === "review-surface:revealElement").length;
+  const before = reveals();
+  row.onclick({ target: null });
+  assert.equal(reveals(), before, "no reveal while the note's editor is open");
+});
+
+test("pressing Edit again on the note being edited saves it and closes the editor", async () => {
+  const chrome = await createChromeHarness();
+  chrome.sendFrameMessage({
+    type: "review-surface:queuePrompt",
+    prompt: { prompt: "Shorter", selector: "h1#title", tag: "h1", text: "Title" },
+  });
+  chrome.element("queueOpen").click();
+  const row = chrome.element("queueList").children[0];
+  row.querySelector(".queue-item-edit").onclick({ stopPropagation() {} });
+  row.querySelector(".queue-item-input").value = "Much shorter";
+  row.querySelector(".queue-item-edit").onclick({ stopPropagation() {} });
+  assert.equal(chrome.queued()[0].prompt, "Much shorter", "the edit is saved");
+  assert.equal(
+    chrome.element("queueList").children[0].querySelector(".queue-item-input"),
+    null,
+    "the editor is closed",
+  );
+});
+
 test("a page's Edit ask opens only the note it names, and a stale ask opens nothing", async () => {
   const chrome = await createChromeHarness();
   for (const prompt of ["First", "Second"]) {
@@ -6734,6 +6792,26 @@ test("the footer shows the queue with a one-click Send and a drop-up to check an
     ["Fix the header"],
   );
   assert.equal(chrome.element("queueCount").textContent, "1");
+  // a removal is undone in the note's place, not confirmed first
+  const undoRow = chrome.element("queueList").children[1];
+  assert.equal(undoRow.className, "queue-item queue-item-removed");
+  undoRow.children.find((child) => child.className === "queue-item-undo").onclick({ stopPropagation() {} });
+  assert.deepEqual(
+    chrome.queued().map((prompt) => prompt.prompt),
+    ["Fix the header", "Shorter intro"],
+  );
+  chrome
+    .element("queueList")
+    .children[1].children.find((child) => child.className === "queue-item-remove")
+    .onclick({ stopPropagation() {} });
+  assert.equal(chrome.element("queueCount").textContent, "1");
+  // closing the Queued window settles the removal: no Undo when it opens again
+  chrome.element("queueOpen").onclick();
+  assert.equal(chrome.element("queueMenu").hidden, true);
+  chrome.element("queueOpen").onclick();
+  const reopened = chrome.element("queueList").children;
+  assert.equal(reopened.length, 1);
+  assert.ok(!String(reopened[0].className).includes("queue-item-removed"));
 
   chrome.element("queueSend").onclick();
   assert.equal(chrome.element("queueMenu").hidden, true);
@@ -7270,4 +7348,25 @@ test("the ⋮ menu's Send page and end is held while the sidebar has an unsent m
   assert.equal(chrome.element("sendHint").hidden, false, "the sidebar says why");
   assert.match(chrome.element("sendHint").textContent, /first/i);
   assert.equal(chrome.element("chatInput").value, "Typed in the sidebar");
+});
+
+test("the Queued window's own Send is disabled while only a removed note's Undo is left", async () => {
+  const chrome = await createChromeHarness({
+    storedQueue: [{ uid: "", prompt: "Fix the header", selector: "h1", tag: "element", text: "Header" }],
+  });
+  await flushPromises();
+  chrome.element("queueOpen").onclick();
+  assert.equal(chrome.element("queueMenuSend").disabled, false, "one note queued: it can be sent");
+
+  const row = chrome.element("queueList").children[0];
+  row.children.find((child) => child.className === "queue-item-remove").onclick({ stopPropagation() {} });
+  assert.deepEqual(chrome.queued(), []);
+  assert.equal(chrome.element("queueMenu").hidden, false, "the window stays open for the Undo");
+  assert.equal(chrome.element("queueSend").disabled, true);
+  assert.equal(chrome.element("queueMenuSend").disabled, true, "nothing queued: nothing to send");
+
+  const undoRow = chrome.element("queueList").children[0];
+  undoRow.children.find((child) => child.className === "queue-item-undo").onclick({ stopPropagation() {} });
+  assert.equal(chrome.queued().length, 1);
+  assert.equal(chrome.element("queueMenuSend").disabled, false, "the restored note can be sent again");
 });
