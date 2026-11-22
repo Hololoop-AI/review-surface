@@ -51,6 +51,9 @@ async function createChromeHarness({
   initialThreads = [],
   // Opt-in `window.innerWidth`: left off, the chat window keeps the CSS's own placement.
   viewportWidth = undefined,
+  // Opt-in framing window: the chrome is inside a host's iframe, so `window.parent` is the host,
+  // which records what the chrome posts to it. Left off, the chrome is a top-level page.
+  framed = false,
 } = {}) {
   const source = await readFile(sourceUrl, "utf8");
   // Seed sessionStorage before the client boots, to model a tab whose queue was
@@ -268,6 +271,8 @@ async function createChromeHarness({
   element("chatPop").hidden = true;
   element("queueMenu").hidden = true;
   element("threadModal").hidden = true;
+  element("hostBell").hidden = true;
+  element("hostBellCount").hidden = true;
   const whiteboardFrame = element("whiteboardFrame");
   whiteboardFrame.contentWindow = {
     postMessage(message) {
@@ -399,6 +404,13 @@ async function createChromeHarness({
     },
   };
   if (viewportWidth) context.window.innerWidth = viewportWidth;
+  const hostPosted = [];
+  const hostWindow = {
+    postMessage(message) {
+      hostPosted.push(message);
+    },
+  };
+  if (framed) /** @type {any} */ (context.window).parent = hostWindow;
   const notifications = [];
   if (notificationPermission) {
     context.window.Notification = class FakeNotification {
@@ -503,6 +515,11 @@ async function createChromeHarness({
       // a harness that patches it in silently passes even when the real send omits
       // the token (that is exactly how the token-less attachment upload shipped).
       for (const handler of handlers) handler({ source: frame.contentWindow, data });
+    },
+    hostPosted,
+    // A message from the window that frames the chrome (or, with `source`, from another window).
+    sendHostMessage(data, source = hostWindow) {
+      for (const handler of windowListeners.get("message") || []) handler({ source, data });
     },
     sendWhiteboardMessage(data) {
       const handlers = windowListeners.get("message") || [];
@@ -7369,4 +7386,82 @@ test("the Queued window's own Send is disabled while only a removed note's Undo 
   undoRow.children.find((child) => child.className === "queue-item-undo").onclick({ stopPropagation() {} });
   assert.equal(chrome.queued().length, 1);
   assert.equal(chrome.element("queueMenuSend").disabled, false, "the restored note can be sent again");
+});
+
+// The bell-slot messages: README, "Framing hosts", owns them; Cadre's web/src/ui/View.test.tsx pins
+// the same literals from the host's side.
+test("a framed chrome offers its bar's bell slot to the host, and shows the bell only when the host answers", async () => {
+  const chrome = await createChromeHarness({ framed: true });
+  assert.equal(JSON.stringify(chrome.hostPosted), JSON.stringify([{ type: "review-surface:barHello" }]));
+  assert.equal(chrome.element("hostBell").hidden, true);
+  // state before the answer is not heard
+  chrome.sendHostMessage({ type: "review-surface-host:bellState", count: 3 });
+  assert.equal(chrome.element("hostBellCount").textContent, "");
+  chrome.sendHostMessage({ type: "review-surface-host:carryBell" });
+  assert.equal(chrome.element("hostBell").hidden, false);
+});
+
+test("the host's bell shows the host's count, its failed-run colour and whether its panel is open", async () => {
+  const chrome = await createChromeHarness({ framed: true });
+  chrome.sendHostMessage({ type: "review-surface-host:carryBell" });
+  chrome.sendHostMessage({
+    type: "review-surface-host:bellState",
+    count: 2,
+    problem: true,
+    open: false,
+    label: "Notifications, 2 new, 1 failed",
+  });
+  const bell = chrome.element("hostBell");
+  assert.equal(chrome.element("hostBellCount").hidden, false);
+  assert.equal(chrome.element("hostBellCount").textContent, "2");
+  assert.equal(bell.classList.contains("has-unread"), true);
+  assert.equal(bell.classList.contains("has-problem"), true);
+  assert.equal(bell["aria-label"], "Notifications, 2 new, 1 failed");
+  chrome.sendHostMessage({ type: "review-surface-host:bellState", count: 0, open: true });
+  assert.equal(chrome.element("hostBellCount").hidden, true);
+  assert.equal(bell.classList.contains("has-unread"), false);
+  assert.equal(bell["aria-expanded"], "true");
+});
+
+test("a click on the host's bell tells the host where it is and closes the page's own popovers", async () => {
+  const chrome = await createChromeHarness({ framed: true });
+  chrome.sendHostMessage({ type: "review-surface-host:carryBell" });
+  chrome.element("hostBell").getBoundingClientRect = () => ({ top: 11, right: 1288, bottom: 45, left: 1254 });
+  chrome.element("moreButton").onclick();
+  assert.equal(chrome.element("moreMenu").hidden, false);
+  chrome.element("hostBell").onclick();
+  assert.equal(chrome.element("moreMenu").hidden, true);
+  assert.equal(
+    JSON.stringify(chrome.hostPosted.at(-1)),
+    JSON.stringify({ type: "review-surface:bellClick", rect: { top: 11, right: 1288, bottom: 45, left: 1254 } }),
+  );
+});
+
+test("Escape in the page closes the host's open panel, and only while it is open", async () => {
+  const chrome = await createChromeHarness({ framed: true });
+  chrome.sendHostMessage({ type: "review-surface-host:carryBell" });
+  const before = chrome.hostPosted.length;
+  chrome.dispatchDocumentKeydown({ key: "Escape" });
+  assert.equal(chrome.hostPosted.length, before);
+  chrome.sendHostMessage({ type: "review-surface-host:bellState", count: 0, open: true });
+  chrome.dispatchDocumentKeydown({ key: "Escape" });
+  assert.equal(JSON.stringify(chrome.hostPosted.at(-1)), JSON.stringify({ type: "review-surface:bellClose" }));
+});
+
+test("only the framing window is heard as the host, and an unframed page offers nothing", async () => {
+  const chrome = await createChromeHarness({ framed: true });
+  const foreign = chrome.createForeignWindow();
+  chrome.sendHostMessage({ type: "review-surface-host:carryBell" }, foreign.source);
+  chrome.sendHostMessage({ type: "review-surface-host:carryBell" }, chrome.frame.contentWindow);
+  assert.equal(chrome.element("hostBell").hidden, true);
+  const alone = await createChromeHarness();
+  assert.equal(alone.hostPosted.length, 0);
+  assert.equal(alone.element("hostBell").hidden, true);
+});
+
+test("the host's bell is named Notifications when the host sends no label", async () => {
+  const chrome = await createChromeHarness({ framed: true });
+  chrome.sendHostMessage({ type: "review-surface-host:carryBell" });
+  chrome.sendHostMessage({ type: "review-surface-host:bellState", count: 1 });
+  assert.equal(chrome.element("hostBell")["aria-label"], "Notifications");
 });
