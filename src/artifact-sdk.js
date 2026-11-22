@@ -844,7 +844,13 @@ export function createArtifactSdk(
     // element too, since the first match of an ambiguous path is often an earlier block.
     const parts = [];
     let node = el;
-    while (node && node.nodeType === 1 && (parts.length < 5 || !selectorIsUnique(parts.join(" > ")))) {
+    // at most 12 levels: each level past five costs a query over the whole page
+    while (
+      node &&
+      node.nodeType === 1 &&
+      parts.length < 12 &&
+      (parts.length < 5 || !selectorIsUnique(parts.join(" > ")))
+    ) {
       let part = node.tagName.toLowerCase();
       if (node.id) {
         part += "#" + CSS.escape(node.id);
@@ -3033,6 +3039,7 @@ export function createArtifactSdk(
     edit.className = "review-surface-note-edit";
     edit.setAttribute("aria-label", "Edit this note");
     edit.title = "Edit";
+    // the same pencil as the chrome's Queued list (QUEUE_ICON_EDIT): keep the two alike
     edit.innerHTML =
       '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21l1-4.5L15.5 5a2.1 2.1 0 0 1 3 3L7 19.5 3 21z"/><path d="M13.5 7l3 3"/></svg>';
     // The text is edited by the chrome, never here: this page is untrusted, so it may ask the
@@ -3050,8 +3057,8 @@ export function createArtifactSdk(
     // selecting words to copy them is not asking to edit.
     row.addEventListener("click", (event) => {
       // the preview sits in a shadow root, whose selection Chromium reports only on the root
-      const picked = /** @type {any} */ (shadow)?.getSelection?.() || window.getSelection?.();
-      if (String(picked || "").trim()) return;
+      const inPreview = String(/** @type {any} */ (shadow)?.getSelection?.() || "").trim();
+      if (inPreview || String(window.getSelection?.() || "").trim()) return;
       openEditor(event);
     });
     row.append(text, edit);

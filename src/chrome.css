@@ -2116,7 +2116,10 @@ body.host-page #annotation {
   color: var(--fg-faint);
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.12s ease, color 0.12s ease, background-color 0.12s ease;
+  transition:
+    opacity 0.12s ease,
+    color 0.12s ease,
+    background-color 0.12s ease;
 }
 .queue-item:hover .queue-item-edit,
 .queue-item:hover .queue-item-remove,
@@ -2156,11 +2159,18 @@ body.host-page #annotation {
   animation: queue-undo-countdown linear forwards;
 }
 @keyframes queue-undo-countdown {
-  from { transform: scaleX(1); }
-  to { transform: scaleX(0); }
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .queue-item-countdown { animation: none; opacity: 0.5; }
+  .queue-item-countdown {
+    animation: none;
+    opacity: 0.5;
+  }
 }
 .queue-item-undo {
   grid-column: 2 / -1;

@@ -827,7 +827,8 @@ test("while a note is edited, here or in Queued, the page outlines its element, 
     type: "review-surface:queuePrompt",
     prompt: { prompt: "Shorter", selector: "h1#title", tag: "h1", text: "Title" },
   });
-  const outlines = () => chrome.postedToFrame.filter((m) => m.type === "review-surface:outlineElement").map((m) => m.selector);
+  const outlines = () =>
+    chrome.postedToFrame.filter((m) => m.type === "review-surface:outlineElement").map((m) => m.selector);
 
   chrome.sendFrameMessage({ type: "review-surface:editQueued", index: 0, was: "Shorter", rect: { left: 40, top: 60 } });
   assert.deepEqual(outlines(), ["h1#title"]);
@@ -838,7 +839,9 @@ test("while a note is edited, here or in Queued, the page outlines its element, 
   const row = chrome.element("queueList").children[0];
   row.querySelector(".queue-item-edit").onclick({ stopPropagation() {} });
   assert.deepEqual(outlines().slice(2), ["h1#title"]);
-  row.querySelector(".queue-item-input").dispatch("keydown", { key: "Escape", preventDefault() {}, stopPropagation() {} });
+  row
+    .querySelector(".queue-item-input")
+    .dispatch("keydown", { key: "Escape", preventDefault() {}, stopPropagation() {} });
   assert.deepEqual(outlines().slice(2), ["h1#title", ""]);
 });
 
@@ -869,7 +872,11 @@ test("pressing Edit again on the note being edited saves it and closes the edito
   row.querySelector(".queue-item-input").value = "Much shorter";
   row.querySelector(".queue-item-edit").onclick({ stopPropagation() {} });
   assert.equal(chrome.queued()[0].prompt, "Much shorter", "the edit is saved");
-  assert.equal(chrome.element("queueList").children[0].querySelector(".queue-item-input"), null, "the editor is closed");
+  assert.equal(
+    chrome.element("queueList").children[0].querySelector(".queue-item-input"),
+    null,
+    "the editor is closed",
+  );
 });
 
 test("a page's Edit ask opens only the note it names, and a stale ask opens nothing", async () => {
@@ -6793,7 +6800,10 @@ test("the footer shows the queue with a one-click Send and a drop-up to check an
     chrome.queued().map((prompt) => prompt.prompt),
     ["Fix the header", "Shorter intro"],
   );
-  chrome.element("queueList").children[1].children.find((child) => child.className === "queue-item-remove").onclick({ stopPropagation() {} });
+  chrome
+    .element("queueList")
+    .children[1].children.find((child) => child.className === "queue-item-remove")
+    .onclick({ stopPropagation() {} });
   assert.equal(chrome.element("queueCount").textContent, "1");
   // closing the Queued window settles the removal: no Undo when it opens again
   chrome.element("queueOpen").onclick();
