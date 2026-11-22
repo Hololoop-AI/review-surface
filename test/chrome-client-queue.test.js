@@ -7349,3 +7349,24 @@ test("the ⋮ menu's Send page and end is held while the sidebar has an unsent m
   assert.match(chrome.element("sendHint").textContent, /first/i);
   assert.equal(chrome.element("chatInput").value, "Typed in the sidebar");
 });
+
+test("the Queued window's own Send is disabled while only a removed note's Undo is left", async () => {
+  const chrome = await createChromeHarness({
+    storedQueue: [{ uid: "", prompt: "Fix the header", selector: "h1", tag: "element", text: "Header" }],
+  });
+  await flushPromises();
+  chrome.element("queueOpen").onclick();
+  assert.equal(chrome.element("queueMenuSend").disabled, false, "one note queued: it can be sent");
+
+  const row = chrome.element("queueList").children[0];
+  row.children.find((child) => child.className === "queue-item-remove").onclick({ stopPropagation() {} });
+  assert.deepEqual(chrome.queued(), []);
+  assert.equal(chrome.element("queueMenu").hidden, false, "the window stays open for the Undo");
+  assert.equal(chrome.element("queueSend").disabled, true);
+  assert.equal(chrome.element("queueMenuSend").disabled, true, "nothing queued: nothing to send");
+
+  const undoRow = chrome.element("queueList").children[0];
+  undoRow.children.find((child) => child.className === "queue-item-undo").onclick({ stopPropagation() {} });
+  assert.equal(chrome.queued().length, 1);
+  assert.equal(chrome.element("queueMenuSend").disabled, false, "the restored note can be sent again");
+});

@@ -574,6 +574,7 @@ function renderQueueDock() {
   queueDock.hidden = (count === 0 && !holding) || ended;
   queueCount.textContent = String(count);
   queueSend.disabled = ended || count === 0;
+  queueMenuSend.disabled = queueSend.disabled;
   queueSend.setAttribute("aria-label", `Send ${count} queued ${count === 1 ? "note" : "notes"} to this page's agent`);
   const rows = queued.map((prompt, index) => {
     const row = document.createElement("div");
