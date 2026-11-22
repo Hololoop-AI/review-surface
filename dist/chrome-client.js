@@ -475,7 +475,8 @@ function editQueuedFromPage(index, was, rect) {
 // The in-place editor for a queued note, opened from its marker's preview. It is the chrome's own
 // element laid over the page frame where the preview was, so the reader edits the note right
 // there while the untrusted page never touches its text. Enter saves, Shift+Enter is a new line,
-// Escape keeps the note as it was, a click anywhere else saves; emptied, a note with no image goes.
+// Escape cancels the edit (the note stays as it was), a click anywhere else saves; emptied, a
+// note with no image goes.
 /** @type {HTMLDivElement | null} */
 let noteEditor = null;
 /** @type {((save: boolean) => void) | null} */
@@ -494,6 +495,7 @@ function closeNoteEditor(save) {
  */
 function openNoteEditor(prompt, left, top) {
   closeFooterPanels();
+  outlineInPage(prompt);
   if (!noteEditor) {
     noteEditor = document.createElement("div");
     noteEditor.className = "note-editor";
@@ -508,7 +510,7 @@ function openNoteEditor(prompt, left, top) {
   box.setAttribute("aria-label", "Edit this queued note");
   const hint = document.createElement("div");
   hint.className = "note-editor-hint";
-  hint.textContent = "Enter saves · Shift+Enter new line · Esc keeps it";
+  hint.textContent = "Enter to save · Shift+Enter for a new line · Esc to cancel";
   noteEditor.replaceChildren(box, hint);
   const area = frame.getBoundingClientRect?.() || {
     left: 0,
@@ -532,6 +534,7 @@ function openNoteEditor(prompt, left, top) {
   finishNoteEditor = (save) => {
     finishNoteEditor = null;
     if (noteEditor) noteEditor.hidden = true;
+    outlineInPage(null);
     // focus goes back to the page rather than nowhere
     frame.focus?.();
     const at = queued.indexOf(prompt);
@@ -566,54 +569,69 @@ document.addEventListener("mousedown", (event) => {
 function renderQueueDock() {
   if (!queueDock) return;
   const count = queued.length;
-  queueDock.hidden = count === 0 || ended;
+  // a note just removed keeps the list open while its Undo is offered
+  const holding = Boolean(removedNote) && !ended;
+  queueDock.hidden = (count === 0 && !holding) || ended;
   queueCount.textContent = String(count);
-  queueSend.disabled = ended;
+  queueSend.disabled = ended || count === 0;
   queueSend.setAttribute("aria-label", `Send ${count} queued ${count === 1 ? "note" : "notes"} to this page's agent`);
-  queueList.replaceChildren(
-    ...queued.map((prompt, index) => {
-      const row = document.createElement("div");
-      row.className = "queue-item";
-      const text = document.createElement("span");
-      text.className = "queue-item-text";
-      text.textContent = prompt.prompt || (attachmentCount(prompt) ? "Image annotation" : "");
-      // What the note is on, in the page's own words when the annotation carried them.
-      const target = prompt.tag !== "message" && prompt.text ? prompt.text : promptTargetLabel(prompt);
-      if (target) {
-        const on = document.createElement("span");
-        on.className = "queue-item-target";
-        on.textContent = target;
-        row.appendChild(on);
-      }
-      row.appendChild(text);
-      // Clicking what the note says, or what it is on, shows that element on the page.
-      if (prompt.selector && prompt.tag !== "message") {
-        row.classList.add("can-reveal");
-        row.title = "Show it on the page";
-        row.onclick = (event) => {
-          if (/** @type {Element | null} */ (event?.target)?.closest?.("button, textarea")) return;
-          setMenuOpen(queueOpen, queueMenu, false);
-          postToFrame({ type: "review-surface:revealElement", selector: prompt.selector });
-        };
-      }
-      if (!ended) {
-        const edit = document.createElement("button");
-        edit.type = "button";
-        edit.className = "queue-item-edit";
-        edit.textContent = "Edit";
-        edit.onclick = (event) => editQueuedPrompt(index, row, text, event);
-        row.appendChild(edit);
-      }
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "queue-item-remove";
-      remove.textContent = "Remove";
-      remove.onclick = (event) => removeQueuedPrompt(index, event);
-      row.appendChild(remove);
-      return row;
-    }),
-  );
-  if (count === 0 || ended) setMenuOpen(queueOpen, queueMenu, false);
+  const rows = queued.map((prompt, index) => {
+    const row = document.createElement("div");
+    row.className = "queue-item";
+    const text = document.createElement("span");
+    text.className = "queue-item-text";
+    text.textContent = prompt.prompt || (attachmentCount(prompt) ? "Image annotation" : "");
+    // What the note is on, in the page's own words when the annotation carried them.
+    const target = prompt.tag !== "message" && prompt.text ? prompt.text : promptTargetLabel(prompt);
+    if (target) {
+      const on = document.createElement("span");
+      on.className = "queue-item-target";
+      on.textContent = target;
+      row.appendChild(on);
+    }
+    row.appendChild(text);
+    // Clicking what the note says, or what it is on, shows that element on the page.
+    if (prompt.selector && prompt.tag !== "message") {
+      row.classList.add("can-reveal");
+      row.title = "Show it on the page";
+      row.onclick = (event) => {
+        if (/** @type {Element | null} */ (event?.target)?.closest?.("button, textarea")) return;
+        // a note being edited never sends the page scrolling: a click that lands on its row
+        // (a press of Edit whose button moved, a browser that retargets it) stays in the editor
+        if (rowHasEditor(row)) return;
+        setMenuOpen(queueOpen, queueMenu, false);
+        postToFrame({ type: "review-surface:revealElement", selector: prompt.selector });
+      };
+    }
+    if (!ended) {
+      const edit = document.createElement("button");
+      edit.type = "button";
+      edit.className = "queue-item-edit";
+      edit.setAttribute("aria-label", "Edit this note");
+      edit.title = "Edit";
+      edit.innerHTML = QUEUE_ICON_EDIT;
+      edit.onclick = (event) => editQueuedPrompt(index, row, text, event);
+      // Edit on the note already being edited saves it and closes the editor. The press keeps
+      // the focus in the box, so the box's own blur does not close it first and leave the
+      // click to land elsewhere (on the row, which would scroll the page to the note)
+      edit.addEventListener("mousedown", (event) => {
+        if (rowHasEditor(row)) event.preventDefault();
+      });
+      row.appendChild(edit);
+    }
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "queue-item-remove";
+    remove.setAttribute("aria-label", "Remove this note");
+    remove.title = "Remove (you can undo)";
+    remove.innerHTML = QUEUE_ICON_REMOVE;
+    remove.onclick = (event) => removeQueuedPrompt(index, event);
+    row.appendChild(remove);
+    return row;
+  });
+  if (holding) rows.splice(Math.min(removedNote.index, rows.length), 0, removedRow());
+  queueList.replaceChildren(...rows);
+  if ((count === 0 && !holding) || ended) setMenuOpen(queueOpen, queueMenu, false);
   if (footerReady) {
     renderThreads();
     syncSendPageLabel();
@@ -697,6 +715,12 @@ function setMenuOpen(button, menu, open) {
   menu.hidden = !open;
   button.setAttribute("aria-expanded", String(open));
   syncFooterPanel();
+  // an Undo lasts while the Queued window is open: closing it settles the removal. The note is
+  // forgotten before the redraw, so the redraw's own close of an empty list does not come back here
+  if (menu === queueMenu && !open && removedNote) {
+    forgetRemovedNote();
+    render();
+  }
 }
 
 function closeMenus() {
@@ -1159,6 +1183,12 @@ function scrollElementIntoView(el) {
   el.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 
+/** How to close the editor open in a row: Edit pressed again on the same note saves and closes it. */
+/** @type {WeakMap<Element, (save: boolean) => void>} */
+const rowEditors = new WeakMap();
+/** @param {Element} row */
+const rowHasEditor = (row) => Boolean(row.querySelector?.(".queue-item-input"));
+
 /**
  * Rewrite a queued note in place: its text becomes a box; Enter saves, Shift+Enter is a new line,
  * Escape keeps the note as it was. Emptied, a note with no images is removed.
@@ -1170,18 +1200,24 @@ function scrollElementIntoView(el) {
 function editQueuedPrompt(index, row, text, event) {
   if (event) event.stopPropagation();
   const prompt = queued[index];
-  if (!prompt || row.querySelector(".queue-item-input")) return;
+  if (!prompt) return;
+  if (rowHasEditor(row)) {
+    rowEditors.get(row)?.(true);
+    return;
+  }
   const box = document.createElement("textarea");
   box.className = "queue-item-input";
   box.rows = 3;
   box.value = String(prompt.prompt || "");
   box.setAttribute("aria-label", "Edit this queued note");
   text.replaceWith(box);
+  outlineInPage(prompt);
   let done = false;
   /** @param {boolean} save @param {boolean} [inPlace] keep the rows: a click is about to land on one */
   const finish = (save, inPlace = false) => {
     if (done) return;
     done = true;
+    outlineInPage(null);
     const at = queued.indexOf(prompt);
     const next = box.value.trim();
     const kept = Boolean(next || attachmentCount(prompt));
@@ -1201,6 +1237,7 @@ function editQueuedPrompt(index, row, text, event) {
     }
     render();
   };
+  rowEditors.set(row, (save) => finish(save));
   box.addEventListener("keydown", (key) => {
     if (key.key === "Enter" && !key.shiftKey && !key.isComposing) {
       key.preventDefault();
@@ -1231,9 +1268,82 @@ document.addEventListener(
   true,
 );
 
+// Two quiet controls per note, a pencil to edit and a bin to remove, shown only while the row is
+// pointed at or focused (always on a touch screen); a click on the note itself still shows its
+// block on the page. Remove acts at once and
+// offers Undo in the note's place for a few seconds, or until the panel closes, rather than asking
+// first: a confirm on every removal gets clicked through, an undo catches the one that was a mistake.
+const QUEUE_ICON_EDIT =
+  '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21l1-4.5L15.5 5a2.1 2.1 0 0 1 3 3L7 19.5 3 21z"/><path d="M13.5 7l3 3"/></svg>';
+const QUEUE_ICON_REMOVE =
+  '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 13h10l1-13"/><path d="M9 7V4h6v3"/></svg>';
+const UNDO_REMOVE_MS = 6000;
+/** @type {{ prompt: any, index: number, at: number, timer: ReturnType<typeof setTimeout> } | null} */
+let removedNote = null;
+
+function forgetRemovedNote() {
+  if (removedNote) clearTimeout(removedNote.timer);
+  removedNote = null;
+}
+
+function removedRow() {
+  const row = document.createElement("div");
+  row.className = "queue-item queue-item-removed";
+  row.setAttribute("role", "status");
+  const said = document.createElement("span");
+  said.className = "queue-item-text";
+  said.textContent = "Note removed";
+  const undo = document.createElement("button");
+  undo.type = "button";
+  undo.className = "queue-item-undo";
+  undo.textContent = "Undo";
+  undo.onclick = (event) => undoRemoveQueuedPrompt(event);
+  row.appendChild(said);
+  row.appendChild(undo);
+  // a bar that runs down with the Undo's time; a redraw picks it up where it had got to
+  const left = document.createElement("div");
+  left.className = "queue-item-countdown";
+  left.setAttribute("aria-hidden", "true");
+  if (left.style) {
+    left.style.animationDuration = UNDO_REMOVE_MS + "ms";
+    left.style.animationDelay = -Math.min(UNDO_REMOVE_MS, Date.now() - (removedNote?.at || Date.now())) + "ms";
+  }
+  row.appendChild(left);
+  return row;
+}
+
 function removeQueuedPrompt(index, event) {
   if (event) event.stopPropagation();
-  queued.splice(index, 1);
+  const [prompt] = queued.splice(index, 1);
+  forgetRemovedNote();
+  if (prompt) {
+    removedNote = {
+      prompt,
+      index,
+      at: Date.now(),
+      timer: setTimeout(() => {
+        removedNote = null;
+        // a note being edited in the list is not redrawn away mid-edit: only the Undo row goes
+        if (queued.length && queueList.querySelector?.(".queue-item-input")) {
+          queueList.querySelector?.(".queue-item-removed")?.remove?.();
+          return;
+        }
+        render();
+      }, UNDO_REMOVE_MS),
+    };
+  }
+  persistQueuedPrompts();
+  render();
+  // the pressed button is gone with its row: keyboard focus goes to the Undo that took its place
+  /** @type {HTMLElement | null} */ (queueList.querySelector?.(".queue-item-undo"))?.focus?.();
+}
+
+function undoRemoveQueuedPrompt(event) {
+  if (event) event.stopPropagation();
+  if (!removedNote || ended) return;
+  const { prompt, index } = removedNote;
+  forgetRemovedNote();
+  queued.splice(Math.min(index, queued.length), 0, prompt);
   persistQueuedPrompts();
   render();
 }
@@ -1267,6 +1377,16 @@ function stripInternalPromptFields(prompt) {
   const clean = { ...prompt };
   delete clean[internalQueueKeyField];
   return clean;
+}
+
+/**
+ * While a note is edited, the page outlines the element it is on, as it did while the note was
+ * written; null clears the outline. A message has no element, so it outlines nothing.
+ * @param {any} prompt
+ */
+function outlineInPage(prompt) {
+  const selector = prompt && prompt.tag !== "message" && typeof prompt.selector === "string" ? prompt.selector : "";
+  postToFrame({ type: "review-surface:outlineElement", selector });
 }
 
 function postToFrame(message) {
@@ -1512,6 +1632,8 @@ function sendQueued(endAfter, composer = sidebarComposer) {
   if (ended) return false;
   // a note still open in the in-place editor is saved first, so Send sends what it says now
   closeNoteEditor(true);
+  // what was removed stays removed once the rest is sent
+  forgetRemovedNote();
   closeMenus();
 
   if (endAfter) {
