@@ -133,6 +133,8 @@ const panelScrim = /** @type {HTMLDivElement} */ (document.getElementById("panel
 const sendButton = /** @type {HTMLButtonElement} */ (document.getElementById("send"));
 const sendAndEndButton = /** @type {HTMLButtonElement} */ (document.getElementById("sendAndEnd"));
 const annotationSwitch = /** @type {HTMLButtonElement} */ (document.getElementById("annotation"));
+const hostBell = /** @type {HTMLButtonElement} */ (document.getElementById("hostBell"));
+const hostBellCount = /** @type {HTMLSpanElement} */ (document.getElementById("hostBellCount"));
 const moreWrap = /** @type {HTMLDivElement} */ (document.getElementById("moreWrap"));
 const moreButton = /** @type {HTMLButtonElement} */ (document.getElementById("moreButton"));
 const moreMenu = /** @type {HTMLDivElement} */ (document.getElementById("moreMenu"));
@@ -3624,6 +3626,56 @@ async function uploadAttachment(message, reportResult = postToFrame, signal) {
 // at once. Deleting late is cheap; deleting bytes someone still needs is not.
 
 loadFrame();
+
+// A framing host's bell, in the slot the page's own bell had (README, "Framing hosts"). Only the
+// framing window's answer shows it; the host owns what it shows and opens its own panel under it.
+const hostWindow = window.parent && window.parent !== window ? window.parent : null;
+let hostBellOpen = false;
+
+function postToHost(message) {
+  hostWindow?.postMessage(message, "*");
+}
+
+function renderHostBell(state) {
+  const count = Math.max(0, Math.floor(Number(state.count) || 0));
+  const problem = state.problem === true;
+  hostBellOpen = state.open === true;
+  hostBell.classList.toggle("has-unread", count > 0);
+  hostBell.classList.toggle("has-problem", problem && count > 0);
+  hostBell.setAttribute("aria-expanded", String(hostBellOpen));
+  hostBell.setAttribute("aria-label", String(state.label || "Notifications"));
+  hostBellCount.hidden = count === 0;
+  hostBellCount.textContent = count ? String(count) : "";
+}
+
+function handleHostMessage(message) {
+  if (message.type === "review-surface-host:carryBell") {
+    hostBell.hidden = false;
+  } else if (message.type === "review-surface-host:bellState" && !hostBell.hidden) {
+    renderHostBell(message);
+  }
+}
+
+hostBell.onclick = () => {
+  // a click on the bar is a click outside every popover here, as it always was
+  closeFooterPanels();
+  const rect = hostBell.getBoundingClientRect();
+  postToHost({
+    type: "review-surface:bellClick",
+    rect: { top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left },
+  });
+};
+
+if (hostWindow) {
+  window.addEventListener("message", (event) => {
+    if (event.source === hostWindow) handleHostMessage(event.data || {});
+  });
+  // focus is in this page after the bell's click, so Escape lands here: pass it on
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && hostBellOpen) postToHost({ type: "review-surface:bellClose" });
+  });
+  postToHost({ type: "review-surface:barHello" });
+}
 
 function toggleAnnotationMode() {
   if (ended) return;

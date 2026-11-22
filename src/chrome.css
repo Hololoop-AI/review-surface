@@ -257,7 +257,8 @@ body.review-surface {
   cursor: not-allowed;
   opacity: 0.55;
 }
-.warnings-count {
+.warnings-count,
+.host-bell-count {
   min-width: 18px;
   height: 18px;
   padding: 0 5px;
@@ -2708,4 +2709,31 @@ body.embedded-thread .threads-footer {
   margin-top: 4px;
   font-size: var(--text-xs);
   color: var(--fg-faint);
+}
+/* The framing host's bell (chrome-client.js, hostBell): drawn like the bar's other buttons, in the
+   slot the page's own bell had, with the host's unread count. */
+.host-bell {
+  position: relative;
+}
+.host-bell[hidden] {
+  display: none;
+}
+.host-bell.has-unread {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.host-bell.has-problem {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
+}
+.host-bell-count {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+}
+.host-bell.has-problem .host-bell-count {
+  background: var(--danger);
+}
+.host-bell-count[hidden] {
+  display: none;
 }
