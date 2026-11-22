@@ -61,7 +61,8 @@ the host answers:
 open, label}` whenever its bell changes: `count` is the unread count (an
   integer, 0 for none), `problem` and `open` are booleans (a failed run; the
   host's panel is open), and `label` is the button's accessible name, which
-  defaults to "Notifications".
+  defaults to "Notifications". `problem` colours the bell only while `count`
+  is above 0.
 - A click on the bell posts `{type: "review-surface:bellClick", rect}`, the
   button's box (`top`, `right`, `bottom`, `left`) in the page's coordinates,
   so the host can open its own panel under it. Escape in the page while the
