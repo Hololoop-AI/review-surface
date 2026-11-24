@@ -288,7 +288,7 @@ function bootSdk({ querySelectorAll = () => [], sdkOptions = {}, setup = (/** @t
       const card = this.card();
       card.querySelector("textarea").value = text;
       card.querySelector(".review-surface-send").onclick();
-      return posted.at(-1);
+      return posted.filter((m) => m.type !== "review-surface:composing").at(-1);
     },
   };
 }
@@ -383,7 +383,7 @@ test("the served SDK bundle resolves table coordinates only for annotation click
 
   sdk.api.queuePrompt("Programmatic note", { element: evidence });
 
-  assert.equal(sdk.posted.at(-1).prompt.target, undefined);
+  assert.equal(sdk.posted.filter((m) => m.type !== "review-surface:composing").at(-1).prompt.target, undefined);
 });
 
 test("the served SDK bundle annotates elements outside tables with no table target", () => {
@@ -415,7 +415,7 @@ test("the served SDK bundle reports a draft whose anchor the artifact no longer 
   );
 
   sdk.runTimers();
-  const report = sdk.posted.at(-1);
+  const report = sdk.posted.filter((m) => m.type !== "review-surface:composing").at(-1);
   assert.equal(report.type, "review-surface:reviewDraftUnrestorable");
   assert.equal(report.selector, "#hero");
   assert.equal(report.artifact_load_token, "load-token");
@@ -527,7 +527,7 @@ test("a link to another review page is handed to the chrome instead of opening a
   const event = sdk.click(pageLink(sdk, "/open?file=%2Fwork%2Fother.html"));
   assert.equal(event.defaultPrevented, true);
   assert.deepEqual(
-    { ...sdk.posted.at(-1) },
+    { ...sdk.posted.filter((m) => m.type !== "review-surface:composing").at(-1) },
     {
       type: "review-surface:openPage",
       href: "/open?file=%2Fwork%2Fother.html",
@@ -537,7 +537,10 @@ test("a link to another review page is handed to the chrome instead of opening a
   assert.equal(sdk.cards().length, 0, "following a page link is not an annotation");
 
   sdk.click(pageLink(sdk, "/session/0123456789abcdef"));
-  assert.equal(sdk.posted.at(-1).href, "/session/0123456789abcdef");
+  assert.equal(
+    sdk.posted.filter((m) => m.type !== "review-surface:composing").at(-1).href,
+    "/session/0123456789abcdef",
+  );
 });
 
 test("ordinary, foreign, targeted, and modified link clicks keep their old behavior", () => {
@@ -602,7 +605,7 @@ test("a 'now' action sends its note alone, prefixed, on the card's target", () =
   card.querySelector("textarea").value = "why is the lock taken here?";
   actionButton(card, 0).onclick();
 
-  const message = sdk.posted.at(-1);
+  const message = sdk.posted.filter((m) => m.type !== "review-surface:composing").at(-1);
   assert.equal(message.type, "review-surface:sendPrompt", "sent now, not queued");
   assert.equal(message.prompt.prompt, "study: why is the lock taken here?");
   assert.equal(message.prompt.text, "with reg.lock(): reg.save()", "it carries what was annotated");
@@ -614,7 +617,10 @@ test("an empty note uses the action's fallback, and with none the card stays ope
   });
   sdk.click(appendTo(sdk.body, cell("p", "a passage")));
   actionButton(sdk.card(), 0).onclick();
-  assert.equal(sdk.posted.at(-1).prompt.prompt, "study: this passage");
+  assert.equal(
+    sdk.posted.filter((m) => m.type !== "review-surface:composing").at(-1).prompt.prompt,
+    "study: this passage",
+  );
 
   sdk.click(appendTo(sdk.body, cell("p", "another passage")));
   const before = sdk.posted.length;
@@ -639,7 +645,7 @@ test("a page adds its own action as a function and it gets the card's context", 
   actionButton(sdk.card(), 0).onclick();
 
   assert.deepEqual(seen, [{ note: "what does this do?", text: "the passage" }]);
-  const message = sdk.posted.at(-1);
+  const message = sdk.posted.filter((m) => m.type !== "review-surface:composing").at(-1);
   assert.equal(message.type, "review-surface:queuePrompt");
   assert.equal(message.prompt.prompt, "ask: what does this do?");
 
@@ -981,7 +987,10 @@ test("the served SDK bundle spends a click on closing an open footer panel, and 
   const event = sdk.click(paragraph);
   assert.equal(event.defaultPrevented, true);
   assert.equal(sdk.cards().length, 0, "the closing click opens no card");
-  assert.equal(sdk.posted.at(-1)?.type, "review-surface:closeFooterPanels");
+  assert.equal(
+    sdk.posted.filter((m) => m.type !== "review-surface:composing").at(-1)?.type,
+    "review-surface:closeFooterPanels",
+  );
   sdk.click(paragraph);
   assert.equal(sdk.cards().length, 1, "the next click annotates again");
 });
@@ -1004,16 +1013,33 @@ test("the served SDK bundle lets a link be followed in annotate mode, and annota
 // `replaced` records the fragment navigated to and the root's inline scroll-behavior at that
 // moment, which is what decides whether the browser animates the scroll it then performs.
 function bootSectionPage({ reducedMotion = false, inlineScrollBehavior = "" } = {}) {
-  const page = { replaced: [], assigned: [], scrolled: [], addressed: [], ids: new Set() };
+  const page = { replaced: [], assigned: [], scrolled: [], addressed: [], ids: new Set(), frames: [] };
+  // a section's element: 400 px below the top of what shows, with a 100 px scroll-margin
+  // (a section with no box, as display:none gives it until :target shows it, has no rects)
+  const section = {
+    getBoundingClientRect: () => ({ top: page.boxless ? 0 : 400 }),
+    getClientRects: () => (page.boxless ? [] : [{}]),
+    scrollMarginTop: "100px",
+  };
   const sdk = bootSdk({
     setup(sandbox) {
       page.root = sandbox.document.documentElement;
+      page.win = sandbox.window;
       page.root.style.scrollBehavior = inlineScrollBehavior;
-      sandbox.document.getElementById = (id) => (page.ids.has(id) ? {} : null);
+      sandbox.document.getElementById = (id) => (page.ids.has(id) ? section : null);
+      const style = sandbox.getComputedStyle;
+      sandbox.getComputedStyle = (el) => (el === section ? { scrollMarginTop: section.scrollMarginTop } : style?.(el));
       Object.assign(sandbox.window, {
+        getComputedStyle: sandbox.getComputedStyle,
+        requestAnimationFrame: (cb) => page.frames.push(cb),
+        cancelAnimationFrame: () => {},
         scrollX: 0,
         scrollY: 1600,
-        scrollTo: (options) => page.scrolled.push({ ...options }),
+        // the page moves when asked, unless a test holds it to model a scroll that starts late
+        scrollTo: (options) => {
+          page.scrolled.push({ ...options });
+          if (!page.holdScroll) sandbox.window.scrollY = options.top;
+        },
         location: {
           origin: "http://127.0.0.1",
           replace: (url) => page.replaced.push({ url, scrollBehavior: page.root.style.scrollBehavior }),
@@ -1032,20 +1058,39 @@ function bootSectionPage({ reducedMotion = false, inlineScrollBehavior = "" } = 
   });
   page.link = appendTo(appendTo(sdk.body, cell("p", "See the reviews")), cell("a", "the reviews"));
   page.link.setAttribute("href", "#reviews");
+  page.ids.add("reviews");
+  // frames run until the page has stood still a few of them, as it does once a scroll is done
+  page.settle = () => {
+    for (let i = 0; i < 20 && page.frames.length; i++) page.frames.shift()();
+  };
   return { sdk, page };
 }
 
-// Intent (2): same-page section links scroll smoothly and add no history entry. HTML's
-// location.replace() of a fragment is a same-document navigation that replaces the current entry,
-// moves :target and fires hashchange; CSS scroll-behavior on the root decides whether the scroll
-// it performs is animated.
-test("a same-page section link is navigated by the browser, smoothly, replacing the history entry", () => {
+// Intent (2): same-page section links scroll smoothly and add no history entry. The SDK scrolls
+// to where the browser would land (the element less its scroll-margin) and only then replaces the
+// address with location.replace(), a same-document navigation that adds no entry, moves :target
+// and fires hashchange; by then the page is in place, so that navigation does not move it.
+test("a same-page section link scrolls smoothly to the section, then replaces the address once still", () => {
   const { sdk, page } = bootSectionPage();
   const event = sdk.pageClick(page.link);
 
   assert.equal(event.defaultPrevented, true, "the history-adding jump is replaced");
-  assert.deepEqual(page.replaced, [{ url: "#reviews", scrollBehavior: "smooth" }]);
+  assert.deepEqual(page.scrolled, [{ left: 0, top: 1900, behavior: "smooth" }], "1600 + 400 - the 100 px margin");
+  assert.deepEqual(page.replaced, [], "the address waits until the page has stopped moving");
+  page.settle();
+  assert.deepEqual(page.replaced, [{ url: "#reviews", scrollBehavior: "auto" }]);
   assert.deepEqual(page.assigned, [], "nothing adds a history entry");
+});
+
+test("a smooth scroll that starts late is waited for: the address changes only once it has moved and stopped", () => {
+  const { sdk, page } = bootSectionPage();
+  page.holdScroll = true;
+  sdk.pageClick(page.link);
+  for (let i = 0; i < 8; i++) page.frames.shift()();
+  assert.deepEqual(page.replaced, [], "still at the start: the scroll has not begun");
+  page.win.scrollY = 1900;
+  page.settle();
+  assert.deepEqual(page.replaced, [{ url: "#reviews", scrollBehavior: "auto" }]);
 });
 
 for (const href of ["#", "#top"]) {
@@ -1084,48 +1129,65 @@ for (const href of ["#", "#top"]) {
   });
 }
 
-test("a section link, and a #top link whose element exists, are scrolled by the browser alone", () => {
+test("a #top link whose element exists is scrolled to that element like any section", () => {
   const { sdk, page } = bootSectionPage();
-  sdk.pageClick(page.link);
   page.ids.add("top");
   page.link.setAttribute("href", "#top");
   sdk.pageClick(page.link);
+  page.settle();
 
-  assert.equal(page.replaced.length, 2);
-  assert.deepEqual(page.scrolled, []);
+  assert.deepEqual(page.scrolled, [{ left: 0, top: 1900, behavior: "smooth" }]);
+  assert.deepEqual(page.replaced, [{ url: "#top", scrollBehavior: "auto" }]);
   assert.deepEqual(page.addressed, []);
+});
+
+test("a section link that names no element is left to the browser's own navigation", () => {
+  const { sdk, page } = bootSectionPage();
+  page.ids.clear();
+  sdk.pageClick(page.link);
+
+  assert.deepEqual(page.scrolled, []);
+  assert.equal(page.replaced.length, 1);
+});
+
+// A target with no box (display:none until :target shows it, as CSS-only tabs and modals do) has
+// no position to scroll to: its rect reads top 0, which would scroll a reader up the page.
+test("a section link to an element with no box does not scroll, and the address is replaced at once", () => {
+  const { sdk, page } = bootSectionPage();
+  page.boxless = true;
+  sdk.pageClick(page.link);
+
+  assert.deepEqual(page.scrolled, []);
+  assert.equal(page.win.scrollY, 1600);
+  assert.deepEqual(
+    page.replaced.map((entry) => entry.url),
+    ["#reviews"],
+  );
 });
 
 test("a same-page section link jumps without animation under reduced motion", () => {
   const { sdk, page } = bootSectionPage({ reducedMotion: true, inlineScrollBehavior: "smooth" });
   sdk.pageClick(page.link);
+  assert.deepEqual(page.scrolled, [{ left: 0, top: 1900, behavior: "instant" }]);
+  page.settle();
   assert.deepEqual(page.replaced, [{ url: "#reviews", scrollBehavior: "auto" }]);
 });
 
-// The smooth scroll is borrowed for one navigation only: the page's own inline scroll-behavior
-// comes back once the scroll ends, or after a moment when no scroll happens at all.
-test("the page's own scroll-behavior is restored when the scroll ends", () => {
-  const { sdk, page } = bootSectionPage({ inlineScrollBehavior: "auto" });
+// The page's own inline scroll-behavior is borrowed only for the moment the address changes.
+test("the page's own scroll-behavior is left as it was", () => {
+  const { sdk, page } = bootSectionPage({ inlineScrollBehavior: "smooth" });
   sdk.pageClick(page.link);
   assert.equal(page.root.style.scrollBehavior, "smooth");
-  sdk.fireWindow("scrollend");
-  assert.equal(page.root.style.scrollBehavior, "auto");
+  page.settle();
+  assert.equal(page.root.style.scrollBehavior, "smooth");
 });
 
-test("the page's own scroll-behavior is restored even when no scroll ever ends", () => {
-  const { sdk, page } = bootSectionPage();
-  sdk.pageClick(page.link);
-  sdk.runTimers();
-  assert.equal(page.root.style.scrollBehavior, "");
-});
-
-test("two section links clicked in quick succession still leave the page's own scroll-behavior", () => {
+test("a second section link clicked before the first scroll settles takes over from it", () => {
   const { sdk, page } = bootSectionPage({ inlineScrollBehavior: "auto" });
   sdk.pageClick(page.link);
   sdk.pageClick(page.link);
-  assert.equal(page.replaced.length, 2);
-  sdk.fireWindow("scrollend");
-  sdk.runTimers();
+  page.settle();
+  assert.equal(page.replaced.length, 1, "only the last link's address is set");
   assert.equal(page.root.style.scrollBehavior, "auto");
 });
 

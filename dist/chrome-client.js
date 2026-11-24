@@ -139,7 +139,6 @@ const moreWrap = /** @type {HTMLDivElement} */ (document.getElementById("moreWra
 const moreButton = /** @type {HTMLButtonElement} */ (document.getElementById("moreButton"));
 const moreMenu = /** @type {HTMLDivElement} */ (document.getElementById("moreMenu"));
 const reloadArtifactButton = /** @type {HTMLButtonElement} */ (document.getElementById("reloadArtifact"));
-const copySnapshotButton = /** @type {HTMLButtonElement} */ (document.getElementById("copySnapshot"));
 const exportArtifactButton = /** @type {HTMLButtonElement} */ (document.getElementById("exportArtifact"));
 const shareArtifactButton = /** @type {HTMLButtonElement} */ (document.getElementById("shareArtifact"));
 const shareDialog = /** @type {HTMLDivElement} */ (document.getElementById("shareDialog"));
@@ -223,7 +222,6 @@ let layoutGateTimer;
 let layoutWarnings = Array.isArray(sessionData.initialLayoutWarnings) ? sessionData.initialLayoutWarnings : [];
 const selectedWarningIds = new Set(loadJsonState(warningSelectionStorageKey, []));
 let warningsDrawerOpen = false;
-const snapshotRequests = [];
 let endAfterSubmit = false;
 let workingBubble = null;
 let submitQueuedPromise = null;
@@ -560,6 +558,7 @@ function openNoteEditor(prompt, left, top) {
     }
   });
   syncFooterPanel();
+  fitToText(box, 220);
   box.focus();
   box.setSelectionRange?.(box.value.length, box.value.length);
 }
@@ -643,7 +642,7 @@ function renderQueueDock() {
 
 function updateSendState() {
   sendButton.disabled = ended;
-  sendAndEndButton.disabled = sendButton.disabled;
+  if (sendAndEndButton) sendAndEndButton.disabled = sendButton.disabled;
   if (warningsQueueButton) updateWarningSelectionState();
 }
 
@@ -718,12 +717,9 @@ function setMenuOpen(button, menu, open) {
   menu.hidden = !open;
   button.setAttribute("aria-expanded", String(open));
   syncFooterPanel();
-  // an Undo lasts while the Queued window is open: closing it settles the removal. The note is
-  // forgotten before the redraw, so the redraw's own close of an empty list does not come back here
-  if (menu === queueMenu && !open && removedNote) {
-    forgetRemovedNote();
-    render();
-  }
+  // a hidden window restarts its animations when shown: redraw an Undo's countdown from the time
+  // actually left, rather than from the full six seconds
+  if (menu === queueMenu && open && removedNote) render();
 }
 
 function closeMenus() {
@@ -921,6 +917,16 @@ function renderRetiredDraft(text, stored = true) {
   retiredDraftNodes.push(el);
   chatLog.appendChild(el);
   scrollElementIntoView(el);
+  showKeptNotesInPageChat();
+}
+
+// With the conversation panel not shown, the notes only the reader holds - a message that did
+// not send and a draft handed back - are shown in This page's chat, after its conversation.
+function showKeptNotesInPageChat() {
+  if (activeChat !== pageChatKey) return;
+  for (const bubble of unsentBubbles) chatPopLog.appendChild(bubble);
+  for (const note of retiredDraftNodes) chatPopLog.appendChild(note);
+  chatPopLog.scrollTop = chatPopLog.scrollHeight;
 }
 
 async function refreshChromeLoadHandoff(requestSequence) {
@@ -946,7 +952,9 @@ function scrollPanelToBottom() {
 
 // ---- Phone-width conversation sheet ----
 // Below this width chrome.css turns the conversation panel into a dock the user raises as a
-// bottom sheet over the artifact. This controller owns intent, accessibility state, gestures,
+// bottom sheet over the artifact - only for a thread shown inside another page's window; an
+// ordinary page has no sheet on a phone (chrome.css hides its panel, and the footer's This page
+// chat replaces it). This controller owns intent, accessibility state, gestures,
 // visual-viewport measurements, and the dock summary; CSS owns the geometry. The query must match
 // the one chrome.css lays the sheet out under.
 const MOBILE_SHEET_MEDIA = "(max-width: 860px)";
@@ -954,39 +962,10 @@ const MOBILE_SHEET_MEDIA = "(max-width: 860px)";
 const SHEET_DRAG_THRESHOLD_PX = 48;
 const sheetStorageKey = "review-surface:sheet-open:" + key;
 
-// ---- Desktop conversation collapse ----
-// Above the phone breakpoint the panel is docked; this hides it entirely so
-// the artifact takes the full width (theater/embedded use).
-const panelCollapse = document.getElementById("panelCollapse");
-const panelHiddenKey = "review-surface:panel-hidden:" + key;
-function applyPanelHidden(hidden) {
-  document.body.classList.toggle("panel-collapsed", hidden);
-  if (panelCollapse) panelCollapse.setAttribute("aria-pressed", String(!hidden));
-}
-// Collapsed unless you opened it: the page's conversation lives in the footer's "This page" tab
-// now. A thread shown inside another page's window keeps its panel - it is the whole point there.
-const panelDefaultHidden = !new URLSearchParams(location.search || "").has("embed");
-let panelHidden = panelDefaultHidden;
-try {
-  const stored = sessionStorage.getItem(panelHiddenKey);
-  panelHidden = stored === null ? panelDefaultHidden : stored === "1";
-} catch {
-  panelHidden = panelDefaultHidden;
-}
-applyPanelHidden(panelHidden);
-if (panelCollapse) {
-  panelCollapse.addEventListener("click", () => {
-    // Now a More-menu item (the toolbar's Chat switch gave way to the footer's This page chat).
-    closeMenus();
-    panelHidden = !panelHidden;
-    try {
-      sessionStorage.setItem(panelHiddenKey, panelHidden ? "1" : "0");
-    } catch {
-      // storage may be unavailable; the toggle still works for this load
-    }
-    applyPanelHidden(panelHidden);
-  });
-}
+// ---- Desktop conversation panel ----
+// Hidden above the phone breakpoint: the page's conversation lives in the footer's "This page"
+// tab. A thread shown inside another page's window keeps its panel - it is the whole point there.
+document.body.classList.toggle("panel-collapsed", !new URLSearchParams(location.search || "").has("embed"));
 
 const sheetMedia = typeof window.matchMedia === "function" ? window.matchMedia(MOBILE_SHEET_MEDIA) : null;
 // The user's intent, kept across a chrome reload so a live-reload or server upgrade does not drop
@@ -1255,6 +1234,7 @@ function editQueuedPrompt(index, row, text, event) {
     const to = /** @type {Element | null} */ (blur?.relatedTarget ?? null);
     finish(true, queueButtonPressed || Boolean(to?.closest?.("button") && queueList.contains(to)));
   });
+  fitToText(box, 200);
   box.focus();
   box.setSelectionRange(box.value.length, box.value.length);
 }
@@ -1273,9 +1253,9 @@ document.addEventListener(
 
 // Two quiet controls per note, a pencil to edit and a bin to remove, shown only while the row is
 // pointed at or focused (always on a touch screen); a click on the note itself still shows its
-// block on the page. Remove acts at once and
-// offers Undo in the note's place for a few seconds, or until the panel closes, rather than asking
-// first: a confirm on every removal gets clicked through, an undo catches the one that was a mistake.
+// block on the page. Remove acts at once and offers Undo in the note's place for a few seconds -
+// closing the panel does not cut that short - rather than asking first: a confirm on every
+// removal gets clicked through, an undo catches the one that was a mistake.
 const QUEUE_ICON_EDIT =
   '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21l1-4.5L15.5 5a2.1 2.1 0 0 1 3 3L7 19.5 3 21z"/><path d="M13.5 7l3 3"/></svg>';
 const QUEUE_ICON_REMOVE =
@@ -1392,12 +1372,29 @@ function outlineInPage(prompt) {
   postToFrame({ type: "review-surface:outlineElement", selector });
 }
 
+/**
+ * A note's text box grows with what is typed, up to `max` px, and only scrolls past that: a small
+ * box that scrolled a line at a time was jumpy, and a full-height scrollbar crowded it.
+ * @param {HTMLTextAreaElement} box
+ * @param {number} max
+ */
+function fitToText(box, max) {
+  const fit = () => {
+    if (!box.style) return;
+    box.style.height = "auto";
+    // the box's own border is outside scrollHeight; its min-height still applies below
+    const border = box.offsetHeight - box.clientHeight;
+    box.style.height = Math.min(box.scrollHeight + border, max) + "px";
+  };
+  box.addEventListener("input", fit);
+  fit();
+}
+
 function postToFrame(message) {
   if (frame.contentWindow) frame.contentWindow.postMessage(message, "*");
 }
 
-function requestSnapshot(action) {
-  snapshotRequests.push(action);
+function requestSnapshot() {
   postToFrame({ type: "review-surface:requestSnapshot" });
 }
 
@@ -1623,10 +1620,14 @@ const sidebarComposer = {
   sendBlocked: () => chatAttachmentController.noteSendBlocked(),
   nothingToSend: () => showSendHint(),
   endHeld() {
-    panelHidden = false;
-    applyPanelHidden(false);
+    // show the panel holding the unsent message, so it can be sent or cleared
+    document.body.classList.remove("panel-collapsed");
     setSheetOpen(true);
     showSendHint("Send or clear this message first - ending now would leave it behind.", 6000);
+    // on a phone the conversation panel is not shown, so say it where the reader is
+    if (!chatInput.offsetParent)
+      chatPopHint.textContent =
+        "A message typed in the conversation panel is waiting; open this page on a wider screen to send or clear it.";
   },
 };
 
@@ -1677,7 +1678,7 @@ function sendQueued(endAfter, composer = sidebarComposer) {
   hideSendHint();
 
   if (endAfter && !chipsBlocked) endAfterSubmit = true;
-  requestSnapshot("submit");
+  requestSnapshot();
   return true;
 }
 
@@ -1740,6 +1741,7 @@ function markPromptUnsent(prompt, existing, storedEntry = null) {
   if (!bubble) return;
   bubble.classList.add("unsent");
   unsentBubbles.add(bubble);
+  showKeptNotesInPageChat();
   if (!unsentEntries.has(bubble)) {
     const entry = storedEntry || { unsent: stripInternalPromptFields(prompt) };
     if (!storedEntry) {
@@ -2427,11 +2429,6 @@ function copyFilePath() {
     copyHint.classList.remove("copied");
     copyHintText.textContent = "Copy";
   }, 1600);
-}
-
-function copyDomSnapshot() {
-  closeMenus();
-  requestSnapshot("copy");
 }
 
 function exportFileName() {
@@ -3413,20 +3410,17 @@ window.addEventListener("message", (event) => {
     pulseSheetDock();
   }
   if (msg.type === "review-surface:snapshot") {
-    const snapshotAction = snapshotRequests.shift() || "submit";
-    if (snapshotAction === "copy") {
-      copyText(msg.snapshot || "");
-    } else {
-      pendingSnapshot = msg.snapshot || "";
-      // submitQueuedOnce throws to signal "nothing was delivered" - its own
-      // finally already reset the end intent and it left the queue intact for a
-      // retry, so the rejection has no remaining consumer here.
-      submitQueued().catch(() => {});
-    }
+    pendingSnapshot = msg.snapshot || "";
+    // submitQueuedOnce throws to signal "nothing was delivered" - its own
+    // finally already reset the end intent and it left the queue intact for a
+    // retry, so the rejection has no remaining consumer here.
+    submitQueued().catch(() => {});
   }
   if (msg.type === "review-surface:scroll") {
     lastScroll = { x: Number(msg.x) || 0, y: Number(msg.y) || 0 };
   }
+  // the page has a note box open: on a phone the threads step aside while it is
+  if (msg.type === "review-surface:composing") document.body.classList.toggle("composing", msg.open === true);
   if (msg.type === "review-surface:reviewState") {
     setReviewState(msg.state && typeof msg.state === "object" ? msg.state : null);
   }
@@ -3445,7 +3439,7 @@ window.addEventListener("message", (event) => {
   // chrome cannot see every live reference, so reclamation is the sweeper's job.
   if (msg.type === "review-surface:sendQueuedPrompts") sendQueued();
   if (msg.type === "review-surface:sendPrompt") sendPromptNow(msg.prompt);
-  if (msg.type === "review-surface:endSession") endSession();
+  if (msg.type === "review-surface:endSession" && usable(endButton)) endSession();
   if (msg.type === "review-surface:toggleAnnotationMode") toggleAnnotationMode();
   // Only on a real click: the reviewer's click inside the frame activates this window too, and
   // without that an artifact script could navigate the reviewer away on its own.
@@ -3687,7 +3681,7 @@ function toggleAnnotationMode() {
 annotationSwitch.onclick = toggleAnnotationMode;
 
 sendButton.onclick = () => sendQueued(false);
-sendAndEndButton.onclick = () => sendQueued(true);
+if (usable(sendAndEndButton)) sendAndEndButton.onclick = () => sendQueued(true);
 moreButton.onclick = () => {
   closeWarningsDrawer();
   toggleMenu(moreButton, moreMenu);
@@ -3803,9 +3797,14 @@ chatInput.addEventListener("keydown", (event) => {
 chatInput.addEventListener("input", hideSendHint);
 copyPathButton.onclick = copyFilePath;
 reloadArtifactButton.onclick = reloadArtifact;
-copySnapshotButton.onclick = copyDomSnapshot;
 exportArtifactButton.onclick = exportArtifact;
-shareArtifactButton.onclick = openShareDialog;
+// a host may hide Publish link, Send page and end, and End session (REVIEW_SURFACE_MENU_HIDE), or
+// disable them (REVIEW_SURFACE_MENU_DISABLE): a disabled item stays in the menu and does nothing
+/** @param {HTMLElement | null} button */
+function usable(button) {
+  return Boolean(button) && button?.getAttribute?.("aria-disabled") !== "true";
+}
+if (usable(shareArtifactButton)) shareArtifactButton.onclick = openShareDialog;
 shareCloseButton.onclick = closeShareDialog;
 shareCancelButton.onclick = closeShareDialog;
 shareForm.addEventListener("submit", publishShare);
@@ -3814,10 +3813,11 @@ shareDialog.addEventListener("click", (event) => {
 });
 copyShareUrlButton.onclick = () => copyToButton(shareUrlInput.value, copyShareUrlButton, "Copy URL");
 copyUpdateKeyButton.onclick = () => copyToButton(shareUpdateKeyInput.value, copyUpdateKeyButton, "Copy key");
-endButton.onclick = () => {
-  closeMenus();
-  endSession();
-};
+if (usable(endButton))
+  endButton.onclick = () => {
+    closeMenus();
+    endSession();
+  };
 handoffTakeoverButton.onclick = () => location.reload();
 if (outdatedReloadButton) outdatedReloadButton.onclick = () => reloadChromeForOutdatedBanner();
 if (outdatedDismissButton) outdatedDismissButton.onclick = () => setChromeOutdated(false);
@@ -3869,6 +3869,8 @@ document.addEventListener(
   true,
 );
 frame.addEventListener("load", () => {
+  // a new document has no note box open yet; it says so again if a replayed draft opens one
+  document.body.classList.remove("composing");
   if (artifactSpokeToken !== artifactLoadToken) armArtifactAvailabilityProbe(artifactLoadToken);
   postToFrame({ type: "review-surface:setAnnotationMode", enabled: annotation && !ended });
   // Replay the pre-reload scroll position so hot reloads don't jump the artifact to the top.
@@ -4583,6 +4585,7 @@ function openChat(threadKey, anchor = null) {
   chatPopPresence.textContent = threadPresenceLabel(thread);
   chatPopHint.textContent = "";
   chatPopLog.replaceChildren();
+  showKeptNotesInPageChat();
   // The host's conversations carry no speed and have no page of their own to open.
   chatPopQuick.closest?.("label")?.toggleAttribute("hidden", Boolean(thread.feed));
   chatPopExpand.hidden = Boolean(thread.feed || thread.pageChat);
@@ -4671,6 +4674,7 @@ async function refreshChat() {
     }),
   );
   chatPopLog.scrollTop = chatPopLog.scrollHeight;
+  showKeptNotesInPageChat();
   const ended = conversation.status === "ended";
   chatPopInput.disabled = ended;
   chatPopSend.disabled = ended;
@@ -4908,10 +4912,11 @@ chatPopSendPage.onclick = () => {
   if (sendQueued(false, pageChatComposer) && !held) chatPopHint.textContent = "Page review sent.";
 };
 // The sidebar's Send & End, from the ⋮ menu beside End session, with This page's message and images.
-sendPageAndEndButton.onclick = () => {
-  closeMenus();
-  sendQueued(true, pageChatOffered() ? pageChatComposer : sidebarComposer);
-};
+if (usable(sendPageAndEndButton))
+  sendPageAndEndButton.onclick = () => {
+    closeMenus();
+    sendQueued(true, pageChatOffered() ? pageChatComposer : sidebarComposer);
+  };
 chatPopExpand.onclick = () => {
   const threadKey = activeChat;
   closeChat();

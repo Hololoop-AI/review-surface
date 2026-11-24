@@ -2493,7 +2493,7 @@ export function createArtifactSdk(
 
     shadow = host.attachShadow({ mode: "open" });
     const style = document.createElement("style");
-    style.textContent = `:host{all:initial;position:fixed;z-index:2147483647;left:0;top:0;color-scheme:dark;--ink-900:#0f1115;--ink-800:#11141a;--ink-700:#171a21;--ink-600:#1c212b;--steel-700:#2a2f3a;--steel-600:#303745;--steel-500:#3c4557;--steel-400:#8c96aa;--steel-300:#aeb6c6;--steel-200:#b9c0cf;--steel-100:#d8deea;--cream-50:#fffbf3;--cream-100:#f7f3ea;--cream-200:#e8e1cf;--brass-500:#f4c95d;--brass-400:#ffd877;--brass-ink:#17130a;--bg:var(--ink-900);--bg-panel:var(--ink-800);--bg-elevated:var(--ink-600);--fg:var(--cream-100);--fg-faint:var(--steel-300);--border:var(--steel-600);--accent:#f4c95d;--accent-hover:#ffd877;--font-sans:Geist,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--font-mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--radius-md:10px;--radius-xl:14px;--shadow-floating:0 20px 70px rgba(0,0,0,.35);font-family:var(--font-sans)}*{box-sizing:border-box}:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.review-surface-text-highlight{position:fixed;pointer-events:none;background:color-mix(in srgb,var(--accent) 28%,transparent);border-radius:2px;box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 45%,transparent)}.review-surface-annotation-card{position:fixed;width:min(320px,calc(100vw - 24px));padding:12px;border-radius:var(--radius-xl);background:var(--bg-panel);color:var(--fg);border:1px solid var(--accent);box-shadow:var(--shadow-floating);font:14px/1.4 var(--font-sans)}.review-surface-heading{font-weight:700;margin-bottom:6px}.review-surface-annotation-card textarea{width:100%;min-height:86px;resize:vertical;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg);color:var(--fg);padding:9px;font:inherit;font-family:var(--font-sans)}.review-surface-annotation-card textarea::placeholder{color:var(--fg-faint)}.review-surface-annotation-card .review-surface-hint{margin-top:6px;font-size:11px;color:var(--fg-faint)}.review-surface-annotation-card .review-surface-hint-alert{color:var(--danger-fg,#ff9d7a);font-weight:700}.review-surface-annotation-card .review-surface-row{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}.review-surface-annotation-card button{border:0;border-radius:var(--radius-md);padding:8px 10px;font-family:var(--font-sans);font-size:13px;font-weight:700;cursor:pointer}.review-surface-annotation-card button:active{opacity:.85}.review-surface-annotation-card .review-surface-send{background:var(--accent);color:var(--brass-ink)}.review-surface-annotation-card .review-surface-send:hover{background:var(--accent-hover)}.review-surface-annotation-card .review-surface-cancel{background:var(--steel-700);color:var(--fg)}.review-surface-annotation-card .review-surface-action{background:var(--steel-700);color:var(--accent)}.review-surface-annotation-card .review-surface-action:hover{background:var(--steel-600)}.review-surface-annotation-card.is-dropping{outline:2px dashed var(--accent);outline-offset:3px}.review-surface-attachments{display:flex;flex-direction:column;gap:6px;margin-top:8px;max-height:176px;overflow-y:auto}.review-surface-attachment-chip{display:flex;align-items:center;gap:8px;padding:6px;border-radius:var(--radius-md);background:var(--bg);border:1px solid var(--border)}.review-surface-attachment-chip.is-error{border-color:var(--danger,#e0623d)}.review-surface-attachment-thumb{width:32px;height:32px;border-radius:6px;object-fit:cover;background:var(--ink-700);flex:0 0 auto}.review-surface-attachment-thumb-empty{display:inline-block}.review-surface-attachment-body{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1 1 auto}.review-surface-attachment-name{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.review-surface-attachment-status{font-size:11px;color:var(--fg-faint)}.review-surface-attachment-status-error{color:var(--danger-fg,#ff9d7a)}.review-surface-attachment-retry{flex:0 0 auto;padding:4px 8px;font-size:11px;font-weight:700;border-radius:8px;background:var(--steel-700);color:var(--fg);cursor:pointer;border:0}.review-surface-attachment-remove{flex:0 0 auto;display:flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0!important;border-radius:50%;background:transparent;color:color-mix(in srgb,var(--fg) 85%,transparent);cursor:pointer;border:0}.review-surface-attachment-remove:hover{background:color-mix(in srgb,var(--fg) 14%,transparent);color:var(--fg)}.review-surface-attach-row{margin-top:8px}.review-surface-attach{display:inline-flex;align-items:center;gap:6px;padding:6px 9px!important;background:var(--steel-700)!important;color:var(--fg)!important;font-size:12px!important}.review-surface-attach:hover{background:var(--steel-600)!important}.review-surface-reveal-marker{position:fixed;pointer-events:none;border:2px solid var(--accent);border-radius:4px;box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 22%,transparent);animation:review-surface-reveal-pulse 2.4s var(--ease,ease-out) forwards}@keyframes review-surface-reveal-pulse{0%{opacity:0}12%{opacity:1}70%{opacity:1}100%{opacity:0}}.review-surface-image-expand{position:fixed;width:32px;height:32px;display:flex;align-items:center;justify-content:center;padding:0;border:1px solid var(--border);border-radius:var(--radius-md);background:color-mix(in srgb,var(--bg-panel) 88%,transparent);color:var(--fg);cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.35)}.review-surface-image-expand:hover{color:var(--accent);border-color:var(--accent)}.review-surface-image-expand[hidden],.review-surface-lightbox[hidden]{display:none}.review-surface-lightbox{position:fixed;left:0;top:0;width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;padding:2vmin;background:rgba(0,0,0,.86);cursor:zoom-out;overscroll-behavior:contain;touch-action:pinch-zoom}.review-surface-lightbox img{width:100%;height:100%;object-fit:contain;border-radius:4px;box-shadow:var(--shadow-floating)}.review-surface-annotation-card.is-nudged{animation:review-surface-nudge .32s ease-out}@keyframes review-surface-nudge{0%,100%{transform:translateX(0)}25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}.review-surface-note-marker{position:absolute;width:14px;height:14px;padding:0;display:flex;align-items:center;justify-content:center;border:0;background:transparent;color:var(--accent);cursor:pointer;filter:drop-shadow(0 1px 2px rgba(0,0,0,.6));opacity:.9}.review-surface-note-marker:hover,.review-surface-note-marker[aria-expanded=true]{opacity:1;transform:scale(1.15)}.review-surface-note-preview{position:fixed;width:min(300px,calc(100vw - 24px));max-height:min(320px,calc(100vh - 24px));overflow:auto;padding:8px;border-radius:var(--radius-md);background:var(--bg-panel);color:var(--fg);border:1px solid var(--accent);box-shadow:var(--shadow-floating);font:13px/1.4 var(--font-sans)}.review-surface-note-preview[hidden],.review-surface-note-marker[hidden]{display:none}.review-surface-note-row{display:block;padding:4px 2px}.review-surface-note-row+.review-surface-note-row{border-top:1px solid var(--border)}.review-surface-note-text{white-space:pre-wrap;overflow-wrap:anywhere}.review-surface-note-row{position:relative;padding-right:22px;cursor:pointer;border-radius:6px}.review-surface-note-row:hover{background:color-mix(in srgb,var(--fg) 6%,transparent)}.review-surface-note-row .review-surface-note-edit{position:absolute;top:3px;right:0;width:20px;height:20px;display:grid;place-items:center;border:0;border-radius:5px;padding:0;background:transparent;color:var(--fg-faint);cursor:pointer}.review-surface-note-row .review-surface-note-edit:hover,.review-surface-note-row .review-surface-note-edit:focus-visible{background:var(--steel-700);color:var(--accent)}`;
+    style.textContent = `:host{all:initial;position:fixed;z-index:2147483647;left:0;top:0;color-scheme:dark;--ink-900:#0f1115;--ink-800:#11141a;--ink-700:#171a21;--ink-600:#1c212b;--steel-700:#2a2f3a;--steel-600:#303745;--steel-500:#3c4557;--steel-400:#8c96aa;--steel-300:#aeb6c6;--steel-200:#b9c0cf;--steel-100:#d8deea;--cream-50:#fffbf3;--cream-100:#f7f3ea;--cream-200:#e8e1cf;--brass-500:#f4c95d;--brass-400:#ffd877;--brass-ink:#17130a;--bg:var(--ink-900);--bg-panel:var(--ink-800);--bg-elevated:var(--ink-600);--fg:var(--cream-100);--fg-faint:var(--steel-300);--border:var(--steel-600);--accent:#f4c95d;--accent-hover:#ffd877;--font-sans:Geist,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--font-mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--radius-md:10px;--radius-xl:14px;--shadow-floating:0 20px 70px rgba(0,0,0,.35);font-family:var(--font-sans)}*{box-sizing:border-box}:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.review-surface-text-highlight{position:fixed;pointer-events:none;background:color-mix(in srgb,var(--accent) 28%,transparent);border-radius:2px;box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 45%,transparent)}.review-surface-annotation-card{position:fixed;width:min(320px,calc(100vw - 24px));padding:12px;border-radius:var(--radius-xl);background:var(--bg-panel);color:var(--fg);border:1px solid var(--accent);box-shadow:var(--shadow-floating);font:14px/1.4 var(--font-sans)}.review-surface-heading{font-weight:700;margin-bottom:6px}.review-surface-annotation-card textarea{width:100%;min-height:86px;max-height:min(40vh,260px);resize:vertical;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--fg) 28%,transparent) transparent;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg);color:var(--fg);padding:9px;font:inherit;font-family:var(--font-sans)}.review-surface-annotation-card textarea::-webkit-scrollbar{width:6px}.review-surface-annotation-card textarea::-webkit-scrollbar-thumb{border-radius:3px;background:color-mix(in srgb,var(--fg) 28%,transparent)}.review-surface-annotation-card textarea::placeholder{color:var(--fg-faint)}.review-surface-annotation-card .review-surface-hint{margin-top:6px;font-size:11px;color:var(--fg-faint)}.review-surface-annotation-card .review-surface-hint-alert{color:var(--danger-fg,#ff9d7a);font-weight:700}.review-surface-annotation-card .review-surface-row{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}.review-surface-annotation-card button{border:0;border-radius:var(--radius-md);padding:8px 10px;font-family:var(--font-sans);font-size:13px;font-weight:700;cursor:pointer}.review-surface-annotation-card button:active{opacity:.85}.review-surface-annotation-card .review-surface-send{background:var(--accent);color:var(--brass-ink)}.review-surface-annotation-card .review-surface-send:hover{background:var(--accent-hover)}.review-surface-annotation-card .review-surface-cancel{background:var(--steel-700);color:var(--fg)}.review-surface-annotation-card .review-surface-action{background:var(--steel-700);color:var(--accent)}.review-surface-annotation-card .review-surface-action:hover{background:var(--steel-600)}.review-surface-annotation-card.is-dropping{outline:2px dashed var(--accent);outline-offset:3px}.review-surface-attachments{display:flex;flex-direction:column;gap:6px;margin-top:8px;max-height:176px;overflow-y:auto}.review-surface-attachment-chip{display:flex;align-items:center;gap:8px;padding:6px;border-radius:var(--radius-md);background:var(--bg);border:1px solid var(--border)}.review-surface-attachment-chip.is-error{border-color:var(--danger,#e0623d)}.review-surface-attachment-thumb{width:32px;height:32px;border-radius:6px;object-fit:cover;background:var(--ink-700);flex:0 0 auto}.review-surface-attachment-thumb-empty{display:inline-block}.review-surface-attachment-body{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1 1 auto}.review-surface-attachment-name{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.review-surface-attachment-status{font-size:11px;color:var(--fg-faint)}.review-surface-attachment-status-error{color:var(--danger-fg,#ff9d7a)}.review-surface-attachment-retry{flex:0 0 auto;padding:4px 8px;font-size:11px;font-weight:700;border-radius:8px;background:var(--steel-700);color:var(--fg);cursor:pointer;border:0}.review-surface-attachment-remove{flex:0 0 auto;display:flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0!important;border-radius:50%;background:transparent;color:color-mix(in srgb,var(--fg) 85%,transparent);cursor:pointer;border:0}.review-surface-attachment-remove:hover{background:color-mix(in srgb,var(--fg) 14%,transparent);color:var(--fg)}.review-surface-attach-row{margin-top:8px}.review-surface-attach{display:inline-flex;align-items:center;gap:6px;padding:6px 9px!important;background:var(--steel-700)!important;color:var(--fg)!important;font-size:12px!important}.review-surface-attach:hover{background:var(--steel-600)!important}.review-surface-reveal-marker{position:fixed;pointer-events:none;border:2px solid var(--accent);border-radius:4px;box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 22%,transparent);animation:review-surface-reveal-pulse 2.4s var(--ease,ease-out) forwards}@keyframes review-surface-reveal-pulse{0%{opacity:0}12%{opacity:1}70%{opacity:1}100%{opacity:0}}.review-surface-image-expand{position:fixed;width:32px;height:32px;display:flex;align-items:center;justify-content:center;padding:0;border:1px solid var(--border);border-radius:var(--radius-md);background:color-mix(in srgb,var(--bg-panel) 88%,transparent);color:var(--fg);cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.35)}.review-surface-image-expand:hover{color:var(--accent);border-color:var(--accent)}.review-surface-image-expand[hidden],.review-surface-lightbox[hidden]{display:none}.review-surface-lightbox{position:fixed;left:0;top:0;width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;padding:2vmin;background:rgba(0,0,0,.86);cursor:zoom-out;overscroll-behavior:contain;touch-action:pinch-zoom}.review-surface-lightbox img{width:100%;height:100%;object-fit:contain;border-radius:4px;box-shadow:var(--shadow-floating)}.review-surface-annotation-card.is-nudged{animation:review-surface-nudge .32s ease-out}@keyframes review-surface-nudge{0%,100%{transform:translateX(0)}25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}.review-surface-note-marker{position:absolute;width:14px;height:14px;padding:0;display:flex;align-items:center;justify-content:center;border:0;background:transparent;color:var(--accent);cursor:pointer;filter:drop-shadow(0 1px 2px rgba(0,0,0,.6));opacity:.9}.review-surface-note-marker:hover,.review-surface-note-marker[aria-expanded=true]{opacity:1;transform:scale(1.15)}.review-surface-note-preview{position:fixed;width:min(300px,calc(100vw - 24px));max-height:min(320px,calc(100vh - 24px));overflow:auto;padding:8px;border-radius:var(--radius-md);background:var(--bg-panel);color:var(--fg);border:1px solid var(--accent);box-shadow:var(--shadow-floating);font:13px/1.4 var(--font-sans)}.review-surface-note-preview[hidden],.review-surface-note-marker[hidden]{display:none}.review-surface-note-row{display:block;padding:4px 2px}.review-surface-note-row+.review-surface-note-row{border-top:1px solid var(--border)}.review-surface-note-text{white-space:pre-wrap;overflow-wrap:anywhere}.review-surface-note-row{position:relative;padding-right:22px;cursor:pointer;border-radius:6px}.review-surface-note-row:hover{background:color-mix(in srgb,var(--fg) 6%,transparent)}.review-surface-note-row .review-surface-note-edit{position:absolute;top:3px;right:0;width:20px;height:20px;display:grid;place-items:center;border:0;border-radius:5px;padding:0;background:transparent;color:var(--fg-faint);cursor:pointer}.review-surface-note-row .review-surface-note-edit:hover,.review-surface-note-row .review-surface-note-edit:focus-visible{color:var(--accent)}`;
     // The host's theme (createSdkJs's hostThemeCss) comes last so its custom properties win.
     style.textContent += String(options.hostThemeCss || "");
     shadow.appendChild(style);
@@ -2515,6 +2515,7 @@ export function createArtifactSdk(
   window.addEventListener("resize", () => repositionActiveCard?.());
   if (window.visualViewport && typeof window.visualViewport.addEventListener === "function") {
     window.visualViewport.addEventListener("resize", () => repositionActiveCard?.());
+    window.visualViewport.addEventListener("scroll", () => repositionActiveCard?.());
   }
 
   // The open card's text box, so a click outside it can tell whether anything was typed.
@@ -2543,6 +2544,7 @@ export function createArtifactSdk(
   }
 
   function closeCard() {
+    if (activeCardTextarea) postArtifactMessage("review-surface:composing", { open: false });
     activeCardTextarea = null;
     activeCardContext = null;
     repositionActiveCard = null;
@@ -2600,12 +2602,12 @@ export function createArtifactSdk(
             : "Annotate &lt;" + c.tag + "&gt;";
     const placeholder =
       c.tag === "text"
-        ? "Tell the agent what to change about this text..."
+        ? "Tell the agent what to do about this text..."
         : isCellItself
-          ? "Tell the agent what to change about this table cell..."
+          ? "Tell the agent what to do about this table cell..."
           : c.tag === "mermaid-node"
-            ? "Tell the agent what to change about this diagram node..."
-            : "Tell the agent what to change about this element...";
+            ? "Tell the agent what to do about this diagram node..."
+            : "Tell the agent what to do about this element...";
     const sendNowHint = /Mac|iP(hone|ad|od)/.test(navigator.platform) ? "⌘" : "Ctrl";
     card.innerHTML =
       '<div class="review-surface-heading">' +
@@ -2644,11 +2646,58 @@ export function createArtifactSdk(
     // area changes - a phone keyboard opening is the case that matters: without it the
     // textarea sat under the keyboard while the driver typed. The anchor `rect` is
     // captured once; only the card's size and the visible area vary between calls.
+    // Where the card goes. On a wide screen, beside the element, on the side nearer the click,
+    // with a small margin (else the far side, else below or above - nearer the click first - and
+    // only overlapping when nothing fits). A phone keeps its own placement (below).
+    const point = options.point && Number.isFinite(options.point.x) ? options.point : null;
     function positionCard() {
-      const left = Math.min(Math.max(12, rect.left), window.innerWidth - card.offsetWidth - 12);
-      const top = Math.min(Math.max(12, rect.bottom + 8), visibleFrameBottom() - card.offsetHeight - 12);
+      const width = card.offsetWidth;
+      const height = card.offsetHeight;
+      const gap = 12;
+      const viewBottom = visibleFrameBottom();
+      const viewTop = window.visualViewport ? window.visualViewport.offsetTop : 0;
+      const viewWidth = window.innerWidth;
+      const clampLeft = (/** @type {number} */ x) => Math.min(Math.max(12, x), viewWidth - width - 12);
+      const clampTop = (/** @type {number} */ y) => Math.max(viewTop + 12, Math.min(y, viewBottom - height - 12));
+      const at = point || { x: rect.left + rect.width / 2, y: rect.top + Math.min(rect.height, 40) / 2 };
+      let left;
+      let top;
+      if (viewWidth < 640) {
+        // a phone keeps the placement it had: under the element, kept inside what shows (so
+        // above the keyboard once it opens), never scrolling the page
+        left = clampLeft(rect.left);
+        top = Math.max(viewTop + 12, Math.min(rect.bottom + 8, viewBottom - height - 12));
+      } else {
+        const fitsRight = rect.right + gap + width <= viewWidth - 12;
+        const fitsLeft = rect.left - gap - width >= 12;
+        const preferRight = at.x >= rect.left + rect.width / 2;
+        const sideTop = clampTop(Math.max(rect.top, at.y - 24));
+        const fitsBelow = rect.bottom + gap + height <= viewBottom - 12;
+        const fitsAbove = rect.top - gap - height >= viewTop + 12;
+        const preferBelow = at.y >= rect.top + rect.height / 2;
+        const nearLeft = clampLeft(at.x - 40);
+        if (preferRight ? fitsRight : fitsLeft) {
+          left = preferRight ? rect.right + gap : rect.left - gap - width;
+          top = sideTop;
+        } else if (preferRight ? fitsLeft : fitsRight) {
+          left = preferRight ? rect.left - gap - width : rect.right + gap;
+          top = sideTop;
+        } else if (preferBelow ? fitsBelow : fitsAbove) {
+          left = nearLeft;
+          top = preferBelow ? rect.bottom + gap : rect.top - gap - height;
+        } else if (preferBelow ? fitsAbove : fitsBelow) {
+          left = nearLeft;
+          top = preferBelow ? rect.top - gap - height : rect.bottom + gap;
+        } else {
+          left = nearLeft;
+          top =
+            viewBottom - rect.bottom >= rect.top - viewTop
+              ? clampTop(rect.bottom + gap)
+              : clampTop(rect.top - gap - height);
+        }
+      }
       card.style.left = left + "px";
-      card.style.top = Math.max(12, top) + "px";
+      card.style.top = top + "px";
     }
     positionCard();
     repositionActiveCard = positionCard;
@@ -2805,13 +2854,25 @@ export function createArtifactSdk(
     // Unsent annotation text is review context Review Surface owns, so it is reported to the chrome and
     // replayed after a live reload.
     textarea.addEventListener("input", scheduleReviewStateReport);
+    // grows with what is typed (up to its max-height) instead of scrolling a line at a time
+    const fitTextarea = () => {
+      textarea.style.height = "auto";
+      textarea.style.height = textarea.scrollHeight + 2 + "px";
+      repositionActiveCard?.();
+    };
+    textarea.addEventListener("input", fitTextarea);
     if (typeof options.restoreText === "string") {
       textarea.value = options.restoreText;
+      fitTextarea();
       // Re-report immediately so restored text survives a second reload too, rather than only
       // living until the next keystroke.
       scheduleReviewStateReport();
     }
-    setTimeout(() => textarea.focus(), 0);
+    // Focused inside the tap or click itself: a phone only opens its keyboard for a focus the
+    // user's own gesture asked for, and a later timer no longer counts as one
+    postArtifactMessage("review-surface:composing", { open: true });
+    textarea.focus({ preventScroll: true });
+    if (shadow && shadow.activeElement !== textarea) setTimeout(() => textarea.focus({ preventScroll: true }), 0);
   }
 
   function dataTransferHasFiles(dataTransfer) {
@@ -2843,7 +2904,10 @@ export function createArtifactSdk(
     // without the source check the artifact could post to itself and drive the SDK.
     if (event.source !== parent) return;
     const msg = event.data || {};
-    if (msg.type === "review-surface:setAnnotationMode") setAnnotationMode(msg.enabled);
+    if (msg.type === "review-surface:setAnnotationMode") {
+      setAnnotationMode(msg.enabled);
+      if (activeCardTextarea) postArtifactMessage("review-surface:composing", { open: true });
+    }
     if (msg.type === "review-surface:attachmentResult") {
       if (!isTrustedAttachmentResult(event, { parentWindow: parent, nonce: ATTACHMENT_NONCE })) return;
       activeAttachments?.handleResult(msg.localId, msg.ok, msg.id, msg.error);
@@ -3429,7 +3493,7 @@ export function createArtifactSdk(
   // the browser's back (and the host's) is not spent stepping through sections. Reduced motion
   // jumps, as asked. To a real element the navigation stays the browser's own, so :target and
   // hashchange still work.
-  let restoreScrollBehavior = null;
+  let cancelPendingScroll = null;
   function followInPageLink(event) {
     if (event.defaultPrevented) return;
     if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -3440,7 +3504,7 @@ export function createArtifactSdk(
     if (!href.startsWith("#")) return;
     // only the jump is replaced: the page's own handlers on the link still see the click
     event.preventDefault();
-    restoreScrollBehavior?.();
+    cancelPendingScroll?.();
     const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
     // "#" and "#top" with no element of that name mean the top of the page, and nothing there can
     // be :target. Browsers do not agree on animating that navigation (Firefox jumps whatever
@@ -3459,23 +3523,75 @@ export function createArtifactSdk(
       }
       return;
     }
+    // The scroll is made here, to where the browser would land (the element less its
+    // scroll-margin), and the address changes only once the page has stopped moving, so :target
+    // and hashchange still work. Left to the browser, a phone could jump: a fallback timer cut a
+    // long smooth scroll short where the end of a scroll is never announced (older Safari).
+    let target = document.getElementById(name);
+    try {
+      target = target || document.getElementById(decodeURIComponent(name));
+    } catch {
+      // a malformed escape names no element
+    }
+    target = target || document.getElementsByName?.(name)?.[0] || null;
+    if (!target || target.getClientRects().length === 0) {
+      window.location.replace(href);
+      return;
+    }
     const root = document.documentElement;
-    const previous = root.style.scrollBehavior;
-    root.style.scrollBehavior = reduced ? "auto" : "smooth";
-    const restore = () => {
-      if (restoreScrollBehavior !== restore) return;
-      restoreScrollBehavior = null;
-      window.clearTimeout(timer);
-      window.removeEventListener("scrollend", restore);
+    const margin = parseFloat(getComputedStyle(target).scrollMarginTop) || 0;
+    const top = target.getBoundingClientRect().top + window.scrollY - margin;
+    window.scrollTo({ left: window.scrollX, top, behavior: reduced ? "instant" : "smooth" });
+    // Stillness counts only once the scroll has begun (or there was nowhere to go): a smooth
+    // scroll can start a few frames late, and replacing the address before it moves would jump.
+    // Two seconds is the most it waits.
+    const room = root.scrollHeight - window.innerHeight;
+    const destination = Number.isFinite(room) ? Math.max(0, Math.min(top, room)) : top;
+    const startY = window.scrollY;
+    const startedAt = Date.now();
+    let last = NaN;
+    let still = 0;
+    let frame = 0;
+    const cancel = () => {
+      window.cancelAnimationFrame(frame);
+      if (cancelPendingScroll === cancel) cancelPendingScroll = null;
+    };
+    const settle = () => {
+      if (cancelPendingScroll !== cancel) return;
+      const y = window.scrollY;
+      const begun = Math.abs(y - startY) >= 0.5 || Math.abs(y - destination) < 1;
+      still = begun && Math.abs(y - last) < 0.5 ? still + 1 : 0;
+      last = y;
+      if (still < 4 && Date.now() - startedAt < 2000) {
+        frame = window.requestAnimationFrame(settle);
+        return;
+      }
+      cancelPendingScroll = null;
+      // already in place: the browser's own navigation lands where the scroll did, without moving
+      const previous = root.style.scrollBehavior;
+      root.style.scrollBehavior = "auto";
+      window.location.replace(href);
       root.style.scrollBehavior = previous;
     };
-    const timer = window.setTimeout(restore, 1000);
-    window.addEventListener("scrollend", restore);
-    restoreScrollBehavior = restore;
-    window.location.replace(href);
+    cancelPendingScroll = cancel;
+    frame = window.requestAnimationFrame(settle);
   }
 
   window.addEventListener("click", followInPageLink);
+
+  // A section a link jumps to lands with room above its heading, in the reading area, rather than
+  // flush against the top edge where it reads as hidden under the bar. :where() keeps it weaker
+  // than any rule of the page's own.
+  if (document.head && !document.getElementById("review-surface-anchor-style")) {
+    const anchorStyle = document.createElement("style");
+    anchorStyle.id = "review-surface-anchor-style";
+    // svh, the screen height with the phone browser bars shown, does not change mid-scroll as vh can;
+    // a phone gets less room above the heading
+    anchorStyle.textContent =
+      ":where([id]){scroll-margin-top:max(24px,14vh);scroll-margin-top:max(24px,14svh)}" +
+      "@media (max-width:639px){:where([id]){scroll-margin-top:max(12px,4vh);scroll-margin-top:max(12px,4svh)}}";
+    document.head.appendChild(anchorStyle);
+  }
 
   document.addEventListener(
     "click",
@@ -3513,7 +3629,7 @@ export function createArtifactSdk(
         closeCard();
         return;
       }
-      showAnnotationCard(event.target);
+      showAnnotationCard(event.target, { point: { x: event.clientX, y: event.clientY } });
     },
     true,
   );
