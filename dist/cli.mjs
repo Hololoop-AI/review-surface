@@ -6569,7 +6569,7 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     document.documentElement.appendChild(host);
     shadow = host.attachShadow({ mode: "open" });
     const style = document.createElement("style");
-    style.textContent = `:host{all:initial;position:fixed;z-index:2147483647;left:0;top:0;color-scheme:dark;--ink-900:#0f1115;--ink-800:#11141a;--ink-700:#171a21;--ink-600:#1c212b;--steel-700:#2a2f3a;--steel-600:#303745;--steel-500:#3c4557;--steel-400:#8c96aa;--steel-300:#aeb6c6;--steel-200:#b9c0cf;--steel-100:#d8deea;--cream-50:#fffbf3;--cream-100:#f7f3ea;--cream-200:#e8e1cf;--brass-500:#f4c95d;--brass-400:#ffd877;--brass-ink:#17130a;--bg:var(--ink-900);--bg-panel:var(--ink-800);--bg-elevated:var(--ink-600);--fg:var(--cream-100);--fg-faint:var(--steel-300);--border:var(--steel-600);--accent:#f4c95d;--accent-hover:#ffd877;--font-sans:Geist,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--font-mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--radius-md:10px;--radius-xl:14px;--shadow-floating:0 20px 70px rgba(0,0,0,.35);font-family:var(--font-sans)}*{box-sizing:border-box}:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.review-surface-text-highlight{position:fixed;pointer-events:none;background:color-mix(in srgb,var(--accent) 28%,transparent);border-radius:2px;box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 45%,transparent)}.review-surface-annotation-card{position:fixed;width:min(320px,calc(100vw - 24px));padding:12px;border-radius:var(--radius-xl);background:var(--bg-panel);color:var(--fg);border:1px solid var(--accent);box-shadow:var(--shadow-floating);font:14px/1.4 var(--font-sans)}.review-surface-heading{font-weight:700;margin-bottom:6px}.review-surface-annotation-card textarea{width:100%;min-height:86px;resize:vertical;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg);color:var(--fg);padding:9px;font:inherit;font-family:var(--font-sans)}.review-surface-annotation-card textarea::placeholder{color:var(--fg-faint)}.review-surface-annotation-card .review-surface-hint{margin-top:6px;font-size:11px;color:var(--fg-faint)}.review-surface-annotation-card .review-surface-hint-alert{color:var(--danger-fg,#ff9d7a);font-weight:700}.review-surface-annotation-card .review-surface-row{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}.review-surface-annotation-card button{border:0;border-radius:var(--radius-md);padding:8px 10px;font-family:var(--font-sans);font-size:13px;font-weight:700;cursor:pointer}.review-surface-annotation-card button:active{opacity:.85}.review-surface-annotation-card .review-surface-send{background:var(--accent);color:var(--brass-ink)}.review-surface-annotation-card .review-surface-send:hover{background:var(--accent-hover)}.review-surface-annotation-card .review-surface-cancel{background:var(--steel-700);color:var(--fg)}.review-surface-annotation-card .review-surface-action{background:var(--steel-700);color:var(--accent)}.review-surface-annotation-card .review-surface-action:hover{background:var(--steel-600)}.review-surface-annotation-card.is-dropping{outline:2px dashed var(--accent);outline-offset:3px}.review-surface-attachments{display:flex;flex-direction:column;gap:6px;margin-top:8px;max-height:176px;overflow-y:auto}.review-surface-attachment-chip{display:flex;align-items:center;gap:8px;padding:6px;border-radius:var(--radius-md);background:var(--bg);border:1px solid var(--border)}.review-surface-attachment-chip.is-error{border-color:var(--danger,#e0623d)}.review-surface-attachment-thumb{width:32px;height:32px;border-radius:6px;object-fit:cover;background:var(--ink-700);flex:0 0 auto}.review-surface-attachment-thumb-empty{display:inline-block}.review-surface-attachment-body{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1 1 auto}.review-surface-attachment-name{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.review-surface-attachment-status{font-size:11px;color:var(--fg-faint)}.review-surface-attachment-status-error{color:var(--danger-fg,#ff9d7a)}.review-surface-attachment-retry{flex:0 0 auto;padding:4px 8px;font-size:11px;font-weight:700;border-radius:8px;background:var(--steel-700);color:var(--fg);cursor:pointer;border:0}.review-surface-attachment-remove{flex:0 0 auto;display:flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0!important;border-radius:50%;background:transparent;color:color-mix(in srgb,var(--fg) 85%,transparent);cursor:pointer;border:0}.review-surface-attachment-remove:hover{background:color-mix(in srgb,var(--fg) 14%,transparent);color:var(--fg)}.review-surface-attach-row{margin-top:8px}.review-surface-attach{display:inline-flex;align-items:center;gap:6px;padding:6px 9px!important;background:var(--steel-700)!important;color:var(--fg)!important;font-size:12px!important}.review-surface-attach:hover{background:var(--steel-600)!important}.review-surface-reveal-marker{position:fixed;pointer-events:none;border:2px solid var(--accent);border-radius:4px;box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 22%,transparent);animation:review-surface-reveal-pulse 2.4s var(--ease,ease-out) forwards}@keyframes review-surface-reveal-pulse{0%{opacity:0}12%{opacity:1}70%{opacity:1}100%{opacity:0}}.review-surface-image-expand{position:fixed;width:32px;height:32px;display:flex;align-items:center;justify-content:center;padding:0;border:1px solid var(--border);border-radius:var(--radius-md);background:color-mix(in srgb,var(--bg-panel) 88%,transparent);color:var(--fg);cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.35)}.review-surface-image-expand:hover{color:var(--accent);border-color:var(--accent)}.review-surface-image-expand[hidden],.review-surface-lightbox[hidden]{display:none}.review-surface-lightbox{position:fixed;left:0;top:0;width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;padding:2vmin;background:rgba(0,0,0,.86);cursor:zoom-out;overscroll-behavior:contain;touch-action:pinch-zoom}.review-surface-lightbox img{width:100%;height:100%;object-fit:contain;border-radius:4px;box-shadow:var(--shadow-floating)}.review-surface-annotation-card.is-nudged{animation:review-surface-nudge .32s ease-out}@keyframes review-surface-nudge{0%,100%{transform:translateX(0)}25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}.review-surface-note-marker{position:absolute;width:14px;height:14px;padding:0;display:flex;align-items:center;justify-content:center;border:0;background:transparent;color:var(--accent);cursor:pointer;filter:drop-shadow(0 1px 2px rgba(0,0,0,.6));opacity:.9}.review-surface-note-marker:hover,.review-surface-note-marker[aria-expanded=true]{opacity:1;transform:scale(1.15)}.review-surface-note-preview{position:fixed;width:min(300px,calc(100vw - 24px));max-height:min(320px,calc(100vh - 24px));overflow:auto;padding:8px;border-radius:var(--radius-md);background:var(--bg-panel);color:var(--fg);border:1px solid var(--accent);box-shadow:var(--shadow-floating);font:13px/1.4 var(--font-sans)}.review-surface-note-preview[hidden],.review-surface-note-marker[hidden]{display:none}.review-surface-note-row{display:block;padding:4px 2px}.review-surface-note-row+.review-surface-note-row{border-top:1px solid var(--border)}.review-surface-note-text{white-space:pre-wrap;overflow-wrap:anywhere}.review-surface-note-row{position:relative;padding-right:22px;cursor:pointer;border-radius:6px}.review-surface-note-row:hover{background:color-mix(in srgb,var(--fg) 6%,transparent)}.review-surface-note-row .review-surface-note-edit{position:absolute;top:3px;right:0;width:20px;height:20px;display:grid;place-items:center;border:0;border-radius:5px;padding:0;background:transparent;color:var(--fg-faint);cursor:pointer}.review-surface-note-row .review-surface-note-edit:hover,.review-surface-note-row .review-surface-note-edit:focus-visible{background:var(--steel-700);color:var(--accent)}`;
+    style.textContent = `:host{all:initial;position:fixed;z-index:2147483647;left:0;top:0;color-scheme:dark;--ink-900:#0f1115;--ink-800:#11141a;--ink-700:#171a21;--ink-600:#1c212b;--steel-700:#2a2f3a;--steel-600:#303745;--steel-500:#3c4557;--steel-400:#8c96aa;--steel-300:#aeb6c6;--steel-200:#b9c0cf;--steel-100:#d8deea;--cream-50:#fffbf3;--cream-100:#f7f3ea;--cream-200:#e8e1cf;--brass-500:#f4c95d;--brass-400:#ffd877;--brass-ink:#17130a;--bg:var(--ink-900);--bg-panel:var(--ink-800);--bg-elevated:var(--ink-600);--fg:var(--cream-100);--fg-faint:var(--steel-300);--border:var(--steel-600);--accent:#f4c95d;--accent-hover:#ffd877;--font-sans:Geist,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--font-mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--radius-md:10px;--radius-xl:14px;--shadow-floating:0 20px 70px rgba(0,0,0,.35);font-family:var(--font-sans)}*{box-sizing:border-box}:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.review-surface-text-highlight{position:fixed;pointer-events:none;background:color-mix(in srgb,var(--accent) 28%,transparent);border-radius:2px;box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 45%,transparent)}.review-surface-annotation-card{position:fixed;width:min(320px,calc(100vw - 24px));padding:12px;border-radius:var(--radius-xl);background:var(--bg-panel);color:var(--fg);border:1px solid var(--accent);box-shadow:var(--shadow-floating);font:14px/1.4 var(--font-sans)}.review-surface-heading{font-weight:700;margin-bottom:6px}.review-surface-annotation-card textarea{width:100%;min-height:86px;max-height:min(40vh,260px);resize:vertical;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--fg) 28%,transparent) transparent;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg);color:var(--fg);padding:9px;font:inherit;font-family:var(--font-sans)}.review-surface-annotation-card textarea::-webkit-scrollbar{width:6px}.review-surface-annotation-card textarea::-webkit-scrollbar-thumb{border-radius:3px;background:color-mix(in srgb,var(--fg) 28%,transparent)}.review-surface-annotation-card textarea::placeholder{color:var(--fg-faint)}.review-surface-annotation-card .review-surface-hint{margin-top:6px;font-size:11px;color:var(--fg-faint)}.review-surface-annotation-card .review-surface-hint-alert{color:var(--danger-fg,#ff9d7a);font-weight:700}.review-surface-annotation-card .review-surface-row{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}.review-surface-annotation-card button{border:0;border-radius:var(--radius-md);padding:8px 10px;font-family:var(--font-sans);font-size:13px;font-weight:700;cursor:pointer}.review-surface-annotation-card button:active{opacity:.85}.review-surface-annotation-card .review-surface-send{background:var(--accent);color:var(--brass-ink)}.review-surface-annotation-card .review-surface-send:hover{background:var(--accent-hover)}.review-surface-annotation-card .review-surface-cancel{background:var(--steel-700);color:var(--fg)}.review-surface-annotation-card .review-surface-action{background:var(--steel-700);color:var(--accent)}.review-surface-annotation-card .review-surface-action:hover{background:var(--steel-600)}.review-surface-annotation-card.is-dropping{outline:2px dashed var(--accent);outline-offset:3px}.review-surface-attachments{display:flex;flex-direction:column;gap:6px;margin-top:8px;max-height:176px;overflow-y:auto}.review-surface-attachment-chip{display:flex;align-items:center;gap:8px;padding:6px;border-radius:var(--radius-md);background:var(--bg);border:1px solid var(--border)}.review-surface-attachment-chip.is-error{border-color:var(--danger,#e0623d)}.review-surface-attachment-thumb{width:32px;height:32px;border-radius:6px;object-fit:cover;background:var(--ink-700);flex:0 0 auto}.review-surface-attachment-thumb-empty{display:inline-block}.review-surface-attachment-body{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1 1 auto}.review-surface-attachment-name{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.review-surface-attachment-status{font-size:11px;color:var(--fg-faint)}.review-surface-attachment-status-error{color:var(--danger-fg,#ff9d7a)}.review-surface-attachment-retry{flex:0 0 auto;padding:4px 8px;font-size:11px;font-weight:700;border-radius:8px;background:var(--steel-700);color:var(--fg);cursor:pointer;border:0}.review-surface-attachment-remove{flex:0 0 auto;display:flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0!important;border-radius:50%;background:transparent;color:color-mix(in srgb,var(--fg) 85%,transparent);cursor:pointer;border:0}.review-surface-attachment-remove:hover{background:color-mix(in srgb,var(--fg) 14%,transparent);color:var(--fg)}.review-surface-attach-row{margin-top:8px}.review-surface-attach{display:inline-flex;align-items:center;gap:6px;padding:6px 9px!important;background:var(--steel-700)!important;color:var(--fg)!important;font-size:12px!important}.review-surface-attach:hover{background:var(--steel-600)!important}.review-surface-reveal-marker{position:fixed;pointer-events:none;border:2px solid var(--accent);border-radius:4px;box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 22%,transparent);animation:review-surface-reveal-pulse 2.4s var(--ease,ease-out) forwards}@keyframes review-surface-reveal-pulse{0%{opacity:0}12%{opacity:1}70%{opacity:1}100%{opacity:0}}.review-surface-image-expand{position:fixed;width:32px;height:32px;display:flex;align-items:center;justify-content:center;padding:0;border:1px solid var(--border);border-radius:var(--radius-md);background:color-mix(in srgb,var(--bg-panel) 88%,transparent);color:var(--fg);cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.35)}.review-surface-image-expand:hover{color:var(--accent);border-color:var(--accent)}.review-surface-image-expand[hidden],.review-surface-lightbox[hidden]{display:none}.review-surface-lightbox{position:fixed;left:0;top:0;width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;padding:2vmin;background:rgba(0,0,0,.86);cursor:zoom-out;overscroll-behavior:contain;touch-action:pinch-zoom}.review-surface-lightbox img{width:100%;height:100%;object-fit:contain;border-radius:4px;box-shadow:var(--shadow-floating)}.review-surface-annotation-card.is-nudged{animation:review-surface-nudge .32s ease-out}@keyframes review-surface-nudge{0%,100%{transform:translateX(0)}25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}.review-surface-note-marker{position:absolute;width:14px;height:14px;padding:0;display:flex;align-items:center;justify-content:center;border:0;background:transparent;color:var(--accent);cursor:pointer;filter:drop-shadow(0 1px 2px rgba(0,0,0,.6));opacity:.9}.review-surface-note-marker:hover,.review-surface-note-marker[aria-expanded=true]{opacity:1;transform:scale(1.15)}.review-surface-note-preview{position:fixed;width:min(300px,calc(100vw - 24px));max-height:min(320px,calc(100vh - 24px));overflow:auto;padding:8px;border-radius:var(--radius-md);background:var(--bg-panel);color:var(--fg);border:1px solid var(--accent);box-shadow:var(--shadow-floating);font:13px/1.4 var(--font-sans)}.review-surface-note-preview[hidden],.review-surface-note-marker[hidden]{display:none}.review-surface-note-row{display:block;padding:4px 2px}.review-surface-note-row+.review-surface-note-row{border-top:1px solid var(--border)}.review-surface-note-text{white-space:pre-wrap;overflow-wrap:anywhere}.review-surface-note-row{position:relative;padding-right:22px;cursor:pointer;border-radius:6px}.review-surface-note-row:hover{background:color-mix(in srgb,var(--fg) 6%,transparent)}.review-surface-note-row .review-surface-note-edit{position:absolute;top:3px;right:0;width:20px;height:20px;display:grid;place-items:center;border:0;border-radius:5px;padding:0;background:transparent;color:var(--fg-faint);cursor:pointer}.review-surface-note-row .review-surface-note-edit:hover,.review-surface-note-row .review-surface-note-edit:focus-visible{color:var(--accent)}`;
     style.textContent += String(options.hostThemeCss || "");
     shadow.appendChild(style);
     return shadow;
@@ -6584,6 +6584,7 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
   window.addEventListener("resize", () => repositionActiveCard?.());
   if (window.visualViewport && typeof window.visualViewport.addEventListener === "function") {
     window.visualViewport.addEventListener("resize", () => repositionActiveCard?.());
+    window.visualViewport.addEventListener("scroll", () => repositionActiveCard?.());
   }
   let activeCardTextarea = null;
   function activeCardIsEmpty() {
@@ -6603,6 +6604,7 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     activeCardTextarea?.focus?.();
   }
   function closeCard() {
+    if (activeCardTextarea) postArtifactMessage("review-surface:composing", { open: false });
     activeCardTextarea = null;
     activeCardContext = null;
     repositionActiveCard = null;
@@ -6642,17 +6644,56 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     const isCellItself = isTableCell && (c.tag === "td" || c.tag === "th");
     const tableLabel = isTableCell ? [c.target?.rowLabel, c.target?.columnLabel].filter(Boolean).join(" \u2192 ") : "";
     const heading = c.tag === "text" ? "Annotate text" : tableLabel ? isCellItself ? "Annotate cell: " + escapeAnnotationText(tableLabel) : "Annotate &lt;" + c.tag + "&gt; in " + escapeAnnotationText(tableLabel) : c.tag === "mermaid-node" ? "Annotate node" + (nodeLabel ? ": " + escapeAnnotationText(nodeLabel) : "") : "Annotate &lt;" + c.tag + "&gt;";
-    const placeholder = c.tag === "text" ? "Tell the agent what to change about this text..." : isCellItself ? "Tell the agent what to change about this table cell..." : c.tag === "mermaid-node" ? "Tell the agent what to change about this diagram node..." : "Tell the agent what to change about this element...";
+    const placeholder = c.tag === "text" ? "Tell the agent what to do about this text..." : isCellItself ? "Tell the agent what to do about this table cell..." : c.tag === "mermaid-node" ? "Tell the agent what to do about this diagram node..." : "Tell the agent what to do about this element...";
     const sendNowHint = /Mac|iP(hone|ad|od)/.test(navigator.platform) ? "\u2318" : "Ctrl";
     card.innerHTML = '<div class="review-surface-heading">' + heading + '</div><textarea placeholder="' + placeholder + '"></textarea><div class="review-surface-attachments" data-attachments hidden></div><div class="review-surface-attach-row"><button class="review-surface-attach" type="button"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg><span>Attach image</span></button><input class="review-surface-attach-input" type="file" accept="' + ATTACHMENT_IMAGE_TYPES.accept + '" multiple hidden></div><div class="review-surface-hint">Enter to queue &middot; ' + sendNowHint + '+Enter to send &middot; paste or drop an image</div><div class="review-surface-row"><button class="review-surface-cancel" type="button">Cancel</button>' + annotationActions.map(
       (action, index) => '<button class="review-surface-action" type="button" data-action-index="' + index + '"' + (action.title ? ' title="' + escapeAnnotationText(action.title) + '"' : "") + ">" + escapeAnnotationText(action.label) + "</button>"
     ).join("") + '<button class="review-surface-send" type="button">Queue</button></div>';
     root.appendChild(card);
+    const point = options2.point && Number.isFinite(options2.point.x) ? options2.point : null;
     function positionCard() {
-      const left = Math.min(Math.max(12, rect.left), window.innerWidth - card.offsetWidth - 12);
-      const top = Math.min(Math.max(12, rect.bottom + 8), visibleFrameBottom() - card.offsetHeight - 12);
+      const width = card.offsetWidth;
+      const height = card.offsetHeight;
+      const gap = 12;
+      const viewBottom = visibleFrameBottom();
+      const viewTop = window.visualViewport ? window.visualViewport.offsetTop : 0;
+      const viewWidth = window.innerWidth;
+      const clampLeft = (x) => Math.min(Math.max(12, x), viewWidth - width - 12);
+      const clampTop = (y) => Math.max(viewTop + 12, Math.min(y, viewBottom - height - 12));
+      const at = point || { x: rect.left + rect.width / 2, y: rect.top + Math.min(rect.height, 40) / 2 };
+      let left;
+      let top;
+      if (viewWidth < 640) {
+        left = clampLeft(rect.left);
+        top = Math.max(viewTop + 12, Math.min(rect.bottom + 8, viewBottom - height - 12));
+      } else {
+        const fitsRight = rect.right + gap + width <= viewWidth - 12;
+        const fitsLeft = rect.left - gap - width >= 12;
+        const preferRight = at.x >= rect.left + rect.width / 2;
+        const sideTop = clampTop(Math.max(rect.top, at.y - 24));
+        const fitsBelow = rect.bottom + gap + height <= viewBottom - 12;
+        const fitsAbove = rect.top - gap - height >= viewTop + 12;
+        const preferBelow = at.y >= rect.top + rect.height / 2;
+        const nearLeft = clampLeft(at.x - 40);
+        if (preferRight ? fitsRight : fitsLeft) {
+          left = preferRight ? rect.right + gap : rect.left - gap - width;
+          top = sideTop;
+        } else if (preferRight ? fitsLeft : fitsRight) {
+          left = preferRight ? rect.left - gap - width : rect.right + gap;
+          top = sideTop;
+        } else if (preferBelow ? fitsBelow : fitsAbove) {
+          left = nearLeft;
+          top = preferBelow ? rect.bottom + gap : rect.top - gap - height;
+        } else if (preferBelow ? fitsAbove : fitsBelow) {
+          left = nearLeft;
+          top = preferBelow ? rect.top - gap - height : rect.bottom + gap;
+        } else {
+          left = nearLeft;
+          top = viewBottom - rect.bottom >= rect.top - viewTop ? clampTop(rect.bottom + gap) : clampTop(rect.top - gap - height);
+        }
+      }
       card.style.left = left + "px";
-      card.style.top = Math.max(12, top) + "px";
+      card.style.top = top + "px";
     }
     positionCard();
     repositionActiveCard = positionCard;
@@ -6796,11 +6837,19 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
       }
     });
     textarea.addEventListener("input", scheduleReviewStateReport);
+    const fitTextarea = () => {
+      textarea.style.height = "auto";
+      textarea.style.height = textarea.scrollHeight + 2 + "px";
+      repositionActiveCard?.();
+    };
+    textarea.addEventListener("input", fitTextarea);
     if (typeof options2.restoreText === "string") {
       textarea.value = options2.restoreText;
       scheduleReviewStateReport();
     }
-    setTimeout(() => textarea.focus(), 0);
+    postArtifactMessage("review-surface:composing", { open: true });
+    textarea.focus({ preventScroll: true });
+    if (shadow && shadow.activeElement !== textarea) setTimeout(() => textarea.focus({ preventScroll: true }), 0);
   }
   function dataTransferHasFiles(dataTransfer) {
     if (!dataTransfer) return false;
@@ -7295,7 +7344,7 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     postArtifactMessage("review-surface:openPage", { href: path11 });
     return true;
   }
-  let restoreScrollBehavior = null;
+  let cancelPendingScroll = null;
   function followInPageLink(event) {
     if (event.defaultPrevented) return;
     if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -7305,7 +7354,7 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
     const href = link.getAttribute("href") || "";
     if (!href.startsWith("#")) return;
     event.preventDefault();
-    restoreScrollBehavior?.();
+    cancelPendingScroll?.();
     const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
     const name = href.slice(1);
     const toTop = (name === "" || name.toLowerCase() === "top") && !document.getElementById(name) && !document.getElementsByName?.(name)?.length;
@@ -7317,22 +7366,57 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
       }
       return;
     }
+    let target = document.getElementById(name);
+    try {
+      target = target || document.getElementById(decodeURIComponent(name));
+    } catch {
+    }
+    target = target || document.getElementsByName?.(name)?.[0] || null;
+    if (!target) {
+      window.location.replace(href);
+      return;
+    }
     const root = document.documentElement;
-    const previous = root.style.scrollBehavior;
-    root.style.scrollBehavior = reduced ? "auto" : "smooth";
-    const restore = () => {
-      if (restoreScrollBehavior !== restore) return;
-      restoreScrollBehavior = null;
-      window.clearTimeout(timer);
-      window.removeEventListener("scrollend", restore);
+    const margin = parseFloat(getComputedStyle(target).scrollMarginTop) || 0;
+    const top = target.getBoundingClientRect().top + window.scrollY - margin;
+    window.scrollTo({ left: window.scrollX, top, behavior: reduced ? "instant" : "smooth" });
+    const room = root.scrollHeight - window.innerHeight;
+    const destination = Number.isFinite(room) ? Math.max(0, Math.min(top, room)) : top;
+    const startY = window.scrollY;
+    const startedAt = Date.now();
+    let last = NaN;
+    let still = 0;
+    let frame = 0;
+    const cancel = () => {
+      window.cancelAnimationFrame(frame);
+      if (cancelPendingScroll === cancel) cancelPendingScroll = null;
+    };
+    const settle = () => {
+      if (cancelPendingScroll !== cancel) return;
+      const y = window.scrollY;
+      const begun = Math.abs(y - startY) >= 0.5 || Math.abs(y - destination) < 1;
+      still = begun && Math.abs(y - last) < 0.5 ? still + 1 : 0;
+      last = y;
+      if (still < 4 && Date.now() - startedAt < 2e3) {
+        frame = window.requestAnimationFrame(settle);
+        return;
+      }
+      cancelPendingScroll = null;
+      const previous = root.style.scrollBehavior;
+      root.style.scrollBehavior = "auto";
+      window.location.replace(href);
       root.style.scrollBehavior = previous;
     };
-    const timer = window.setTimeout(restore, 1e3);
-    window.addEventListener("scrollend", restore);
-    restoreScrollBehavior = restore;
-    window.location.replace(href);
+    cancelPendingScroll = cancel;
+    frame = window.requestAnimationFrame(settle);
   }
   window.addEventListener("click", followInPageLink);
+  if (document.head && !document.getElementById("review-surface-anchor-style")) {
+    const anchorStyle = document.createElement("style");
+    anchorStyle.id = "review-surface-anchor-style";
+    anchorStyle.textContent = ":where([id]){scroll-margin-top:max(24px,14vh);scroll-margin-top:max(24px,14svh)}@media (max-width:639px){:where([id]){scroll-margin-top:max(12px,4vh);scroll-margin-top:max(12px,4svh)}}";
+    document.head.appendChild(anchorStyle);
+  }
   document.addEventListener(
     "click",
     (event) => {
@@ -7362,7 +7446,7 @@ function createArtifactSdk(deriveQueueKey, isNativeInteractive = isNativeInterac
         closeCard();
         return;
       }
-      showAnnotationCard(event.target);
+      showAnnotationCard(event.target, { point: { x: event.clientX, y: event.clientY } });
     },
     true
   );
@@ -10059,6 +10143,13 @@ function resolveAnnotationActions(env = process.env, log = void 0) {
     return [];
   }
 }
+var HIDEABLE_MENU_ITEMS = /* @__PURE__ */ new Set(["send-page-and-end", "publish-link", "end-session"]);
+function resolveMenuItems(env = process.env, log = void 0, variable = "REVIEW_SURFACE_MENU_HIDE") {
+  const names = String(env[variable] || "").split(",").map((name) => name.trim().toLowerCase()).filter(Boolean);
+  const unknown = names.filter((name) => !HIDEABLE_MENU_ITEMS.has(name));
+  if (unknown.length) log?.(`${variable}: ignored ${unknown.join(", ")}`);
+  return new Set(names.filter((name) => HIDEABLE_MENU_ITEMS.has(name)));
+}
 var HOST_PAGE_RESERVED = [
   "/api",
   "/artifact",
@@ -10292,6 +10383,12 @@ async function serve({
   });
   const attachmentConfig = resolveAttachmentConfig();
   const annotationActions = resolveAnnotationActions(process.env, (line) => writeLog(`[review-surface] ${line}`));
+  const menuHide = resolveMenuItems(process.env, (line) => writeLog(`[review-surface] ${line}`));
+  const menuDisable = resolveMenuItems(
+    process.env,
+    (line) => writeLog(`[review-surface] ${line}`),
+    "REVIEW_SURFACE_MENU_DISABLE"
+  );
   const hostPages = resolveHostPages(process.env, (line) => writeLog(`[review-surface] ${line}`));
   const messageFeed = resolveMessageFeed(process.env, (line) => writeLog(`[review-surface] ${line}`));
   await mkdir6(path9.dirname(stateFile2), { recursive: true });
@@ -11028,6 +11125,8 @@ data: ${JSON.stringify({ threads })}
           hostPage: hostPageOf(session),
           messageFeed,
           hostTheme: await readHostTheme(),
+          menuHide,
+          menuDisable,
           assetVersions: { client: client.version, css: css.version }
         })
       );
@@ -12155,8 +12254,11 @@ function createChromeHtml(session, {
   hostPage = null,
   messageFeed = "",
   hostTheme = "",
-  assetVersions = { client: "", css: "" }
+  assetVersions = { client: "", css: "" },
+  menuHide = /* @__PURE__ */ new Set(),
+  menuDisable = /* @__PURE__ */ new Set()
 } = {}) {
+  const shown = (name, html) => menuHide.has(name) ? "" : menuDisable.has(name) ? html.replace(/^(<button\b[^>]*?)\s+title="[^"]*"/, "$1").replace(/^<button /, '<button aria-disabled="true" title="This feature is under revision" ') : html;
   const versioned = (file, version) => version ? `${file}?v=${encodeURIComponent(version)}` : file;
   const hostThemeTag = hostTheme ? `
 <style id="review-surface-host-theme">${String(hostTheme).replace(/<\/style/gi, "<\\/style")}</style>` : "";
@@ -12217,7 +12319,7 @@ ${faviconTag}
 <link rel="stylesheet" href="${versioned("/chrome.css", assetVersions.css)}">${hostThemeTag}
 </head>
 <body class="${bodyClass}">
-<div class="bar"><div class="brand"><span class="brand-mark">Cadre</span></div><div class="spacer" aria-hidden="true"></div><div class="warnings-wrap" id="warningsWrap" hidden><button class="warnings-button" id="warningsButton" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="warningsDrawer">${chromeIcons.warning}<span class="warnings-count" id="warningsCount">0</span></button><div class="menu warnings-drawer" id="warningsDrawer" role="dialog" aria-labelledby="warningsTitle" aria-describedby="warningsSummary" hidden><div class="warnings-head"><h2 class="warnings-title" id="warningsTitle">Layout issues</h2><p class="warnings-summary" id="warningsSummary"></p></div><div class="warnings-toolbar"><label class="warnings-selectall"><input type="checkbox" id="warningsSelectAll"><span>Select all</span></label><span class="warnings-selected" id="warningsSelected" role="status" aria-live="polite"></span></div><div class="warnings-list" id="warningsList"></div><div class="warnings-foot"><p class="warnings-note">Queueing sends a repair request with your next feedback. An issue is marked resolved only after a newer artifact load and a complete check at the same viewport no longer finds it.</p><button class="button" id="warningsQueueButton" type="button" disabled>Queue selected fixes</button></div></div></div><button class="more-button host-bell" id="hostBell" type="button" hidden aria-haspopup="menu" aria-expanded="false" aria-label="Notifications" title="Notifications">${chromeIcons.bell}<span class="host-bell-count" id="hostBellCount" hidden></span></button><button class="annotate-toggle" id="annotation" type="button" aria-pressed="true" aria-label="Annotate" title="${escapeHtml(modeToggleHint)}">${chromeIcons.annotate}</button><div class="more-wrap" id="moreWrap"><button class="more-button" id="moreButton" type="button" title="More" aria-haspopup="menu" aria-expanded="false">${chromeIcons.more}</button><div class="menu more-menu" id="moreMenu" hidden><div class="menu-head"><div class="menu-label">Editing</div><button class="menu-file" id="copyPath" type="button" title="Copy path \xB7 ${escapeHtml(session.file)}">${chromeIcons.file}<span class="menu-file-text"><span class="path-head">${escapeHtml(pathHead)}</span><span class="path-tail">${escapeHtml(pathTail)}</span></span><span class="copy-hint" id="copyHint"><span class="icon-copy">${chromeIcons.copy}</span><span class="icon-check">${chromeIcons.check}</span><span id="copyHintText">Copy</span></span></button></div><div class="menu-rule"></div><button class="menu-item" id="panelCollapse" type="button" aria-pressed="false" title="The older conversation sidebar - the This page chat in the footer replaces it">${chromeIcons.chat}<span>Conversation sidebar</span></button><button class="menu-item" id="reloadArtifact" type="button">${chromeIcons.refresh}<span>Reload artifact</span></button><button class="menu-item" id="copySnapshot" type="button">${chromeIcons.camera}<span>Copy DOM snapshot</span></button><button class="menu-item" id="exportArtifact" type="button">${chromeIcons.download}<span>Export standalone HTML</span></button><button class="menu-item" id="shareArtifact" type="button">${chromeIcons.globe}<span>Publish link</span></button><div class="menu-rule"></div><button class="menu-item danger" id="sendPageAndEnd" type="button" title="Send the page review with the This page chat&#39;s message and images, then end the session">${chromeIcons.exit}<span>Send page and end</span></button><button class="menu-item danger" id="end" type="button">${chromeIcons.exit}<span>End session</span></button></div></div></div>
+<div class="bar"><div class="brand"><span class="brand-mark">Cadre</span></div><div class="spacer" aria-hidden="true"></div><div class="warnings-wrap" id="warningsWrap" hidden><button class="warnings-button" id="warningsButton" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="warningsDrawer">${chromeIcons.warning}<span class="warnings-count" id="warningsCount">0</span></button><div class="menu warnings-drawer" id="warningsDrawer" role="dialog" aria-labelledby="warningsTitle" aria-describedby="warningsSummary" hidden><div class="warnings-head"><h2 class="warnings-title" id="warningsTitle">Layout issues</h2><p class="warnings-summary" id="warningsSummary"></p></div><div class="warnings-toolbar"><label class="warnings-selectall"><input type="checkbox" id="warningsSelectAll"><span>Select all</span></label><span class="warnings-selected" id="warningsSelected" role="status" aria-live="polite"></span></div><div class="warnings-list" id="warningsList"></div><div class="warnings-foot"><p class="warnings-note">Queueing sends a repair request with your next feedback. An issue is marked resolved only after a newer artifact load and a complete check at the same viewport no longer finds it.</p><button class="button" id="warningsQueueButton" type="button" disabled>Queue selected fixes</button></div></div></div><button class="more-button host-bell" id="hostBell" type="button" hidden aria-haspopup="menu" aria-expanded="false" aria-label="Notifications" title="Notifications">${chromeIcons.bell}<span class="host-bell-count" id="hostBellCount" hidden></span></button><button class="annotate-toggle" id="annotation" type="button" aria-pressed="true" aria-label="Annotate" title="${escapeHtml(modeToggleHint)}">${chromeIcons.annotate}</button><div class="more-wrap" id="moreWrap"><button class="more-button" id="moreButton" type="button" title="More" aria-haspopup="menu" aria-expanded="false">${chromeIcons.more}</button><div class="menu more-menu" id="moreMenu" hidden><div class="menu-head"><div class="menu-label">Page file location</div><button class="menu-file" id="copyPath" type="button" title="Copy where this page is saved \xB7 ${escapeHtml(session.file)}">${chromeIcons.file}<span class="menu-file-text"><span class="path-head">${escapeHtml(pathHead)}</span><span class="path-tail">${escapeHtml(pathTail)}</span></span><span class="copy-hint" id="copyHint"><span class="icon-copy">${chromeIcons.copy}</span><span class="icon-check">${chromeIcons.check}</span><span id="copyHintText">Copy</span></span></button></div><div class="menu-rule"></div><button class="menu-item" id="reloadArtifact" type="button">${chromeIcons.refresh}<span>Reload artifact</span></button><button class="menu-item" id="exportArtifact" type="button">${chromeIcons.download}<span>Download page</span></button>${shown("publish-link", `<button class="menu-item" id="shareArtifact" type="button">${chromeIcons.globe}<span>Publish link</span></button>`)}<div class="menu-rule"></div>${shown("send-page-and-end", `<button class="menu-item danger" id="sendPageAndEnd" type="button" title="Send the page review with the This page chat&#39;s message and images, then end the session">${chromeIcons.exit}<span>Send page and end</span></button>`)}${shown("end-session", `<button class="menu-item danger" id="end" type="button">${chromeIcons.exit}<span>End session</span></button>`)}</div></div></div>
 <div class="layout"><div class="frame">${newerPageBar}${artifactFrame}</div><div class="panel-scrim" id="panelScrim"></div><aside class="panel" id="panel"><div class="panel-head" id="panelHead"><span class="panel-handle" aria-hidden="true"></span><div class="panel-head-row"><h2>Conversation</h2><span class="panel-summary" id="panelSummary" role="status" aria-live="polite"></span><button class="panel-toggle" id="panelToggle" type="button" aria-expanded="false" aria-controls="panel" aria-label="Show conversation">${chromeIcons.chevronUp}</button></div></div><div class="panel-scroll" id="panelScroll"><div class="chat" id="chatLog"></div><div class="annotation-pills" id="annotationPills"></div></div><div class="composer" id="chatComposer"><div class="presence-banner handoff-banner" id="handoffBanner" hidden><span>This review is open in another Review Surface tab.</span><button class="handoff-takeover" id="handoffTakeover" type="button">Take over here</button></div><div class="presence-banner handoff-banner" id="outdatedBanner" hidden><span id="outdatedText">The Review Surface server this page was connected to is no longer running. Reloading will work once it is running again.</span><span class="outdated-actions"><button class="handoff-takeover" id="outdatedReload" type="button">Check and reload</button><button class="handoff-takeover" id="outdatedDismiss" type="button">Dismiss</button></span></div><div class="presence-banner" id="presenceBanner" hidden>Your agent is not listening. If this persists, ask your agent to poll for updates from Review Surface.</div><textarea id="chatInput" placeholder="Write a message for the agent..."></textarea><div class="chat-attachments" id="chatAttachments"></div><div class="chat-attachment-toolbar"><button class="chat-attach" id="chatAttach" type="button">Attach images</button><input id="chatAttachInput" type="file" accept="${escapeHtml(acceptedMime.join(","))}" multiple hidden><span class="chat-attachment-notice" id="chatAttachmentNotice" role="status"></span></div><div class="send-hint" id="sendHint" hidden>Write a message or annotate an element first.</div><div class="actions" id="sendActions"><button class="button button-danger" id="sendAndEnd" type="button">${chromeIcons.exit}<span>Send &amp; End</span></button><button class="button" id="send">Send to Agent</button></div></div></aside></div>
 <footer class="threads-footer" id="threadsWrap" hidden><button class="threads-button" id="threadsButton" type="button" title="Threads" aria-haspopup="menu" aria-expanded="false" aria-controls="threadsMenu">${chromeIcons.chat}<span>Threads</span><span class="threads-count" id="threadsCount" hidden>0</span></button><div class="threads-tabs" id="threadsTabs"></div><button class="threads-more" id="threadsMore" type="button" title="Every thread" hidden>+0</button><span class="threads-summary" id="threadsSummary"></span><div class="footer-home" id="footerHome"><div class="threads-page-tab" id="threadsPageTab"></div><div class="queue-dock" id="queueDock" hidden><button class="queue-open" id="queueOpen" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="queueMenu" title="See what is queued for this page&#39;s agent">Queued <span class="queue-count" id="queueCount">0</span></button><button class="queue-send" id="queueSend" type="button" title="Send everything queued to this page&#39;s agent now">Send</button><div class="menu queue-menu" id="queueMenu" role="menu" aria-label="Queued for this page" hidden><div class="menu-label">Queued for this page&#39;s agent</div><div class="queue-list" id="queueList"></div><div class="queue-menu-actions"><button class="button" id="queueMenuSend" type="button" title="Send everything queued to this page&#39;s agent now">Send</button></div></div></div></div><div class="menu threads-menu" id="threadsMenu" role="menu" aria-label="Threads" hidden><div class="menu-label" id="threadsHereLabel">On this page</div><div class="threads-list" id="threadsList"></div><div class="menu-label" id="threadsOtherLabel" hidden>On other pages</div><div class="threads-list" id="threadsOtherList"></div><form class="threads-new" id="threadsNew" hidden><div class="menu-label">Start a thread on this page</div><textarea id="threadsNewText" rows="2" placeholder="Ask about this page. The page keeps its round."></textarea><div class="threads-new-agents" id="threadsNewAgents"></div></form><div class="menu-rule"></div><button class="menu-item" id="threadsNotify" type="button" hidden>${chromeIcons.bell}<span>Notify me when I am in another tab</span></button></div></footer>
 <div class="chat-pop" id="chatPop" role="dialog" aria-modal="false" aria-labelledby="chatPopTitle" hidden><div class="chat-pop-head"><span class="chat-pop-title" id="chatPopTitle"></span><span class="thread-presence" id="chatPopPresence" role="status" aria-live="polite"></span><button class="thread-action" id="chatPopFull" type="button" title="Full screen, like a terminal" aria-label="Full screen" aria-pressed="false">${chromeIcons.fullscreen}</button><button class="thread-action" id="chatPopExpand" type="button" title="Open the thread with its page" aria-label="Open the thread with its page">${chromeIcons.external}</button><button class="thread-action" id="chatPopClose" type="button" title="Minimize - its tab in the footer tells you when it answers" aria-label="Minimize">${chromeIcons.minimize}</button></div><div class="chat-pop-log" id="chatPopLog" role="log" aria-live="polite"></div><form class="chat-pop-compose" id="chatPopForm"><textarea id="chatPopInput" rows="2" placeholder="Reply\u2026"></textarea><div class="chat-attachments chat-pop-attachments" id="chatPopAttachments"></div><div class="chat-attachment-toolbar chat-pop-attach-bar" id="chatPopAttachBar"><button class="chat-attach" id="chatPopAttach" type="button" title="Attach images - they go with Send page">Attach images</button><input id="chatPopAttachInput" type="file" accept="${escapeHtml(acceptedMime.join(","))}" multiple hidden><span class="chat-attachment-notice" id="chatPopAttachmentNotice" role="status"></span><label class="chat-pop-speed" title="Ask for a fast answer: the agent may use a faster model or a shorter look"><input type="checkbox" id="chatPopQuick"><span>Quick answer</span></label></div><div class="chat-pop-actions"><span class="chat-pop-hint" id="chatPopHint" role="status"></span><button class="button chat-pop-send-page" id="chatPopSendPage" type="button" title="Send the whole page review - your queued notes and the page itself - to this page&#39;s agent" hidden>Send page</button><button class="button" type="submit" id="chatPopSend">Send</button></div></form></div>

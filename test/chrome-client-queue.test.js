@@ -54,6 +54,8 @@ async function createChromeHarness({
   // Opt-in framing window: the chrome is inside a host's iframe, so `window.parent` is the host,
   // which records what the chrome posts to it. Left off, the chrome is a top-level page.
   framed = false,
+  // Opt-in menu items the served page marks aria-disabled, as REVIEW_SURFACE_MENU_DISABLE does.
+  disabledMenuItems = [],
 } = {}) {
   const source = await readFile(sourceUrl, "utf8");
   // Seed sessionStorage before the client boots, to model a tab whose queue was
@@ -148,6 +150,9 @@ async function createChromeHarness({
       style: {},
       setAttribute(name, value) {
         this[name] = String(value);
+      },
+      getAttribute(name) {
+        return name in this ? String(this[name]) : null;
       },
       addEventListener(type, handler) {
         listeners.set(type, handler);
@@ -444,6 +449,7 @@ async function createChromeHarness({
     };
   }
 
+  for (const id of disabledMenuItems) element(id).setAttribute("aria-disabled", "true");
   vm.runInNewContext(source, context, { filename: "chrome-client.js" });
   await flushPromises();
   if (artifactSrc) frame.dispatch("load");
@@ -6822,13 +6828,13 @@ test("the footer shows the queue with a one-click Send and a drop-up to check an
     .children[1].children.find((child) => child.className === "queue-item-remove")
     .onclick({ stopPropagation() {} });
   assert.equal(chrome.element("queueCount").textContent, "1");
-  // closing the Queued window settles the removal: no Undo when it opens again
+  // closing the Queued window does not cut the Undo short: reopened in time, it is still there
   chrome.element("queueOpen").onclick();
   assert.equal(chrome.element("queueMenu").hidden, true);
   chrome.element("queueOpen").onclick();
   const reopened = chrome.element("queueList").children;
-  assert.equal(reopened.length, 1);
-  assert.ok(!String(reopened[0].className).includes("queue-item-removed"));
+  assert.equal(reopened.length, 2);
+  assert.ok(String(reopened[1].className).includes("queue-item-removed"));
 
   chrome.element("queueSend").onclick();
   assert.equal(chrome.element("queueMenu").hidden, true);
@@ -6874,7 +6880,6 @@ test("This page: first tab, marked apart, a direct chat on Enter, Send page send
   const [tab] = chrome.element("threadsPageTab").children;
   assert.equal(tab.dataset.threadKey, "page:abc");
   assert.match(tab.className, /page-tab/);
-  assert.equal(chrome.element("panelCollapse")["aria-pressed"], "false", "the sidebar starts collapsed");
 
   tab.onclick();
   await flushPromises();
@@ -7464,4 +7469,27 @@ test("the host's bell is named Notifications when the host sends no label", asyn
   chrome.sendHostMessage({ type: "review-surface-host:carryBell" });
   chrome.sendHostMessage({ type: "review-surface-host:bellState", count: 1 });
   assert.equal(chrome.element("hostBell")["aria-label"], "Notifications");
+});
+
+// A host can disable a menu item (REVIEW_SURFACE_MENU_DISABLE): it stays in the menu, greyed out,
+// and choosing it does nothing, so a disabled End session never ends the session.
+test("a disabled End session or Send page and end does nothing when chosen", async () => {
+  const posts = [];
+  const chrome = await createChromeHarness({
+    disabledMenuItems: ["end", "sendPageAndEnd"],
+    fetchImpl: async (url, init) => {
+      if (init?.method === "POST") posts.push(String(url));
+      return { ok: true, json: async () => ({}) };
+    },
+  });
+  await flushPromises();
+  for (const id of ["end", "sendPageAndEnd"]) {
+    assert.equal(chrome.element(id).onclick ?? null, null, `${id} has no click`);
+    chrome.element(id).dispatch("click");
+  }
+  await flushPromises();
+  assert.deepEqual(
+    posts.filter((url) => url.endsWith("/end")),
+    [],
+  );
 });

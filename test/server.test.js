@@ -30,6 +30,7 @@ import {
   resolveDesignAssetPath,
   parseFrameAncestorOrigin,
   resolveAnnotationActions,
+  resolveMenuItems,
   resolveIdleTimeoutMs,
   resolveWatchTarget,
   serve,
@@ -847,8 +848,11 @@ test("overflow menu shows the artifact path with a copy affordance", async () =>
   const html = createChromeHtml({ key: "abc", file: "/tmp/artifact/index.html" });
   const css = await chromeCssSource();
 
-  assert.match(html, /class="menu-label">Editing</);
-  assert.match(html, /class="menu-file" id="copyPath"[^>]*title="Copy path · \/tmp\/artifact\/index\.html"/);
+  assert.match(html, /class="menu-label">Page file location</);
+  assert.match(
+    html,
+    /class="menu-file" id="copyPath"[^>]*title="Copy where this page is saved · \/tmp\/artifact\/index\.html"/,
+  );
   assert.match(html, /class="copy-hint"/);
   assert.match(css, /\.menu-file\{[^}]*font-family:var\(--font-mono\)/);
   assert.match(css, /\.copy-hint\.copied\{color:var\(--accent-hover\)/);
@@ -874,7 +878,7 @@ test("overflow menu path shortens the home directory to a tilde", () => {
   assert.match(html, /class="path-head">~\/projects\/demo\/</);
   assert.match(html, /class="path-tail">artifact\.html</);
   // The copy affordance still carries the absolute path.
-  assert.ok(html.includes(`title="Copy path · ${file}"`));
+  assert.ok(html.includes(`title="Copy where this page is saved · ${file}"`));
 });
 
 test("overflow menu path display tolerates Windows separators", () => {
@@ -895,22 +899,62 @@ test("chrome can copy the full file path from the overflow menu", async () => {
   assert.match(js, /copyHintText\.textContent = "Copy"/);
 });
 
-test("overflow menu offers reload, snapshot copy, and end session actions", async () => {
+test("overflow menu offers reload and end session actions, and no longer the sidebar or a snapshot copy", async () => {
   const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
   const js = await chromeClientSource();
 
   assert.match(html, /id="reloadArtifact"[^<]*>.*Reload artifact/);
-  assert.match(html, /id="copySnapshot"[^<]*>.*Copy DOM snapshot/);
+  assert.doesNotMatch(html, /id="copySnapshot"/);
+  assert.doesNotMatch(html, /id="panelCollapse"/);
   assert.match(html, /class="menu-item danger" id="end"[^<]*>.*End session/);
   assert.doesNotMatch(html, /End Session</);
   assert.match(js, /event\.key === "Escape"/);
+});
+
+test("a host hides the menu items it names in REVIEW_SURFACE_MENU_HIDE, and only those", () => {
+  const logged = [];
+  const hide = resolveMenuItems({ REVIEW_SURFACE_MENU_HIDE: "send-page-and-end, nonsense" }, (line) =>
+    logged.push(line),
+  );
+  assert.deepEqual([...hide], ["send-page-and-end"]);
+  assert.match(logged.join(" "), /nonsense/);
+  const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" }, { menuHide: hide });
+  assert.doesNotMatch(html, /id="sendPageAndEnd"/);
+  assert.match(html, /id="end"/);
+  assert.match(html, /id="shareArtifact"/);
+  assert.match(createChromeHtml({ key: "abc", file: "/tmp/artifact.html" }), /id="sendPageAndEnd"/);
+});
+
+test("a host can disable a menu item instead: it stays listed, marked disabled and saying it is under revision", () => {
+  const disable = resolveMenuItems(
+    { REVIEW_SURFACE_MENU_DISABLE: "end-session" },
+    undefined,
+    "REVIEW_SURFACE_MENU_DISABLE",
+  );
+  const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" }, { menuDisable: disable });
+  assert.match(
+    html,
+    /<button aria-disabled="true" title="This feature is under revision" class="menu-item danger" id="end"/,
+  );
+});
+
+test("a disabled menu item carries one title: the reason it is disabled", () => {
+  const disable = resolveMenuItems(
+    { REVIEW_SURFACE_MENU_DISABLE: "send-page-and-end,end-session" },
+    undefined,
+    "REVIEW_SURFACE_MENU_DISABLE",
+  );
+  const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" }, { menuDisable: disable });
+  const sendPageAndEnd = /<button[^>]*id="sendPageAndEnd"[^>]*>/.exec(html)?.[0] || "";
+  assert.equal((sendPageAndEnd.match(/\btitle=/g) || []).length, 1, sendPageAndEnd);
+  assert.match(sendPageAndEnd, /aria-disabled="true" title="This feature is under revision"/);
 });
 
 test("overflow menu offers a standalone HTML export that downloads a portable file", async () => {
   const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
   const js = await chromeClientSource();
 
-  assert.match(html, /id="exportArtifact"[^<]*>.*Export standalone HTML/);
+  assert.match(html, /id="exportArtifact"[^<]*>.*Download page/);
   assert.match(js, /const exportArtifactButton/);
   assert.match(js, /async function exportArtifact/);
   assert.match(js, /fetch\("\/api\/" \+ key \+ "\/export"\)/);
@@ -950,16 +994,6 @@ test("overflow menu offers publishing an ht-ml.app link via a share dialog", asy
   assert.match(js, /fetch\("\/api\/" \+ key \+ "\/share"/);
   assert.match(js, /shareUrlInput\.value = data\.url/);
   assert.match(js, /shareUpdateKeyInput\.value = data\.update_key/);
-});
-
-test("copy DOM snapshot requests a fresh snapshot and copies it to the clipboard", async () => {
-  const js = await chromeClientSource();
-
-  assert.match(js, /const snapshotRequests = \[\]/);
-  assert.match(js, /requestSnapshot\("copy"\)/);
-  assert.match(js, /const snapshotAction = snapshotRequests\.shift\(\) \|\| "submit"/);
-  assert.match(js, /if \(snapshotAction === "copy"\)/);
-  assert.match(js, /copyText\(msg\.snapshot \|\| ""\)/);
 });
 
 test("clipboard copy falls back when navigator clipboard rejects", async () => {

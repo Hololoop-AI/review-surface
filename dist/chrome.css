@@ -1932,7 +1932,6 @@ body.host-page .layout {
 }
 body.host-page .panel,
 body.host-page .panel-scrim,
-body.host-page #panelCollapse,
 body.host-page #annotation {
   display: none;
 }
@@ -1973,9 +1972,6 @@ body.host-page #annotation {
 .annotate-toggle:disabled {
   opacity: 0.45;
   cursor: default;
-}
-#panelCollapse[aria-pressed="true"] {
-  color: var(--accent);
 }
 /* The queue in the footer: count, one-click Send, and a drop-up to check what is queued. */
 .queue-dock {
@@ -2736,4 +2732,57 @@ body.embedded-thread .threads-footer {
 }
 .host-bell-count[hidden] {
   display: none;
+}
+
+/* Note boxes (the in-place editor and Queued's): a thin, quiet scrollbar, and no scroll that
+   carries on into the page behind once the box reaches its end */
+.note-editor-input,
+.queue-item-input {
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--fg) 28%, transparent) transparent;
+}
+.note-editor-input::-webkit-scrollbar,
+.queue-item-input::-webkit-scrollbar {
+  width: 6px;
+}
+.note-editor-input::-webkit-scrollbar-thumb,
+.queue-item-input::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--fg) 28%, transparent);
+}
+
+/* Phone: the slide-up conversation sheet is gone (the footer's This page chat replaced it; a
+   thread shown inside another page's window keeps its panel), and while a note box is open the
+   threads footer steps aside so the box has the room. */
+@media (max-width: 860px) {
+  body:not(.embedded-thread) .panel {
+    display: none !important;
+  }
+  /* with no sheet dock, the footer takes the bottom edge itself, as on a host page */
+  body:not(.embedded-thread) .layout {
+    grid-template-rows: minmax(0, 1fr) env(safe-area-inset-bottom, 0px);
+  }
+  body:not(.embedded-thread).has-threads-footer .layout {
+    grid-template-rows: minmax(0, 1fr) calc(var(--foot-h) + env(safe-area-inset-bottom, 0px));
+  }
+  body:not(.embedded-thread) .threads-footer {
+    bottom: env(safe-area-inset-bottom, 0px);
+  }
+  body:not(.embedded-thread) .chat-pop {
+    bottom: calc(var(--foot-h) + env(safe-area-inset-bottom, 0px) + 6px);
+    height: min(440px, calc(100dvh - var(--bar-h) - var(--foot-h) - 24px));
+  }
+  body.composing .threads-footer {
+    display: none;
+  }
+}
+
+/* a menu item the host has disabled while it is reworked: still listed, greyed, saying why */
+.menu-item[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.menu-item[aria-disabled="true"]:hover {
+  background: transparent;
 }
