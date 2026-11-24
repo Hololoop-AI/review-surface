@@ -905,6 +905,25 @@ body.review-surface {
   font-weight: var(--w-medium);
   line-height: 1.4;
 }
+/* Notices that must be seen whatever else is shown (open in another tab, server gone): over the
+   artifact, above the layout gate like the bar above. */
+.chrome-notices {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 61;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: calc(100% - 24px);
+}
+.chrome-notices .presence-banner {
+  box-shadow: var(--shadow-tooltip);
+  color: var(--fg);
+}
 body:has(#endedOverlay:not([hidden])) .newer-page-bar {
   display: none;
 }
@@ -2759,6 +2778,9 @@ body.embedded-thread .threads-footer {
   body:not(.embedded-thread) .panel {
     display: none !important;
   }
+  body:not(.embedded-thread) .panel-scrim {
+    display: none;
+  }
   /* with no sheet dock, the footer takes the bottom edge itself, as on a host page */
   body:not(.embedded-thread) .layout {
     grid-template-rows: minmax(0, 1fr) env(safe-area-inset-bottom, 0px);
@@ -2779,7 +2801,8 @@ body.embedded-thread .threads-footer {
 }
 
 /* a menu item the host has disabled while it is reworked: still listed, greyed, saying why */
-.menu-item[aria-disabled="true"] {
+.menu-item[aria-disabled="true"],
+.button[aria-disabled="true"] {
   opacity: 0.45;
   cursor: not-allowed;
 }

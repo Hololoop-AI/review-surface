@@ -1015,7 +1015,12 @@ test("the served SDK bundle lets a link be followed in annotate mode, and annota
 function bootSectionPage({ reducedMotion = false, inlineScrollBehavior = "" } = {}) {
   const page = { replaced: [], assigned: [], scrolled: [], addressed: [], ids: new Set(), frames: [] };
   // a section's element: 400 px below the top of what shows, with a 100 px scroll-margin
-  const section = { getBoundingClientRect: () => ({ top: 400 }), scrollMarginTop: "100px" };
+  // (a section with no box, as display:none gives it until :target shows it, has no rects)
+  const section = {
+    getBoundingClientRect: () => ({ top: page.boxless ? 0 : 400 }),
+    getClientRects: () => (page.boxless ? [] : [{}]),
+    scrollMarginTop: "100px",
+  };
   const sdk = bootSdk({
     setup(sandbox) {
       page.root = sandbox.document.documentElement;
@@ -1143,6 +1148,21 @@ test("a section link that names no element is left to the browser's own navigati
 
   assert.deepEqual(page.scrolled, []);
   assert.equal(page.replaced.length, 1);
+});
+
+// A target with no box (display:none until :target shows it, as CSS-only tabs and modals do) has
+// no position to scroll to: its rect reads top 0, which would scroll a reader up the page.
+test("a section link to an element with no box does not scroll, and the address is replaced at once", () => {
+  const { sdk, page } = bootSectionPage();
+  page.boxless = true;
+  sdk.pageClick(page.link);
+
+  assert.deepEqual(page.scrolled, []);
+  assert.equal(page.win.scrollY, 1600);
+  assert.deepEqual(
+    page.replaced.map((entry) => entry.url),
+    ["#reviews"],
+  );
 });
 
 test("a same-page section link jumps without animation under reduced motion", () => {

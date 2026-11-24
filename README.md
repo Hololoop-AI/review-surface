@@ -72,6 +72,15 @@ The page hears only the window that frames it and stores none of it; the panel
 and what it lists stay the host's. A page opened on its own, a thread window
 and a host that never answers show no bell.
 
+A host can also take items out of the page's ⋮ menu. `REVIEW_SURFACE_MENU_HIDE`
+and `REVIEW_SURFACE_MENU_DISABLE` are comma-separated lists of `publish-link`,
+`send-page-and-end` and `end-session`; unknown names are logged and ignored.
+A hidden item is not drawn. A disabled item stays in the menu, greyed, with
+the tooltip "This feature is under revision", and does nothing when chosen.
+`send-page-and-end` also covers the conversation panel's Send & End button,
+and with `end-session` hidden or disabled a page's own end-session request is
+ignored too.
+
 ## Images
 
 An image drawn larger than about 200px shows an expand button in its top-right

@@ -950,6 +950,28 @@ test("a disabled menu item carries one title: the reason it is disabled", () => 
   assert.match(sendPageAndEnd, /aria-disabled="true" title="This feature is under revision"/);
 });
 
+test("hiding or disabling send-page-and-end covers the conversation panel's Send & End too", () => {
+  const session = { key: "abc", file: "/tmp/artifact.html" };
+  const only = new Set(["send-page-and-end"]);
+  assert.doesNotMatch(createChromeHtml(session, { menuHide: only }), /id="sendAndEnd"/);
+  const disabled = /<button[^>]*id="sendAndEnd"[^>]*>/.exec(createChromeHtml(session, { menuDisable: only }))?.[0];
+  assert.match(disabled || "", /aria-disabled="true" title="This feature is under revision"/);
+  const plain = /<button[^>]*id="sendAndEnd"[^>]*>/.exec(createChromeHtml(session))?.[0];
+  assert.doesNotMatch(plain || "", /aria-disabled/);
+});
+
+// The conversation panel is not shown on an ordinary page, so the notices with the reader's only
+// recovery controls (take over, check and reload) are drawn outside it, over the artifact.
+test("the takeover and server-gone notices are served outside the conversation panel", () => {
+  const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
+  const panel = /<aside class="panel" id="panel">.*?<\/aside>/s.exec(html)?.[0] || "";
+  assert.ok(panel, "the panel is served");
+  for (const id of ["handoffBanner", "handoffTakeover", "outdatedBanner", "outdatedReload", "outdatedDismiss"]) {
+    assert.equal(html.split(`id="${id}"`).length, 2, `${id} is served once`);
+    assert.doesNotMatch(panel, new RegExp(`id="${id}"`), `${id} is outside the panel`);
+  }
+});
+
 test("overflow menu offers a standalone HTML export that downloads a portable file", async () => {
   const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
   const js = await chromeClientSource();

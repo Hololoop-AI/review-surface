@@ -2863,6 +2863,7 @@ export function createArtifactSdk(
     textarea.addEventListener("input", fitTextarea);
     if (typeof options.restoreText === "string") {
       textarea.value = options.restoreText;
+      fitTextarea();
       // Re-report immediately so restored text survives a second reload too, rather than only
       // living until the next keystroke.
       scheduleReviewStateReport();
@@ -2903,7 +2904,10 @@ export function createArtifactSdk(
     // without the source check the artifact could post to itself and drive the SDK.
     if (event.source !== parent) return;
     const msg = event.data || {};
-    if (msg.type === "review-surface:setAnnotationMode") setAnnotationMode(msg.enabled);
+    if (msg.type === "review-surface:setAnnotationMode") {
+      setAnnotationMode(msg.enabled);
+      if (activeCardTextarea) postArtifactMessage("review-surface:composing", { open: true });
+    }
     if (msg.type === "review-surface:attachmentResult") {
       if (!isTrustedAttachmentResult(event, { parentWindow: parent, nonce: ATTACHMENT_NONCE })) return;
       activeAttachments?.handleResult(msg.localId, msg.ok, msg.id, msg.error);
@@ -3530,7 +3534,7 @@ export function createArtifactSdk(
       // a malformed escape names no element
     }
     target = target || document.getElementsByName?.(name)?.[0] || null;
-    if (!target) {
+    if (!target || target.getClientRects().length === 0) {
       window.location.replace(href);
       return;
     }

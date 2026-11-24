@@ -4998,6 +4998,28 @@ test("chrome client toggles annotation mode when the artifact SDK requests it vi
   assert.equal(chrome.postedToFrame.at(-1).enabled, true);
 });
 
+// The host setting covers every way to end, not only the menu rows: the panel's Send & End (which
+// the served page marks the same way) and a page's own end-session request.
+test("a disabled end is not reachable through the panel's Send & End or the page's own request", async () => {
+  const posts = [];
+  const chrome = await createChromeHarness({
+    disabledMenuItems: ["end", "sendAndEnd"],
+    fetchImpl: async (url, init) => {
+      if (init?.method === "POST") posts.push(String(url));
+      return { ok: true, json: async () => ({}) };
+    },
+  });
+  await flushPromises();
+  chrome.element("chatInput").value = "one last thing";
+  chrome.element("sendAndEnd").dispatch("click");
+  chrome.sendFrameMessage({ type: "review-surface:endSession" });
+  await flushPromises();
+  assert.deepEqual(
+    posts.filter((url) => url.endsWith("/end") || url.endsWith("/prompts")),
+    [],
+  );
+});
+
 test("chrome client ignores annotation mode toggles after the session ends", async () => {
   const chrome = await createChromeHarness();
 

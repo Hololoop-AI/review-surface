@@ -222,7 +222,6 @@ let layoutGateTimer;
 let layoutWarnings = Array.isArray(sessionData.initialLayoutWarnings) ? sessionData.initialLayoutWarnings : [];
 const selectedWarningIds = new Set(loadJsonState(warningSelectionStorageKey, []));
 let warningsDrawerOpen = false;
-const snapshotRequests = [];
 let endAfterSubmit = false;
 let workingBubble = null;
 let submitQueuedPromise = null;
@@ -643,7 +642,7 @@ function renderQueueDock() {
 
 function updateSendState() {
   sendButton.disabled = ended;
-  sendAndEndButton.disabled = sendButton.disabled;
+  if (sendAndEndButton) sendAndEndButton.disabled = sendButton.disabled;
   if (warningsQueueButton) updateWarningSelectionState();
 }
 
@@ -918,6 +917,16 @@ function renderRetiredDraft(text, stored = true) {
   retiredDraftNodes.push(el);
   chatLog.appendChild(el);
   scrollElementIntoView(el);
+  showKeptNotesInPageChat();
+}
+
+// With the conversation panel not shown, the notes only the reader holds - a message that did
+// not send and a draft handed back - are shown in This page's chat, after its conversation.
+function showKeptNotesInPageChat() {
+  if (activeChat !== pageChatKey) return;
+  for (const bubble of unsentBubbles) chatPopLog.appendChild(bubble);
+  for (const note of retiredDraftNodes) chatPopLog.appendChild(note);
+  chatPopLog.scrollTop = chatPopLog.scrollHeight;
 }
 
 async function refreshChromeLoadHandoff(requestSequence) {
@@ -1383,8 +1392,7 @@ function postToFrame(message) {
   if (frame.contentWindow) frame.contentWindow.postMessage(message, "*");
 }
 
-function requestSnapshot(action) {
-  snapshotRequests.push(action);
+function requestSnapshot() {
   postToFrame({ type: "review-surface:requestSnapshot" });
 }
 
@@ -1668,7 +1676,7 @@ function sendQueued(endAfter, composer = sidebarComposer) {
   hideSendHint();
 
   if (endAfter && !chipsBlocked) endAfterSubmit = true;
-  requestSnapshot("submit");
+  requestSnapshot();
   return true;
 }
 
@@ -1731,6 +1739,7 @@ function markPromptUnsent(prompt, existing, storedEntry = null) {
   if (!bubble) return;
   bubble.classList.add("unsent");
   unsentBubbles.add(bubble);
+  showKeptNotesInPageChat();
   if (!unsentEntries.has(bubble)) {
     const entry = storedEntry || { unsent: stripInternalPromptFields(prompt) };
     if (!storedEntry) {
@@ -3399,7 +3408,6 @@ window.addEventListener("message", (event) => {
     pulseSheetDock();
   }
   if (msg.type === "review-surface:snapshot") {
-    snapshotRequests.shift();
     pendingSnapshot = msg.snapshot || "";
     // submitQueuedOnce throws to signal "nothing was delivered" - its own
     // finally already reset the end intent and it left the queue intact for a
@@ -3429,7 +3437,7 @@ window.addEventListener("message", (event) => {
   // chrome cannot see every live reference, so reclamation is the sweeper's job.
   if (msg.type === "review-surface:sendQueuedPrompts") sendQueued();
   if (msg.type === "review-surface:sendPrompt") sendPromptNow(msg.prompt);
-  if (msg.type === "review-surface:endSession") endSession();
+  if (msg.type === "review-surface:endSession" && usable(endButton)) endSession();
   if (msg.type === "review-surface:toggleAnnotationMode") toggleAnnotationMode();
   // Only on a real click: the reviewer's click inside the frame activates this window too, and
   // without that an artifact script could navigate the reviewer away on its own.
@@ -3671,7 +3679,7 @@ function toggleAnnotationMode() {
 annotationSwitch.onclick = toggleAnnotationMode;
 
 sendButton.onclick = () => sendQueued(false);
-sendAndEndButton.onclick = () => sendQueued(true);
+if (usable(sendAndEndButton)) sendAndEndButton.onclick = () => sendQueued(true);
 moreButton.onclick = () => {
   closeWarningsDrawer();
   toggleMenu(moreButton, moreMenu);
@@ -3791,7 +3799,9 @@ exportArtifactButton.onclick = exportArtifact;
 // a host may hide Publish link, Send page and end, and End session (REVIEW_SURFACE_MENU_HIDE), or
 // disable them (REVIEW_SURFACE_MENU_DISABLE): a disabled item stays in the menu and does nothing
 /** @param {HTMLElement | null} button */
-const usable = (button) => Boolean(button) && button?.getAttribute?.("aria-disabled") !== "true";
+function usable(button) {
+  return Boolean(button) && button?.getAttribute?.("aria-disabled") !== "true";
+}
 if (usable(shareArtifactButton)) shareArtifactButton.onclick = openShareDialog;
 shareCloseButton.onclick = closeShareDialog;
 shareCancelButton.onclick = closeShareDialog;
@@ -4573,6 +4583,7 @@ function openChat(threadKey, anchor = null) {
   chatPopPresence.textContent = threadPresenceLabel(thread);
   chatPopHint.textContent = "";
   chatPopLog.replaceChildren();
+  showKeptNotesInPageChat();
   // The host's conversations carry no speed and have no page of their own to open.
   chatPopQuick.closest?.("label")?.toggleAttribute("hidden", Boolean(thread.feed));
   chatPopExpand.hidden = Boolean(thread.feed || thread.pageChat);
@@ -4661,6 +4672,7 @@ async function refreshChat() {
     }),
   );
   chatPopLog.scrollTop = chatPopLog.scrollHeight;
+  showKeptNotesInPageChat();
   const ended = conversation.status === "ended";
   chatPopInput.disabled = ended;
   chatPopSend.disabled = ended;
