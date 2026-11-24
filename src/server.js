@@ -367,11 +367,12 @@ export function resolveAnnotationActions(env = process.env, log = undefined) {
 const HIDEABLE_MENU_ITEMS = new Set(["send-page-and-end", "publish-link", "end-session"]);
 
 /**
- * The ⋮ menu items this host hides, from REVIEW_SURFACE_MENU_HIDE: a comma-separated list of
- * names from HIDEABLE_MENU_ITEMS (a host whose own flow closes a review, for one, hides
- * send-page-and-end). Unknown names are reported and ignored.
+ * The ⋮ menu items named by one of those variables (REVIEW_SURFACE_MENU_HIDE unless `variable`
+ * says otherwise): a comma-separated list of names from HIDEABLE_MENU_ITEMS (a host whose own
+ * flow closes a review, for one, hides send-page-and-end). Unknown names are reported and ignored.
  * @param {Record<string, string | undefined>} [env]
  * @param {(message: string) => void} [log]
+ * @param {string} [variable]
  * @returns {Set<string>}
  */
 export function resolveMenuItems(env = process.env, log = undefined, variable = "REVIEW_SURFACE_MENU_HIDE") {

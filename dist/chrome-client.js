@@ -952,7 +952,9 @@ function scrollPanelToBottom() {
 
 // ---- Phone-width conversation sheet ----
 // Below this width chrome.css turns the conversation panel into a dock the user raises as a
-// bottom sheet over the artifact. This controller owns intent, accessibility state, gestures,
+// bottom sheet over the artifact - only for a thread shown inside another page's window; an
+// ordinary page has no sheet on a phone (chrome.css hides its panel, and the footer's This page
+// chat replaces it). This controller owns intent, accessibility state, gestures,
 // visual-viewport measurements, and the dock summary; CSS owns the geometry. The query must match
 // the one chrome.css lays the sheet out under.
 const MOBILE_SHEET_MEDIA = "(max-width: 860px)";
